@@ -5,18 +5,26 @@ const money=n=>Number(n||0).toLocaleString('vi-VN')+' đ';
 function requestId(){if(globalThis.crypto?.randomUUID)return globalThis.crypto.randomUUID();if(globalThis.crypto?.getRandomValues){const b=new Uint8Array(16);crypto.getRandomValues(b);return [...b].map(v=>v.toString(16).padStart(2,'0')).join('');}return 'demo-'+Date.now()+'-'+Math.random().toString(36).slice(2);}
 const roles={admin:'Quản trị',manager:'Quản lý',reception:'Lễ tân',doctor:'Bác sĩ',technician:'Kỹ thuật viên',nurse:'Điều dưỡng',pharmacy:'Dược',cashier:'Thu ngân'};
 const menus={
- admin:[['dashboard','Tổng quan'],['audit','Nhật ký']],
- manager:[['dashboard','Tổng quan'],['finance','Tài chính'],['stock','Kho thuốc']],
+ admin:[['dashboard','Tổng quan'],['accounts','Tài khoản'],['catalog','Danh mục'],['audit','Nhật ký']],
+ manager:[['dashboard','Tổng quan'],['finance','Tài chính'],['catalog','Danh mục'],['stock','Kho thuốc']],
  reception:[['dashboard','Tổng quan'],['reception','Tiếp đón'],['appointments','Lịch hẹn'],['patients','Bệnh nhân']],
  doctor:[['dashboard','Công việc'],['clinical','Khám bệnh'],['orders','Chỉ định / kết quả'],['rx','Đơn thuốc']],
  technician:[['dashboard','Công việc'],['orders','Nhập kết quả']],
  nurse:[['dashboard','Công việc']],
- pharmacy:[['dashboard','Công việc'],['rx','Đơn thuốc nháp'],['stock','Kho thuốc']],
+ pharmacy:[['dashboard','Công việc'],['rx','Đơn thuốc nháp'],['catalog','Danh mục'],['stock','Kho thuốc']],
  cashier:[['dashboard','Công việc'],['cashier','Thu ngân']]
 };
+let serverMode='demo',selectedRole=null,auditOffset=0;
+const pendingPaymentKeys=new Map();
 let auth=null,active='dashboard',doctorList=[],patientList=[],visitList=[],orderList=[],rxList=[],dueList=[],chosenVisit=null,chosenPatient=null;
 function notify(message,bad=false){$('toast').textContent=message;$('toast').className='toast'+(bad?' error':'');setTimeout(()=>$('toast').className='toast hidden',3700)}
-function authHeader(){return auth?{'Authorization':'Bearer '+auth.token}:{};}
+function authHeader(){
+ const h={'X-Clinic-Request':'1'};
+ const csrf=serverMode==='lan' && document.cookie.split('; ').find(v=>v.startsWith('__Host-clinic-csrf='));
+ if(csrf)h['X-CSRF-Token']=decodeURIComponent(csrf.split('=')[1]);
+ if(auth?.token)h.Authorization='Bearer '+auth.token;
+ return h;
+}
 async function api(path,{method='GET',body=null,isFile=false}={}){
  const options={method,headers:authHeader()};if(body!==null){if(isFile){options.body=body;}else{options.headers['Content-Type']='application/json';options.body=JSON.stringify(body)}}
  const r=await fetch('/api'+path,options);let payload=await r.json().catch(()=>({detail:'Máy chủ không trả được dữ liệu'}));if(!r.ok){if(r.status===401){auth=null;sessionStorage.removeItem('md_token');renderLogin()}throw new Error(typeof payload.detail==='string'?payload.detail:JSON.stringify(payload.detail))}return payload;
@@ -26,7 +34,7 @@ function selectField(name,id,options){return `<div class="field"><label for="${e
 function textarea(name,id,placeholder=''){return `<div class="field full"><label for="${esc(id)}">${esc(name)}</label><textarea id="${esc(id)}" name="${esc(id)}" placeholder="${esc(placeholder)}"></textarea></div>`}
 function card(content,title=''){return `<section class="card">${title?`<h2>${esc(title)}</h2>`:''}${content}</section>`}
 function t(rows,headers){return `<div class="tablebox"><table class="table"><thead><tr>${headers.map(x=>`<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.join(''):`<tr><td colspan="${headers.length}"><div class="empty">Chưa có dữ liệu</div></td></tr>`}</tbody></table></div>`}
-function role(){return auth?.user.roles[0]||'reception'}
+function role(){return selectedRole||auth?.user.roles[0]||'reception'}
 
 async function exportMedicalForm(kind,id,fmt='pdf'){
   const url=`/api/forms/${encodeURIComponent(kind)}/${Number(id)}?fmt=${encodeURIComponent(fmt)}`;
@@ -44,22 +52,23 @@ function formButtons(kind,id){return `<span class="printactions"><button type="b
 
 function printHtml(markup){$('print-overlay').innerHTML=markup;$('print-overlay').classList.remove('hidden');document.body.classList.add('printing');window.print()}
 window.addEventListener('afterprint',()=>{document.body.classList.remove('printing');$('print-overlay').classList.add('hidden');$('print-overlay').innerHTML=''})
-function viewInit(){if(!auth){renderLogin();return}const r=role();const m=menus[r]||menus.reception;
+function viewInit(){if(!auth){renderLogin();return}const r=role();const m=[...(menus[r]||menus.reception),['password','Đổi mật khẩu']];
  if(!m.some(x=>x[0]===active))active=m[0][0];$('page-title').textContent=m.find(x=>x[0]===active)[1];$('user-label').textContent=auth.user.name+' · '+roles[r];$('logout').classList.remove('hidden');
- $('navigation').innerHTML=m.map(([id,label])=>`<button class="navbutton" data-action="navigate" data-page="${esc(id)}" aria-current="${active===id?'page':'false'}">${esc(label)}</button>`).join('');}
+ $('navigation').innerHTML=(auth.user.roles.length>1?selectField('Vai trò đang dùng','role_switch',auth.user.roles.map(k=>[k,roles[k]])):'')+m.map(([id,label])=>`<button class="navbutton" data-action="navigate" data-page="${esc(id)}" aria-current="${active===id?'page':'false'}">${esc(label)}</button>`).join('');}
 async function render(){if(!auth){renderLogin();return}viewInit();$('workspace').innerHTML=card('Đang tải dữ liệu ...');try{
  let html='';if(active==='dashboard')html=await dashboard();
  else if(active==='reception')html=await reception();else if(active==='appointments')html=await appointments();
  else if(active==='patients')html=await patients();else if(active==='clinical')html=await clinical();
  else if(active==='orders')html=await orders();else if(active==='rx')html=await prescription();
  else if(active==='cashier')html=await cashier();else if(active==='finance')html=await finance();
+ else if(active==='catalog')html=await catalog();else if(active==='accounts')html=await accounts();else if(active==='password')html=passwordPage();
  else if(active==='stock')html=await stock();else if(active==='audit')html=await audit();
  $('workspace').innerHTML=html;
  if(active==='clinical' && chosenVisit){if($('visit_choose'))$('visit_choose').value=String(chosenVisit);setClinicalForm(await api('/visits/'+chosenVisit));}
  }catch(e){$('workspace').innerHTML=card(`<div class="empty">Không thể tải trang: ${esc(e.message)}</div>`)} }
 function renderLogin(){auth=null;$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập thử nghiệm';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');
  const users=[['letan','Lễ tân'],['bs_noi','Bác sĩ Nội'],['bs_san','Bác sĩ Sản'],['kythuat','Kỹ thuật viên'],['duoc','Nhân viên dược'],['thungan','Thu ngân'],['quanly','Quản lý'],['quantri','Quản trị viên'],['dieuduong','Điều dưỡng']];
- $('workspace').innerHTML=card(`<form data-form="login" class="fields">${selectField('Tài khoản mô phỏng','username',users)}${field('Mật khẩu demo','password','password','',true)}<div class="field full"><button class="btn" type="submit">Đăng nhập</button><p class="hint">Nhập mật khẩu đã chọn khi khởi động bản demo. Chỉ chạy trên 127.0.0.1, không mở Internet.</p></div></form>`,'Đăng nhập theo vai trò');}
+ $('workspace').innerHTML=card(`<form data-form="login" class="fields">${serverMode==='lan'?field('Tài khoản nhân viên','username','text','',true):selectField('Tài khoản mô phỏng','username',users)}${field('Mật khẩu','password','password','',true)}<div class="field full"><button class="btn" type="submit">Đăng nhập</button><p class="hint">${serverMode==='lan'?'Dùng tài khoản riêng do quản trị cấp. Phiên kết thúc sau 20 phút không hoạt động hoặc tối đa 8 giờ.':'Nhập mật khẩu đã chọn khi khởi động bản demo cục bộ.'}</p></div></form>`,'Đăng nhập theo vai trò');}
 async function dashboard(){const o=await api('/overview');const r=role();let cards=[['Lượt khám đã tạo',o.visits],['Chỉ định chưa duyệt',o.pending_orders]];
  if(r==='manager')cards.push(['Phải thu',money(o.charged)],['Đã thu',money(o.paid)],['Còn phải thu',money(o.outstanding)],['Lô cần chú ý',o.stock_warning]);
  return `<div class="cards">${cards.map(([name,value])=>`<div class="stat"><span>${esc(name)}</span><b>${esc(value)}</b></div>`).join('')}</div>`+
@@ -99,13 +108,24 @@ async function stock(){const list=await api('/stock');const medications=role()==
  const issue=role()==='pharmacy'?card(`<form data-form="stock-issue" class="fields">${selectField('Mặt hàng','medicine_id',medications.filter(x=>!x.controlled).map(x=>[x.id,x.name]))}${field('Số lượng (đơn vị cơ sở)','quantity','number','',true)}${field('Mục đích sử dụng','purpose','text','Sử dụng nội bộ mô phỏng',true)}<div class="wide"><button class="btn">Xuất kho theo hạn dùng (FEFO)</button></div></form>`,'Xuất kho mô phỏng'):'';
  return receive+issue+card(t(list.map(x=>`<tr><td>${esc(x.name)}${x.controlled?' <span class="status warn">Kiểm soát đặc biệt</span>':''}</td><td>${esc(x.lot_number)}</td><td>${esc(x.expiry_date)}</td><td>${esc(x.quantity)} ${esc(x.base_unit)}</td><td>${x.quarantined?'<span class="status error">Cách ly</span>':'<span class="status">Theo dõi</span>'}</td></tr>`),['Thuốc/Vật tư','Số lô','Hạn dùng','Tồn','Trạng thái']),'Kho thử nghiệm')+'<p class="hint">Không xuất thuốc phải kiểm soát đặc biệt; không thay quy trình dược thực tế.</p>';
 }
-async function audit(){const entries=await api('/audit');return card(t(entries.map(x=>`<tr><td>${x.id}</td><td>${esc(x.event)}</td><td>${esc(x.object_type)} #${esc(x.object_id)}</td><td>${esc(x.created_at)}</td></tr>`),['ID','Sự kiện','Đối tượng','Thời gian UTC']),'Nhật ký sự kiện')}
+async function audit(){const entries=await api('/audit?offset='+auditOffset+'&limit=100');return card(t(entries.map(x=>`<tr><td>${x.id}</td><td>${esc(x.username||x.user_id||'Hệ thống')}</td><td>${esc(x.event)}</td><td>${esc(x.object_type)} #${esc(x.object_id)}</td><td>${esc(x.details)}</td><td>${esc(x.created_at)}</td></tr>`),['ID','Nhân viên','Sự kiện','Đối tượng','Chi tiết','Thời gian UTC'])+`<div class="toolbar-actions"><button class="ghost" data-action="audit-prev" ${auditOffset===0?'disabled':''}>Trang trước</button><span>Từ dòng ${auditOffset+1}</span><button class="ghost" data-action="audit-next" ${entries.length<100?'disabled':''}>Trang sau</button></div>`,'Nhật ký sự kiện')}
+
 function setClinicalForm(data){for(const name of ['chief_complaint','history','vitals','diagnosis','treatment','follow_up']){const el=document.querySelector(`[name="${name}"]`);if(el)el.value=data[name]||'';}}
 async function handleForm(form){const kind=form.dataset.form;const f=new FormData(form);const value=k=>String(f.get(k)||'').trim();const num=k=>Number(value(k));
  if(kind==='login'){
- const res=await api('/login',{method:'POST',body:{username:value('username'),password:value('password')}});auth={token:res.access_token,user:res.user};sessionStorage.setItem('md_token',res.access_token);active='dashboard';await render();notify('Đăng nhập thành công');return;
+ const res=await api('/login',{method:'POST',body:{username:value('username'),password:value('password')}});auth={token:res.access_token,user:res.user};selectedRole=null;if(res.access_token)sessionStorage.setItem('md_token',res.access_token);active='dashboard';await render();notify('Đăng nhập thành công');return;
  }
- if(kind==='patient'){const res=await api('/patients',{method:'POST',body:{full_name:value('full_name'),date_of_birth:value('date_of_birth')||null,sex:value('sex'),phone:value('phone')||null,citizen_id:value('citizen_id')||null,address:value('address')||null}});notify('Đã lưu bệnh nhân '+res.code);}
+ if(kind==='service'){await api('/catalog/services',{method:'POST',body:{name:value('name'),price:num('price')}});notify('Đã thêm dịch vụ');
+ }else if(kind==='medicine'){await api('/catalog/medicines',{method:'POST',body:{name:value('name'),base_unit:value('base_unit')}});notify('Đã thêm thuốc/vật tư');
+ }else if(kind==='account'){
+ await api('/accounts',{method:'POST',body:{username:value('username'),full_name:value('full_name'),password:value('password'),roles:[value('role')]}});notify('Đã tạo tài khoản riêng');
+ }else if(kind==='account-update'){
+ await api('/accounts/'+num('uid'),{method:'PUT',body:{active:value('active')==='1',roles:[value('role')]}});notify('Đã cập nhật quyền và thu hồi các phiên cũ');
+ }else if(kind==='account-reset'){
+ await api('/accounts/'+num('uid')+'/password',{method:'POST',body:{password:value('password')}});notify('Đã đặt mật khẩu và thu hồi phiên');
+ }else if(kind==='password'){
+ await api('/password',{method:'POST',body:{current_password:value('current_password'),new_password:value('new_password')}});sessionStorage.removeItem('md_token');selectedRole=null;renderLogin();notify('Đã đổi mật khẩu. Hãy đăng nhập lại');return;
+ }else if(kind==='patient'){const res=await api('/patients',{method:'POST',body:{full_name:value('full_name'),date_of_birth:value('date_of_birth')||null,sex:value('sex'),phone:value('phone')||null,citizen_id:value('citizen_id')||null,address:value('address')||null}});notify('Đã lưu bệnh nhân '+res.code);}
  else if(kind==='visit'){const res=await api('/visits',{method:'POST',body:{patient_id:num('patient_id'),doctor_id:num('doctor_id'),service_id:num('service_id')}});notify('Đã tiếp nhận lượt khám #'+res.id);}
  else if(kind==='appointment'){await api('/appointments',{method:'POST',body:{patient_id:num('patient_id'),doctor_id:num('doctor_id'),scheduled_at:value('scheduled_at'),reason:value('reason')}});notify('Đã đặt lịch');}
  else if(kind==='clinical'){const payload={version:num('version')};for(const k of ['chief_complaint','history','vitals','diagnosis','treatment','follow_up'])payload[k]=value(k)||null;
@@ -116,12 +136,17 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  else if(kind==='attach'){const data=new FormData();data.set('file',f.get('attachment'));await api('/orders/'+num('attach_order')+'/attachment',{method:'POST',body:data,isFile:true});notify('Đã tải tệp kết quả');}
  else if(kind==='rx'){await api('/prescriptions',{method:'POST',body:{visit_id:num('visit_id'),drug_lines:value('drug_lines'),instructions:value('instructions'),follow_up:value('follow_up')||null}});notify('Đã tạo đơn nháp (không hợp lệ để cấp thuốc)');}
  else if(kind==='stock-receipt'){await api('/stock/receipts',{method:'POST',body:{medicine_id:num('medicine_id'),lot_number:value('lot_number'),expiry_date:value('expiry_date'),quantity:num('quantity')}});notify('Đã nhập lô vào kho demo');}
- else if(kind==='payment'){await api('/payments',{method:'POST',body:{visit_id:num('visit_id'),amount:num('amount'),method:value('method'),external_ref:value('external_ref')||null,idempotency_key:requestId()}});notify('Đã ghi khoản thu vào cơ sở dữ liệu demo');}
+ else if(kind==='payment'){
+ const payment={visit_id:num('visit_id'),amount:num('amount'),method:value('method'),external_ref:value('external_ref')||null};
+ const fingerprint=JSON.stringify(payment);if(!pendingPaymentKeys.has(fingerprint))pendingPaymentKeys.set(fingerprint,requestId());
+ await api('/payments',{method:'POST',body:{...payment,idempotency_key:pendingPaymentKeys.get(fingerprint)}});
+ pendingPaymentKeys.delete(fingerprint);notify('Đã ghi khoản thu vào cơ sở dữ liệu demo');
+ }
  else if(kind==='stock-issue'){await api('/stock/issues',{method:'POST',body:{medicine_id:num('medicine_id'),quantity:num('quantity'),purpose:value('purpose')}});notify('Đã xuất lô theo hạn dùng');}
  else if(kind==='adjustment'){await api('/adjustments',{method:'POST',body:{visit_id:num('visit_id'),kind:value('kind'),amount:num('amount'),payment_id:value('payment_id')?num('payment_id'):null,reason:value('reason')}});notify('Đã gửi đề nghị cho quản lý');}
  await render();}
 async function downloadPdfReceipt(id){const r=await fetch(`/api/print/receipt/${id}`,{headers:authHeader()});if(!r.ok){const m=await r.json().catch(()=>({detail:'Lỗi xuất chứng từ'}));throw new Error(m.detail)}const blob=await r.blob();if(blob.type!=='application/pdf')throw new Error('Không nhận được PDF');const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`MinhDuc_PhieuThu_${id}.pdf`;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);notify('Đã tạo phiếu thu nháp');}
-async function handleClick(element){const action=element.dataset.action;if(action==='export-receipt'){await downloadPdfReceipt(Number(element.dataset.id))}else if(action==='review-adjustment'){await api('/adjustments/'+element.dataset.id+'/review',{method:'POST',body:{approve:element.dataset.value==='approve'}});notify('Đã xử lý đề nghị');await render();}else if(action==='export-form'){await exportMedicalForm(element.dataset.kind,element.dataset.id,element.dataset.format||'pdf')}else if(action==='navigate'){active=element.dataset.page;await render();}
+async function handleClick(element){const action=element.dataset.action;if(action==='audit-prev'||action==='audit-next'){auditOffset=Math.max(0,auditOffset+(action==='audit-next'?100:-100));await render();}else if(action==='export-receipt'){await downloadPdfReceipt(Number(element.dataset.id))}else if(action==='review-adjustment'){await api('/adjustments/'+element.dataset.id+'/review',{method:'POST',body:{approve:element.dataset.value==='approve'}});notify('Đã xử lý đề nghị');await render();}else if(action==='export-form'){await exportMedicalForm(element.dataset.kind,element.dataset.id,element.dataset.format||'pdf')}else if(action==='navigate'){active=element.dataset.page;await render();}
  else if(action==='go-primary'){active=({reception:'reception',doctor:'clinical',technician:'orders',cashier:'cashier',pharmacy:'rx'})[role()]||'dashboard';await render();}
  else if(action==='select-patient'){chosenPatient=Number(element.dataset.id);active='reception';await render();let el=document.getElementById('patient_id');if(el)el.value=chosenPatient;notify('Đã chọn bệnh nhân để tạo lượt khám');}
  else if(action==='search-patients'){patientList=await api('/patients?q='+encodeURIComponent($('search-patients').value));$('patient-list').innerHTML=patientTable(patientList);}
@@ -130,9 +155,31 @@ async function handleClick(element){const action=element.dataset.action;if(actio
  else if(action==='file'){const r=await fetch('/api/orders/'+element.dataset.id+'/attachment',{headers:authHeader()});if(!r.ok)throw new Error('Không tải được tệp');const url=URL.createObjectURL(await r.blob());let a=document.createElement('a');a.href=url;a.download='ket_qua_mo_phong';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);}
 
 }
-document.addEventListener('submit',async ev=>{const form=ev.target.closest('[data-form]');if(!form)return;ev.preventDefault();try{await handleForm(form)}catch(err){notify(err.message,true)}});
+document.addEventListener('submit',async ev=>{const form=ev.target.closest('[data-form]');if(!form)return;ev.preventDefault();if(form.dataset.busy)return;form.dataset.busy='1';const buttons=[...form.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);try{await handleForm(form)}catch(err){notify(err.message,true)}finally{delete form.dataset.busy;buttons.forEach(b=>b.disabled=false)}});
 document.addEventListener('click',async ev=>{const btn=ev.target.closest('[data-action]');if(!btn)return;try{await handleClick(btn)}catch(err){notify(err.message,true)}});
-document.addEventListener('change',async ev=>{if(ev.target.id==='visit_choose'){chosenVisit=Number(ev.target.value);try{const v=await api('/visits/'+chosenVisit);setClinicalForm(v);document.querySelector('[name="visit_id"]').value=v.id;document.querySelector('[name="version"]').value=v.version;}catch(e){notify(e.message,true)}}});
-$('logout').addEventListener('click',async()=>{try{await api('/logout',{method:'POST'})}catch{}sessionStorage.removeItem('md_token');auth=null;renderLogin()});
-async function boot(){const token=sessionStorage.getItem('md_token');if(token){try{auth={token,user:null};const user=await api('/me');auth={token,user};await render();return}catch{}sessionStorage.removeItem('md_token');auth=null}renderLogin();}
+document.addEventListener('change',async ev=>{if(ev.target.id==='role_switch'){selectedRole=ev.target.value;active='dashboard';await render();return;}if(ev.target.id==='visit_choose'){chosenVisit=Number(ev.target.value);try{const v=await api('/visits/'+chosenVisit);setClinicalForm(v);document.querySelector('[name="visit_id"]').value=v.id;document.querySelector('[name="version"]').value=v.version;}catch(e){notify(e.message,true)}}});
+$('logout').addEventListener('click',async()=>{try{await api('/logout',{method:'POST'})}catch{}sessionStorage.removeItem('md_token');auth=null;selectedRole=null;renderLogin()});
+async function catalog(){
+ const data=await api('/catalog');
+ return (role()!=='pharmacy'?card(`<form data-form="service" class="fields">${field('Tên dịch vụ','name','text','Dịch vụ giả lập',true)}${field('Đơn giá VNĐ','price','number','',true)}<div class="wide"><button class="btn">Thêm dịch vụ</button></div></form>`,'Danh mục dịch vụ'):'')+
+ card(t(data.services.map(x=>`<tr><td>${esc(x.name)}</td><td>${money(x.price)}</td></tr>`),['Dịch vụ','Giá']),'Dịch vụ hiện có')+
+ card(`<form data-form="medicine" class="fields">${field('Tên thuốc/vật tư giả lập','name','text','',true)}${field('Đơn vị cơ sở','base_unit','text','viên / cái',true)}<div class="wide"><button class="btn">Thêm thuốc/vật tư</button><p class="hint">Chưa hỗ trợ thuốc kiểm soát đặc biệt.</p></div></form>`,'Danh mục kho')+
+ card(t(data.medicines.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.base_unit)}</td></tr>`),['Mặt hàng','Đơn vị']),'Mặt hàng hiện có');
+}
+async function accounts(){
+ const users=await api('/accounts');
+ const options=Object.entries(roles);
+ return card(`<form data-form="account" class="fields">${field('Tài khoản (chữ thường, không dấu)','username','text','',true)}${field('Họ tên nhân viên','full_name','text','',true)}${field('Mật khẩu riêng (ít nhất 12 ký tự)','password','password','',true)}${selectField('Vai trò','role',options)}<div class="wide"><button class="btn">Tạo tài khoản</button></div></form>`,'Tạo tài khoản nhân viên')+
+ card(t(users.map(u=>`<tr><td>${esc(u.username)}</td><td>${esc(u.full_name)}</td><td>${u.roles.map(r=>esc(roles[r])).join(', ')}</td><td>${u.active?'Hoạt động':'Đã khóa'}</td></tr>`),['Tài khoản','Họ tên','Quyền','Trạng thái']),'Nhân viên')+
+ card(`<form data-form="account-update" class="fields">${selectField('Nhân viên','uid',users.map(u=>[u.id,u.full_name+' ('+u.username+')']))}${selectField('Vai trò thay thế','role',options)}${selectField('Trạng thái','active',[['1','Hoạt động'],['0','Khóa']])}<div class="wide"><button class="btn">Cập nhật quyền / trạng thái</button><p class="hint">Thay quyền sẽ thu hồi mọi phiên cũ. Biểu mẫu này thay toàn bộ vai trò bằng một vai trò đã chọn.</p></div></form>`,'Phân quyền và khóa tài khoản')+
+ card(`<form data-form="account-reset" class="fields">${selectField('Nhân viên','uid',users.map(u=>[u.id,u.full_name]))}${field('Mật khẩu mới (ít nhất 12 ký tự)','password','password','',true)}<div class="wide"><button class="btn">Đặt lại mật khẩu</button></div></form>`,'Khôi phục truy cập');
+}
+function passwordPage(){return card(`<form data-form="password" class="fields">${field('Mật khẩu hiện tại','current_password','password','',true)}${field('Mật khẩu mới (ít nhất 12 ký tự)','new_password','password','',true)}<div class="wide"><button class="btn">Đổi mật khẩu và đăng xuất các phiên</button></div></form>`,'Đổi mật khẩu cá nhân')}
+async function boot(){
+ try{const health=await api('/health');serverMode=health.mode||'demo';}catch(e){notify(e.message,true);return;}
+ const token=sessionStorage.getItem('md_token');
+ if(serverMode==='lan')sessionStorage.removeItem('md_token');
+ if(serverMode==='lan'||token){try{auth={token:serverMode==='lan'?null:token,user:null};const user=await api('/me');auth={token:serverMode==='lan'?null:token,user};await render();return}catch{}sessionStorage.removeItem('md_token');auth=null}
+ renderLogin();
+}
 boot();

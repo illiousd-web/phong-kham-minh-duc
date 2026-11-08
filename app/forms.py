@@ -42,8 +42,9 @@ TITLES = {
  'followup':'GIẤY HẸN TÁI KHÁM',
 }
 
-def clean(value, limit=600):
-    return str(value or '').replace('\x00','').strip()[:limit]
+def clean(value, limit=None):
+    text = str(value or '').replace('\x00','').strip()
+    return text[:limit] if limit is not None else text
 
 def fmt_date(s):
     s=clean(s,40)
@@ -76,7 +77,7 @@ def multiline(doc,header,content,lines=4):
     for i,p in enumerate(ps):
         if p.text.strip().startswith(header):
             found=True
-            rows=clean(content,900).splitlines() if content else ['Chưa nhập']
+            rows=clean(content).splitlines() if content else ['Chưa nhập']
             # Keep all provided text. Let Word wrap. Do not truncate silently.
             body=' '.join(rows)
             for j in range(i+1,min(i+1+lines,len(ps))):
@@ -108,7 +109,7 @@ def rx_rows(ctx):
     result=[]
     for x in lines:
         if not x.strip():continue
-        p=[clean(z,250) for z in x.split('|')]
+        p=[clean(z) for z in x.split('|')]
         result.append([p[0],p[1] if len(p)>1 else 'Chưa khai báo',p[2] if len(p)>2 else 'Chưa khai báo'])
     return result
 
@@ -140,7 +141,7 @@ def generate_docx(kind, ctx):
             if x.text.startswith('Mã phiếu:'):doc_text(x,f"Mã phiếu: MD-TD-{v['id']:06d}     Ngày tiếp đón: {fmt_date(v['created_at'])}")
             if x.text.startswith('Hình thức đến khám:'):doc_text(x,'Hình thức: Trực tiếp hoặc theo lịch hẹn (xem màn hình đặt lịch)')
             if x.text.startswith('Lý do đến khám / yêu cầu'):doc_text(x,'Lý do đến khám / yêu cầu của người bệnh:')
-        multiline(doc,'Lý do đến khám / yêu cầu',v.get('chief_complaint') or 'Chưa cập nhật',2)
+        multiline(doc,'Lý do đến khám / yêu cầu','Nội dung chuyên môn được quản lý tại phiếu khám theo phân quyền.',2)
     elif kind=='visit':
         for x in doc_body:
             if x.text.startswith('Mã phiếu:'):doc_text(x,f"Mã phiếu: MD-KB-{v['id']:06d}    Ngày khám: {fmt_date(v['created_at'])}")
@@ -150,12 +151,13 @@ def generate_docx(kind, ctx):
         multiline(doc,'Diễn biến bệnh / triệu chứng chính',v.get('chief_complaint'),3)
         if len(doc.tables)>1:
             cells=doc.tables[1]
-            raw=clean(v.get('vitals'),600)
+            raw=clean(v.get('vitals'))
             doc_text(cells.cell(1,0).paragraphs[0],raw or 'Chưa nhập')
         if len(doc.tables)>2:
-            for i,o1 in enumerate(ctx.get('orders',[])[:3],1):
+            for i,o1 in enumerate(ctx.get('orders',[]),1):
+                if i>=len(doc.tables[2].rows):doc.tables[2].add_row()
                 for j,val in enumerate([o1['name'],str(o1['id']),o1['result_text'] or 'Chưa có'],0):
-                    doc_text(doc.tables[2].cell(i,j).paragraphs[0],clean(val,170))
+                    doc_text(doc.tables[2].cell(i,j).paragraphs[0],clean(val))
     elif kind=='order':
         for x in doc_body:
             if x.text.startswith('Mã chỉ định:'):doc_text(x,f"Mã chỉ định: MD-CD-{o['id']:06d}    Ngày lập: {fmt_date(o['created_at'])}")
@@ -183,7 +185,7 @@ def generate_docx(kind, ctx):
             if not any(o.get('result_text','') in x.text for x in doc_body):
                 for x in doc_body:
                     if x.text.strip().startswith('....'):
-                        doc_text(x,clean(o.get('result_text'),900) or 'Chưa nhập')
+                        doc_text(x,clean(o.get('result_text')) or 'Chưa nhập')
                         break
     elif kind=='rx':
         rx=ctx.get('rx') or {};rws=rx_rows(ctx)
@@ -207,7 +209,7 @@ def generate_docx(kind, ctx):
                     c=t.add_row().cells
                     for j,val in enumerate([str(idx),name,qty,dosage]):doc_text(c[j].paragraphs[0],val)
         for x in doc_body:
-            if x.text.startswith('Lời dặn ('):doc_text(x,'Lời dặn: '+clean(rx.get('instructions'),400))
+            if x.text.startswith('Lời dặn ('):doc_text(x,'Lời dặn: '+clean(rx.get('instructions')))
             if x.text.startswith('Ngày ......'):doc_text(x,f"Ngày {fmt_date(rx.get('created_at'))}")
     elif kind=='followup':
         for x in doc_body:
@@ -243,7 +245,7 @@ def font_name():
             pdfmetrics.registerFont(TTFont('ClinicVietnamese',str(p)));_FONT='ClinicVietnamese';return _FONT
     raise RuntimeError('Không tìm thấy phông Unicode hỗ trợ tiếng Việt để tạo PDF')
 
-def pdf_safe(s):return xml_escape(clean(s,6000)).replace('\n','<br/>')
+def pdf_safe(s):return xml_escape(clean(s)).replace('\n','<br/>')
 
 def generate_pdf(kind,ctx):
     if kind not in TEMPLATE_BY_TYPE:raise ValueError('Biểu mẫu không hợp lệ')
@@ -284,7 +286,7 @@ def generate_pdf(kind,ctx):
         heading('Danh sách thuốc - chưa có hiệu lực kê đơn')
         rows=[[Paragraph('Tên thuốc (giả lập)',styles['VnBody']),Paragraph('SL',styles['VnBody']),Paragraph('Cách dùng',styles['VnBody'])]]
         for name,qty,dosage in rx_rows(ctx):rows.append([Paragraph(pdf_safe(name),styles['VnBody']),Paragraph(pdf_safe(qty),styles['VnBody']),Paragraph(pdf_safe(dosage),styles['VnBody'])])
-        t=Table(rows,colWidths=([147,37,105] if size==A5 else [240,50,200]),repeatRows=1,hAlign='LEFT')
+        t=Table(rows,colWidths=([147,37,105] if size==A5 else [240,50,200]),repeatRows=1,hAlign='LEFT',splitInRow=1)
         t.setStyle(TableStyle([('GRID',(0,0),(-1,-1),.4,colors.HexColor('#B4C6C8')),('VALIGN',(0,0),(-1,-1),'TOP'),('BACKGROUND',(0,0),(-1,0),colors.HexColor('#E7F7F4')),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5)]))
         story.append(t);story.append(Spacer(1,10));add('Lời dặn',r.get('instructions'));add('Hẹn tái khám',r.get('follow_up'))
     if kind=='followup':

@@ -12,7 +12,9 @@ from app import main as mod
 
 @pytest.fixture
 def ctx(tmp_path,monkeypatch):
+    from app import database
     monkeypatch.setattr(mod,'DB',tmp_path/'db.sqlite3')
+    monkeypatch.setattr(database,'DB',tmp_path/'db.sqlite3')
     monkeypatch.setattr(mod,'FILES',tmp_path/'uploads')
     mod.init_db()
     client=TestClient(mod.app)

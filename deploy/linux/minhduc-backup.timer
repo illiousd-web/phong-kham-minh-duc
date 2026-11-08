@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Minh Duc backup
+
+[Timer]
+OnCalendar=*-*-* 20:00:00
+Persistent=true
+RandomizedDelaySec=60
+Unit=minhduc-backup.service
+
+[Install]
+WantedBy=timers.target

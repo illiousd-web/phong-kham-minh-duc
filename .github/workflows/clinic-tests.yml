@@ -1,0 +1,54 @@
+name: Clinic synthetic LAN tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
+        env:
+          POSTGRES_USER: clinic
+          POSTGRES_PASSWORD: ci-synthetic-only-not-a-deployment-secret
+          POSTGRES_DB: clinic_test_source
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-test.lock
+      - run: pip install -r requirements-test.lock
+      - run: python -m playwright install --with-deps chromium
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client-17 fonts-dejavu-core
+      - run: python -m pytest tests -q --junitxml=test_evidence/demo-junit.xml
+      - name: PostgreSQL, HTTPS, concurrent roles and encrypted restore
+        env:
+          CLINIC_TEST_DATABASE_URL: postgresql://clinic:ci-synthetic-only-not-a-deployment-secret@127.0.0.1:5432/clinic_test_source
+        run: |
+          export CHROMIUM_PATH="$(python -c 'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); print(p.chromium.executable_path); p.stop()')"
+          python -m pytest lan_tests -q --junitxml=test_evidence/lan-junit.xml
+      - run: sha256sum -c docs/assets-v031.sha256
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-clinic-test-evidence
+          path: test_evidence/
+          retention-days: 7
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pip-audit==2.10.1
+      - run: pip-audit -r requirements.lock --no-deps --disable-pip
