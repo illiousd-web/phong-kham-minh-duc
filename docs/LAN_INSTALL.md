@@ -1,3 +1,5 @@
+> **Profile máy 8 GB (Issue #3):** mặc định mới 1 worker/pool4, backup7bản và ngưỡng dung lượng. Xem [hướng dẫn Windows ngắn](WINDOWS_8GB_QUICKSTART.md) và [cấu hình tài nguyên](RESOURCE_LIGHT.md); các con số 2worker/pool16/backup30 trong phần v0.4 cũ bên dưới là thông tin lịch sử.
+
 # Cài đặt LAN thử nghiệm Minh Đức v0.4
 
 Chỉ dùng dữ liệu giả lập. Mã nguồn này chưa được nghiệm thu bảo mật hoặc nghiệp vụ y tế. Không nhập hồ sơ thật, không dùng đơn nháp để cấp thuốc hoặc phiếu thu thử làm chứng từ kế toán. Không mở port forwarding, DMZ, tunnel, public hosting hay UPnP trên router.

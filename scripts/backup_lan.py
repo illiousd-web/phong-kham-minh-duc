@@ -20,6 +20,8 @@ import psycopg
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from app.config import DATABASE_URL, DATA, LAN
 from app.database import LOCK_ID
+from app.resources import LIMITS
+from app.storage import tree_bytes, require_space, free_bytes, StorageLimitError
 
 MAGIC = b'MDCLINIC1'
 CHUNK = 1024*1024
@@ -99,39 +101,88 @@ def maintenance_lock(url):
             c.execute('SELECT pg_advisory_unlock(%s)', (LOCK_ID,))
 
 
+def encrypt_archive(members,target,key):
+    """Stream TAR directly into GCM: no attachment copy or plaintext TAR file."""
+    nonce=secrets.token_bytes(12)
+    ctx=Cipher(algorithms.AES(key),modes.GCM(nonce)).encryptor()
+    ctx.authenticate_additional_data(MAGIC)
+    with target.open('xb') as output:
+        output.write(MAGIC+nonce)
+        class Writer:
+            def write(self,block):
+                output.write(ctx.update(block))
+                return len(block)
+        with tarfile.open(fileobj=Writer(),mode='w|') as tar:
+            for path,name in members:tar.add(path,arcname=name)
+        output.write(ctx.finalize());output.write(ctx.tag)
+        output.flush();os.fsync(output.fileno())
+    target.chmod(0o600)
+
+
+def copy_offsite(source,directory):
+    """Publish encrypted copy only after byte verification. Never copy the key."""
+    directory=Path(directory).resolve()
+    if directory==source.parent.resolve() or directory.is_relative_to(source.parent.resolve()):
+        raise ValueError('Offsite destination must be separate from local backups')
+    # A network/USB destination must already be mounted. Never create a missing
+    # mount directory and accidentally treat the local SSD as the offline device.
+    if not directory.is_dir():raise ValueError('Offsite destination is not available')
+    if free_bytes(directory)<source.stat().st_size+256*1024*1024:
+        raise StorageLimitError('Offsite destination lacks space for a verified copy and 256 MiB reserve')
+    pending=directory/('.'+source.name+'.partial')
+    try:
+        with source.open('rb') as inp,pending.open('xb') as out:
+            shutil.copyfileobj(inp,out,CHUNK);out.flush();os.fsync(out.fileno())
+        if checksum(source)!=checksum(pending):raise ValueError('Offsite copy checksum mismatch')
+        os.replace(pending,directory/source.name)
+    finally:pending.unlink(missing_ok=True)
+
+
 def backup(destination, key_path):
-    key = key_bytes(key_path)
-    keep=int(os.getenv('CLINIC_BACKUP_KEEP','30'))
-    if keep < 2:
-        raise ValueError('Retention must keep at least 2 backups')
-    destination.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # Temp plaintext stays beside encrypted backups on the same protected volume.
-    with tempfile.TemporaryDirectory(prefix='.backup-', dir=destination) as temp:
-        root = Path(temp)
-        uploads = Path(os.getenv('CLINIC_UPLOAD_DIR', str(DATA/'attachments')))
-        with maintenance_lock(DATABASE_URL):
-            pg_tool('pg_dump', ['--format=custom','--no-owner','--no-acl','--file',str(root/'database.dump')], DATABASE_URL)
+    key=key_bytes(key_path)
+    keep=int(os.getenv('CLINIC_BACKUP_KEEP','7'))
+    if not 2<=keep<=30:raise ValueError('Retention must keep 2 to 30 backups')
+    offsite=os.getenv('CLINIC_BACKUP_OFFSITE_DIR','')
+    required=os.getenv('CLINIC_REQUIRE_OFFSITE','0')
+    if required not in ('0','1'):raise ValueError('CLINIC_REQUIRE_OFFSITE must be 0 or 1')
+    if required=='1' and not offsite:raise ValueError('An encrypted off-server backup destination is required')
+    destination=destination.resolve()
+    destination.mkdir(parents=True,exist_ok=True,mode=0o700)
+    uploads=Path(os.getenv('CLINIC_UPLOAD_DIR',str(DATA/'attachments')))
+    with tempfile.TemporaryDirectory(prefix='.backup-',dir=destination) as temp:
+        root=Path(temp)
+        with maintenance_lock(DATABASE_URL) as c:
+            estimate=c.execute('SELECT pg_database_size(current_database())').fetchone()[0]+tree_bytes(uploads)
+            require_space(destination,2*estimate+64*1024*1024)
+            current=sum(p.stat().st_size for p in destination.glob('minhduc-*.mdbackup'))
+            if current+estimate>LIMITS.backup_total_bytes:
+                raise StorageLimitError('Kho backup đạt ngân sách dung lượng. Giữ bản tốt cũ; quản trị kiểm tra bản ngoài máy trước khi giải phóng chỗ.')
+            pg_tool('pg_dump',['--format=custom','--no-owner','--no-acl','--file',str(root/'database.dump')],DATABASE_URL)
+            files={'database.dump':checksum(root/'database.dump')}
+            # iterators avoid constructing a list of every attachment in RAM.
             if uploads.exists():
-                if any(p.is_symlink() for p in uploads.rglob('*')):
-                    raise ValueError('Attachment storage must not contain symlinks')
-                shutil.copytree(uploads, root/'attachments', symlinks=False)
-            else:
-                (root/'attachments').mkdir()
-            manifest = {'format':1, 'created_at':datetime.now(timezone.utc).isoformat(),
-                        'files':{str(f.relative_to(root)):checksum(f) for f in sorted(root.rglob('*')) if f.is_file()}}
-        (root/'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False))
-        archive=root/'payload.tar'
-        with tarfile.open(archive,'w') as tar:
-            for name in ('database.dump','attachments','manifest.json'):
-                tar.add(root/name, arcname=name)
-        name = 'minhduc-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+secrets.token_hex(4)+'.mdbackup'
-        pending=root/'encrypted.tmp'
-        crypt_file(archive,pending,key)
-        target=destination/name
-        os.replace(pending,target)
-    # Only prune files produced by this tool, after a new backup succeeds.
-    for old in sorted(destination.glob('minhduc-*.mdbackup'), key=lambda p:p.stat().st_mtime, reverse=True)[keep:]:
-        old.unlink()
+                for path in uploads.rglob('*'):
+                    if path.is_symlink():raise ValueError('Attachment storage must not contain symlinks')
+                    if path.is_file():files['attachments/'+str(path.relative_to(uploads)).replace(os.sep,'/')]=checksum(path)
+            manifest={'format':1,'created_at':datetime.now(timezone.utc).isoformat(),'files':files}
+            (root/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False))
+            if not uploads.exists():(root/'attachments').mkdir()
+            name='minhduc-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+secrets.token_hex(4)+'.mdbackup'
+            pending=root/'encrypted.tmp'
+            encrypt_archive([(root/'database.dump','database.dump'),
+                             (uploads if uploads.exists() else root/'attachments','attachments'),
+                             (root/'manifest.json','manifest.json')],pending,key)
+            if current+pending.stat().st_size>LIMITS.backup_total_bytes:raise StorageLimitError('Bản backup mới vượt ngân sách dung lượng')
+            target=destination/name
+            os.replace(pending,target)
+    # A failed offsite copy leaves the new local backup AND all old good copies.
+    # This permits manual recovery and never prunes the only known good backup.
+    if offsite:
+        offsite_keep=int(os.getenv('CLINIC_OFFSITE_KEEP','30'))
+        if not 2<=offsite_keep<=90:raise ValueError('Offsite retention must keep 2 to 90 backups')
+        copy_offsite(target,offsite)
+        for old in sorted(Path(offsite).glob('minhduc-*.mdbackup'),key=lambda p:p.stat().st_mtime,reverse=True)[offsite_keep:]:old.unlink()
+    for old in sorted(destination.glob('minhduc-*.mdbackup'),key=lambda p:p.stat().st_mtime,reverse=True)[keep:]:old.unlink()
     return target
 
 

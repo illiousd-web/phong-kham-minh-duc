@@ -1,3 +1,5 @@
+> **Profile máy 8 GB (Issue #3):** mặc định mới 1 worker/pool4, backup7bản và ngưỡng dung lượng. Xem [hướng dẫn Windows ngắn](docs/WINDOWS_8GB_QUICKSTART.md) và [cấu hình tài nguyên](docs/RESOURCE_LIGHT.md); các con số 2worker/pool16/backup30 trong phần v0.4 cũ bên dưới là thông tin lịch sử.
+
 # Minh Đức v0.4 — thử nghiệm máy chủ LAN
 
 Nhánh này bổ sung PostgreSQL, HTTPS nội bộ, tài khoản nhân viên riêng, quản lý phiên/phân quyền, nhật ký, sao lưu mã hóa và khôi phục. Giữ giao diện xanh ngọc–trắng, logo và 9 mẫu Word gốc. **Chỉ dùng dữ liệu giả lập; chưa nghiệm thu bảo mật và nghiệp vụ y tế.**

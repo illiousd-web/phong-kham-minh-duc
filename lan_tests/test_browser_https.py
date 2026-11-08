@@ -1,4 +1,4 @@
-"""Real HTTPS, two server workers, three isolated concurrent browser sessions."""
+"""Real HTTPS, configured resource-light worker, three isolated concurrent browser sessions."""
 import base64
 import hashlib
 from io import BytesIO

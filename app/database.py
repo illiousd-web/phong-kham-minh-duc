@@ -9,7 +9,8 @@ import os
 from pathlib import Path
 import re
 import sqlite3
-from .config import DATABASE_URL, LAN
+from .config import DATABASE_URL, LAN, DATA
+from .resources import LIMITS
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = Path(os.getenv('CLINIC_DB_PATH', str(ROOT / 'data' / 'minh_duc_demo.sqlite3'))).resolve()
@@ -66,7 +67,8 @@ def pool():
     global _pool
     if _pool is None:
         from psycopg_pool import ConnectionPool
-        _pool = ConnectionPool(DATABASE_URL, min_size=1, max_size=16, timeout=10,
+        _pool = ConnectionPool(DATABASE_URL, min_size=LIMITS.pool_min, max_size=LIMITS.pool_max, timeout=5,
+                               max_idle=60, max_lifetime=1800, num_workers=1,
                                kwargs={'row_factory': record_factory, 'connect_timeout': 5}, open=True)
     return _pool
 
@@ -74,6 +76,9 @@ def pool():
 @contextmanager
 def db(write=False):
     if LAN:
+        if write:
+            from .storage import require_space
+            require_space(DATA)
         with pool().connection() as con:
             with con.transaction():
                 con.execute("SET LOCAL statement_timeout = '30s'")

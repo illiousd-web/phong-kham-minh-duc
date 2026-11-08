@@ -1,0 +1,32 @@
+{
+  "issue": 3,
+  "base": "0058564",
+  "branch": "feat/issue-3-low-resource-windows",
+  "synthetic_only": true,
+  "local_test_runs": {
+    "demo": {
+      "tests": "47",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "45.417"
+    },
+    "lan": {
+      "tests": "25",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "37.143"
+    }
+  },
+  "powershell_synthetic_checks": 6,
+  "powershell_local_version": "7.5.4 (Linux, syntax/fixtures only)",
+  "runtime_cve_findings": 0,
+  "original_assets_unchanged": 31,
+  "clinic_hardware_tested": false,
+  "benchmark_reports": [
+    "benchmarks/issue3-linux-run1.json",
+    "benchmarks/issue3-linux-run2.json"
+  ],
+  "benchmark_harness_sha256": "423077eeb6c84791750ce3b967028aec0754577d36346c98e1ed6f65e192379c"
+}

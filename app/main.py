@@ -6,6 +6,10 @@ import hmac
 import os
 import secrets
 import uuid
+from contextlib import asynccontextmanager
+from starlette.concurrency import run_in_threadpool
+from .resources import LIMITS, export_slot
+from .storage import check_upload, StorageLimitError
 from datetime import datetime, timedelta, timezone, date
 from pathlib import Path
 from typing import Literal
@@ -70,7 +74,19 @@ def init_db():
             (1,'LO-MAU-001','2027-03-30',120,0),(1,'LO-MAU-002','2027-09-30',300,0),(3,'KS-MAU-001','2027-10-15',10,1)])
         # Dữ liệu được cố ý để trống: không tạo bệnh nhân giả nếu người dùng chưa thao tác.
 
-app=FastAPI(title='Phòng khám đa khoa Minh Đức - bản thử nghiệm',version='0.4.0',docs_url=None if LAN else '/api/docs',openapi_url=None if LAN else '/api/openapi.json')
+@asynccontextmanager
+async def lifespan(app):
+    import anyio.to_thread
+    anyio.to_thread.current_default_thread_limiter().total_tokens=LIMITS.threads
+    try:yield
+    finally:
+        from . import database
+        if database._pool:
+            database._pool.close()
+            database._pool=None
+
+
+app=FastAPI(title='Phòng khám đa khoa Minh Đức - bản thử nghiệm',version='0.4.0',lifespan=lifespan,docs_url=None if LAN else '/api/docs',openapi_url=None if LAN else '/api/openapi.json')
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=HOSTS,
@@ -103,11 +119,13 @@ async def security_headers(request:Request,call_next):
             token = request.cookies.get('__Host-clinic', '')
             if token:
                 try:
-                    with db(True) as c:
-                        actor = c.execute('SELECT user_id FROM sessions WHERE token_hash=?', (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
-                        if actor:
-                            c.execute('INSERT INTO audit_log(user_id,event,object_type,details,created_at) VALUES(?,?,?,?,?)',
-                                      (actor['user_id'],'api_access','http',request.method+' '+request.url.path[:250]+' '+str(response.status_code),NOW()))
+                    def log_access():
+                        with db(True) as c:
+                            actor = c.execute('SELECT user_id FROM sessions WHERE token_hash=?', (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
+                            if actor:
+                                c.execute('INSERT INTO audit_log(user_id,event,object_type,details,created_at) VALUES(?,?,?,?,?)',
+                                          (actor['user_id'],'api_access','http',request.method+' '+request.url.path[:250]+' '+str(response.status_code),NOW()))
+                    await run_in_threadpool(log_access)
                 except Exception:
                     # Business mutation audit is already committed atomically in
                     # its own transaction. Supplemental HTTP logging must not turn
@@ -384,22 +402,41 @@ def approve_result(order_id:int,u=Depends(principal)):
         return {'status':'approved','note':'Chỉ xác nhận quy trình demo, không có chữ ký số chuyên môn'}
 
 @app.post('/api/orders/{order_id}/attachment')
-async def add_attachment(order_id:int,file:UploadFile=File(...),u=Depends(principal)):
+def add_attachment(order_id:int,file:UploadFile=File(...),u=Depends(principal)):
     require(u,'technician')
     if file.content_type not in ('application/pdf','image/png','image/jpeg'):raise HTTPException(415,'Chỉ chấp nhận PDF/PNG/JPEG')
-    raw=await file.read(5*1024*1024+1)
-    if not raw or len(raw)>5*1024*1024:raise HTTPException(413,'Tệp không được quá 5 MB')
+    raw=file.file.read(LIMITS.upload_bytes+1)
+    if not raw or len(raw)>LIMITS.upload_bytes:raise HTTPException(413,'Tệp không được quá 5 MB')
     if not (raw.startswith(b'%PDF-') or raw.startswith(b'\x89PNG\r\n\x1a\n') or raw.startswith(b'\xff\xd8\xff')):raise HTTPException(415,'Không nhận dạng định dạng tệp')
     ext={'application/pdf':'.pdf','image/png':'.png','image/jpeg':'.jpg'}[file.content_type]
     key=uuid.uuid4().hex+ext
     FILES.mkdir(parents=True,exist_ok=True)
-    with db(True) as c:
-        o=c.execute('SELECT status FROM orders WHERE id=?',(order_id,)).fetchone()
-        if not o:raise HTTPException(404,'Không có chỉ định')
-        if o['status']=='approved':raise HTTPException(409,'Kết quả đã duyệt')
-        (FILES/key).write_bytes(raw)
-        c.execute('UPDATE orders SET file_key=?,file_name=? WHERE id=?',(key,(file.filename or 'Kết quả')[:120],order_id))
-        audit(c,u,'attachment_uploaded','order',order_id,key)
+    target=FILES/key
+    previous=None
+    try:
+        with db(True) as c:
+            o=c.execute('SELECT status,file_key FROM orders WHERE id=?',(order_id,)).fetchone()
+            if not o:raise HTTPException(404,'Không có chỉ định')
+            if o['status']=='approved':raise HTTPException(409,'Kết quả đã duyệt')
+            if LAN:check_upload(FILES,len(raw))
+            previous=o['file_key']
+            with target.open('xb') as output:
+                output.write(raw);output.flush();os.fsync(output.fileno())
+            c.execute('UPDATE orders SET file_key=?,file_name=? WHERE id=?',(key,(file.filename or 'Kết quả')[:120],order_id))
+            audit(c,u,'attachment_uploaded','order',order_id,key)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    # Retire only the replaced, unreferenced attachment after successful commit,
+    # taking the same lock as backup so a directory scan cannot race deletion.
+    if previous and previous!=key:
+        try:
+            with db(True) as c:
+                if not c.execute('SELECT 1 FROM orders WHERE file_key=?',(previous,)).fetchone():
+                    (FILES/previous).unlink(missing_ok=True)
+        except Exception:
+            import logging
+            logging.getLogger('clinic').warning('Replaced attachment cleanup deferred')
     return {'ok':True,'file_name':file.filename}
 
 @app.get('/api/orders/{order_id}/attachment')
@@ -664,6 +701,7 @@ def stock_issue(data:StockIssue,u=Depends(principal)):
         return {'medicine_id':data.medicine_id,'quantity':data.quantity,'lots':used,'status':'demo_issued'}
 
 @app.get('/api/print/{kind}/{item_id}')
+@export_slot
 def print_form(kind:str,item_id:int,u=Depends(principal)):
     if kind not in ('intake','clinical','order','result','rx','follow_up','receipt'):
         raise HTTPException(404,'Biểu mẫu không tồn tại')
@@ -739,7 +777,8 @@ def form_context(c, kind: str, object_id: int):
     charge=c.execute('SELECT label FROM charges WHERE visit_id=? ORDER BY id LIMIT 1',(visit_id,)).fetchone()
     context={'visit':visit,'patient':patient,'doctor_name':doctor['full_name'],
              'service_label':charge['label'] if charge else 'Chưa xác định',
-             'orders':[dict(x) for x in c.execute('SELECT * FROM orders WHERE visit_id=? ORDER BY id',(visit_id,))]}
+             'orders':[dict(x) for x in c.execute('SELECT * FROM orders WHERE visit_id=? ORDER BY id LIMIT 201',(visit_id,))]}
+    if len(context['orders'])>200:raise HTTPException(413,'Lượt khám quá nhiều chỉ định để xuất gộp; liên hệ quản trị')
     if order:context['order']=order
     if rx:context['rx']=rx
     if kind=='followup':
@@ -748,6 +787,7 @@ def form_context(c, kind: str, object_id: int):
     return context
 
 @app.get('/api/forms/{kind}/{object_id}',name='download_demo_form')
+@export_slot
 def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends(principal)):
     if kind not in TEMPLATE_BY_TYPE:raise HTTPException(404,'Không có biểu mẫu')
     if kind=='intake':require(u,'reception','admin')
@@ -808,3 +848,7 @@ if LAN:
     @app.exception_handler(PoolTimeout)
     async def database_unavailable(request, exc):
         return JSONResponse(status_code=503,content={'detail':'Cơ sở dữ liệu tạm không sẵn sàng; kiểm tra trước khi gửi lại giao dịch'},headers={'Retry-After':'5'})
+
+@app.exception_handler(StorageLimitError)
+async def storage_full(request,exc):
+    return JSONResponse(status_code=507,content={'detail':str(exc)})
