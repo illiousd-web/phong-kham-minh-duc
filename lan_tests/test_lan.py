@@ -10,6 +10,7 @@ import pytest
 from pypdf import PdfReader
 from docx import Document
 from .conftest import client_for, db, IDS, PASSWORDS, SERVICE, ROOT, URL
+from .flows_v042 import create_order,create_rx
 
 
 def test_no_demo_accounts_or_password_environment():
@@ -114,7 +115,7 @@ def test_complete_workflow_all_nine_forms(clients,visit):
     assert cash.get(f'/api/visits/{visit}').json().get('diagnosis') is None
     forms=[(r,'intake',visit),(doc,'visit',visit),(doc,'followup',visit)]
     for category in ('lab','ultrasound','xray','ecg'):
-        oid=doc.post('/api/orders',json={'visit_id':visit,'category':category,'name':'Chỉ định giả lập '+category}).json()['id']
+        oid=create_order(clients,visit,category)
         assert doc.get(f'/api/forms/{category}/{oid}').status_code==409
         assert tech.put(f'/api/orders/{oid}/result',json={'result_text':'Kết quả giả lập đã duyệt'}).status_code==200
         upload=tech.post(f'/api/orders/{oid}/attachment',files={'file':('fake.pdf',b'%PDF-1.5\nFAKE', 'application/pdf')})
@@ -126,7 +127,7 @@ def test_complete_workflow_all_nine_forms(clients,visit):
         assert r.get(f'/api/orders/{oid}/attachment').status_code==403
         forms.append((doc,category,oid))
         if category=='lab':forms.append((doc,'order',oid))
-    rx=doc.post('/api/prescriptions',json={'visit_id':visit,'drug_lines':'Thuốc giả | 2 | Không dùng điều trị'}).json()
+    rx=create_rx(clients,visit)
     assert rx['status']=='draft';forms.append((doc,'rx',rx['id']))
     assert len(forms)==9
     for client,kind,oid in forms:
@@ -219,13 +220,13 @@ def test_long_exports_preserve_tail_and_intake_hides_clinical(clients,visit):
     complaint='Nội dung chuyên môn riêng tư chỉ bác sĩ xem'
     history=('Bệnh sử giả lập dài '*180)+' HISTORY_TAIL_MARKER'
     instructions=('Lời dặn giả lập '*120)+' INSTRUCTION_TAIL_MARKER'
-    assert doc.put(f'/api/visits/{visit}/clinical',json={'version':0,'chief_complaint':complaint,'history':history}).status_code==200
-    oid=doc.post('/api/orders',json={'visit_id':visit,'category':'lab','name':'Xét nghiệm dài giả lập'}).json()['id']
+    assert doc.put(f'/api/visits/{visit}/clinical',json={'version':0,'chief_complaint':complaint,'history':history,'diagnosis':'Chẩn đoán giả lập dài'}).status_code==200
+    oid=create_order(clients,visit,'lab')
     result=('Kết quả thử '*800)+' RESULT_TAIL_MARKER'
     assert len(result)<=10000
     assert tech.put(f'/api/orders/{oid}/result',json={'result_text':result}).status_code==200
     assert doc.post(f'/api/orders/{oid}/approve').status_code==200
-    rid=doc.post('/api/prescriptions',json={'visit_id':visit,'drug_lines':'Thuốc giả | 1 | Không điều trị','instructions':instructions}).json()['id']
+    rid=create_rx(clients,visit,instructions=instructions)['id']
     for kind,item,marker in [('visit',visit,'HISTORY_TAIL_MARKER'),('lab',oid,'RESULT_TAIL_MARKER'),('rx',rid,'INSTRUCTION_TAIL_MARKER')]:
         for fmt in ('pdf','docx'):
             response=doc.get(f'/api/forms/{kind}/{item}?fmt={fmt}')

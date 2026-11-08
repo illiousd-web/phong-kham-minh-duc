@@ -69,7 +69,7 @@ def test_database_runtime_role_cannot_mutate_audit():
 def test_appointment_validation_and_single_arrival(clients):
     from .conftest import IDS,SERVICE
     r=clients['reception']
-    patient=r.post('/api/patients',json={'full_name':'Lịch hẹn giả lập'}).json()['id']
+    patient=r.post('/api/patients',json={'full_name':'Lịch hẹn giả lập','sex':'Nam','date_of_birth':'1970-07-07','phone':'0900000011'}).json()['id']
     body={'patient_id':patient,'doctor_id':IDS['doctor'],'scheduled_at':'not-a-valid-date'}
     assert r.post('/api/appointments',json=body).status_code==422
     body['scheduled_at']='2027-01-01T08:00'

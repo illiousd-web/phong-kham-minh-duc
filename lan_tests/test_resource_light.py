@@ -5,10 +5,11 @@ import secrets
 import shutil
 import pytest
 from .conftest import db
+from .flows_v042 import create_order
 
 
 def order(clients,visit):
-    return clients['doctor'].post('/api/orders',json={'visit_id':visit,'category':'lab','name':'Tệp giả lập tài nguyên'}).json()['id']
+    return create_order(clients,visit,'lab')
 
 
 def test_low_disk_refuses_upload_without_changing_record(clients,visit,monkeypatch):

@@ -64,7 +64,7 @@ def clients():
 @pytest.fixture
 def visit(clients):
     r=clients['reception']
-    patient=r.post('/api/patients',json={'full_name':'Bệnh nhân giả lập LAN','sex':'Nữ','date_of_birth':'1990-01-01'})
+    patient=r.post('/api/patients',json={'full_name':'Bệnh nhân giả lập LAN','sex':'Nữ','date_of_birth':'1990-01-01','phone':'0900000010'})
     assert patient.status_code==201,patient.text
     result=r.post('/api/visits',json={'patient_id':patient.json()['id'],'doctor_id':IDS['doctor'],'service_id':SERVICE})
     assert result.status_code==201,result.text

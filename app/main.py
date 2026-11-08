@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, field_validator
 from .print_forms import pdf_document
+from .labels import parse_day
 
 BASE = Path(__file__).resolve().parent
 DB = Path(os.environ.get("CLINIC_DB_PATH", str(BASE.parent / "data" / "minh_duc_demo.sqlite3"))).resolve()
@@ -86,7 +87,7 @@ async def lifespan(app):
             database._pool=None
 
 
-app=FastAPI(title='Phòng khám đa khoa Minh Đức - bản thử nghiệm',version='0.4.0',lifespan=lifespan,docs_url=None if LAN else '/api/docs',openapi_url=None if LAN else '/api/openapi.json')
+app=FastAPI(title='Phòng khám đa khoa Minh Đức - bản thử nghiệm',version='0.4.1',lifespan=lifespan,docs_url=None if LAN else '/api/docs',openapi_url=None if LAN else '/api/openapi.json')
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=HOSTS,
@@ -147,7 +148,7 @@ def index():return FileResponse(BASE/'static'/'index.html',headers={'Cache-Contr
 def health():
     if LAN:
         with db() as c:c.execute('SELECT 1').fetchone()
-    return {'status':'lan-pilot' if LAN else 'demo','version':'0.4.0','mode':'lan' if LAN else 'demo','clinic':'Phòng khám đa khoa Minh Đức'}
+    return {'status':'lan-pilot' if LAN else 'demo','version':'0.4.2','mode':'lan' if LAN else 'demo','clinic':'Phòng khám đa khoa Minh Đức'}
 
 from .auth import install_auth, pw_hash
 principal = install_auth(app, db, LAN, NOW)
@@ -160,13 +161,17 @@ def audit(c,u,event,typ,obj,details=''):
               (u['id'],event,typ,obj,details[:500],NOW()))
 
 def visit_access(c,u,vid:int,*,clinical=False):
-    v=c.execute('SELECT visits.*,patients.full_name AS patient_name,patients.code AS patient_code FROM visits JOIN patients ON patients.id=visits.patient_id WHERE visits.id=?',(vid,)).fetchone()
+    v=c.execute('''SELECT visits.*,patients.full_name AS patient_name,patients.code AS patient_code,
+                 patients.sex AS patient_sex,patients.date_of_birth AS patient_dob
+                 FROM visits JOIN patients ON patients.id=visits.patient_id WHERE visits.id=?''',(vid,)).fetchone()
     if not v:raise HTTPException(404,'Không tìm thấy lượt khám')
     if clinical:
         if 'doctor' in u['roles'] and v['doctor_id']==u['id']:return v
         # Chưa có phân công điều dưỡng chi tiết: chặn quyền xem toàn bộ bệnh án.
         raise HTTPException(403,'Không được truy cập hồ sơ chuyên môn này')
     return v
+
+from .workflows_v042 import ensure_open, install_workflows
 
 @app.get('/api/staff')
 def staff(u=Depends(principal)):
@@ -175,18 +180,41 @@ def staff(u=Depends(principal)):
         return [dict(x) for x in c.execute("SELECT u.id,u.full_name,u.username FROM users u JOIN user_roles r ON r.user_id=u.id WHERE r.role='doctor' AND u.active=1 ORDER BY u.id")]
 
 class PatientInput(BaseModel):
+    # Khảo sát bước 4: họ tên, ngày sinh, giới tính, số điện thoại là bắt buộc;
+    # căn cước và địa chỉ có thể bổ sung sau.
     full_name:str=Field(min_length=2,max_length=180)
-    date_of_birth:str|None=None
-    sex:Literal['Nam','Nữ','Khác','Chưa rõ']='Chưa rõ'
-    phone:str|None=Field(default=None,max_length=30)
+    date_of_birth:str
+    sex:Literal['Nam','Nữ','Khác']
+    phone:str=Field(max_length=30)
     citizen_id:str|None=Field(default=None,max_length=24)
     address:str|None=Field(default=None,max_length=300)
+
+    @field_validator('full_name')
+    @classmethod
+    def name_valid(cls,v):
+        v=' '.join(v.split())
+        if len(v)<2:raise ValueError('Cần nhập họ và tên')
+        return v
 
     @field_validator('date_of_birth')
     @classmethod
     def date_valid(cls,v):
-        if v and (date.fromisoformat(v)>date.today() or date.fromisoformat(v)<date(1900,1,1)):raise ValueError('Ngày sinh không hợp lệ')
-        return v
+        iso=parse_day(v)
+        if not iso:raise ValueError('Cần nhập ngày sinh')
+        if date.fromisoformat(iso)>date.today() or date.fromisoformat(iso)<date(1900,1,1):raise ValueError('Ngày sinh không hợp lệ')
+        return iso
+
+    @field_validator('phone')
+    @classmethod
+    def phone_valid(cls,v):
+        digits=''.join(ch for ch in v if ch.isdigit())
+        if not 9<=len(digits)<=12:raise ValueError('Số điện thoại cần 9–12 chữ số')
+        return digits
+
+    @field_validator('citizen_id','address')
+    @classmethod
+    def blank_to_none(cls,v):
+        return (v or '').strip() or None
 
 @app.post('/api/patients',status_code=201)
 def add_patient(data:PatientInput,u=Depends(principal)):
@@ -212,8 +240,11 @@ def patients(q:str='',u=Depends(principal)):
     with db() as c:
         wh="WHERE (p.full_name LIKE ? OR p.code LIKE ? OR p.phone LIKE ?)" if q else ''
         args=['%'+q+'%']*3 if q else []
-        if 'doctor' in u['roles'] and not {'reception','admin'}.intersection(u['roles']):
-            wh+=(' AND ' if wh else ' WHERE ')+ 'EXISTS (SELECT 1 FROM visits v WHERE v.patient_id=p.id AND v.doctor_id=?)'
+        if not {'reception','admin'}.intersection(u['roles']):
+            if 'doctor' in u['roles']:
+                wh+=(' AND ' if wh else ' WHERE ')+ 'EXISTS (SELECT 1 FROM visits v WHERE v.patient_id=p.id AND v.doctor_id=?)'
+            else:
+                wh+=(' AND ' if wh else ' WHERE ')+ 'EXISTS (SELECT 1 FROM visits v JOIN visit_nurses n ON n.visit_id=v.id WHERE v.patient_id=p.id AND n.nurse_id=?)'
             args.append(u['id'])
         sql=f'SELECT p.id,p.code,p.full_name,p.date_of_birth,p.sex,p.phone,p.address FROM patients p {wh} ORDER BY p.id DESC LIMIT 100'
         return [dict(x) for x in c.execute(sql,args)]
@@ -224,8 +255,12 @@ def patient_detail(patient_id:int,u=Depends(principal)):
     with db() as c:
         p=c.execute('SELECT * FROM patients WHERE id=?',(patient_id,)).fetchone()
         if not p:raise HTTPException(404,'Không có bệnh nhân')
-        if 'doctor' in u['roles'] and not {'reception','admin'}.intersection(u['roles']):
-            if not c.execute('SELECT 1 FROM visits WHERE patient_id=? AND doctor_id=?',(patient_id,u['id'])).fetchone():raise HTTPException(403,'Không được xem hồ sơ này')
+        if not {'reception','admin'}.intersection(u['roles']):
+            if 'doctor' in u['roles']:
+                allowed=c.execute('SELECT 1 FROM visits WHERE patient_id=? AND doctor_id=?',(patient_id,u['id'])).fetchone()
+            else:
+                allowed=c.execute('SELECT 1 FROM visits v JOIN visit_nurses n ON n.visit_id=v.id WHERE v.patient_id=? AND n.nurse_id=?',(patient_id,u['id'])).fetchone()
+            if not allowed:raise HTTPException(403,'Không được xem hồ sơ này')
         return dict(p)
 
 class AppointmentInput(BaseModel):
@@ -315,19 +350,26 @@ def list_visits(u=Depends(principal)):
             sql='SELECT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
             return [dict(x) for x in c.execute(sql)]
         if 'nurse' in u['roles']:
-            sql='SELECT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
-            return [dict(x) for x in c.execute(sql)]
+            sql='''SELECT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name
+            FROM visits v JOIN patients p ON p.id=v.patient_id
+            JOIN visit_nurses n ON n.visit_id=v.id WHERE n.nurse_id=? ORDER BY v.id DESC LIMIT 100'''
+            return [dict(x) for x in c.execute(sql,(u['id'],))]
         return []
 
 @app.get('/api/visits/{visit_id}')
 def visit_detail(visit_id:int,u=Depends(principal)):
     require(u,'doctor','nurse','reception','cashier','admin')
     with db(True) as c:
-        v=visit_access(c,u,visit_id,clinical=True) if ('doctor' in u['roles'] or 'nurse' in u['roles']) else visit_access(c,u,visit_id)
+        v=visit_access(c,u,visit_id,clinical=True) if 'doctor' in u['roles'] else visit_access(c,u,visit_id)
         if 'doctor' in u['roles']:
             audit(c,u,'clinical_viewed','visit',visit_id)
             return dict(v)
-        return {'id':v['id'],'patient_id':v['patient_id'],'patient_name':v['patient_name'],'patient_code':v['patient_code'],'status':v['status'],'doctor_id':v['doctor_id'],'created_at':v['created_at']}
+        brief={'id':v['id'],'patient_id':v['patient_id'],'patient_name':v['patient_name'],'patient_code':v['patient_code'],'status':v['status'],'doctor_id':v['doctor_id'],'created_at':v['created_at']}
+        if 'nurse' in u['roles']:
+            if not c.execute('SELECT 1 FROM visit_nurses WHERE visit_id=? AND nurse_id=?',(visit_id,u['id'])).fetchone():
+                raise HTTPException(403,'Điều dưỡng chưa được phân công')
+            brief.update(vitals=v['vitals'],version=v['version'])
+        return brief
 
 class ClinicalInput(BaseModel):
     chief_complaint:str=Field(default='',max_length=3000)
@@ -338,11 +380,17 @@ class ClinicalInput(BaseModel):
     follow_up:str|None=Field(default=None,max_length=80)
     version:int=Field(ge=0)
 
+    @field_validator('follow_up')
+    @classmethod
+    def follow_up_day(cls,v):
+        return parse_day(v)
+
 @app.put('/api/visits/{visit_id}/clinical')
 def update_clinical(visit_id:int,data:ClinicalInput,u=Depends(principal)):
     require(u,'doctor')
     with db(True) as c:
-        visit_access(c,u,visit_id,clinical=True)
+        v=visit_access(c,u,visit_id,clinical=True)
+        ensure_open(v)
         changed=c.execute('UPDATE visits SET chief_complaint=?,history=?,vitals=?,diagnosis=?,treatment=?,follow_up=?,version=version+1,status=? WHERE id=? AND version=?',
                           (data.chief_complaint,data.history,data.vitals,data.diagnosis,data.treatment,data.follow_up,'in_progress',visit_id,data.version))
         if changed.rowcount!=1:raise HTTPException(409,'Hồ sơ đã được sửa ở phiên khác; hãy tải lại')
@@ -352,18 +400,50 @@ def update_clinical(visit_id:int,data:ClinicalInput,u=Depends(principal)):
 class OrderInput(BaseModel):
     visit_id:int
     category:Literal['lab','ultrasound','xray','ecg']
-    name:str=Field(min_length=3,max_length=180)
+    name:str=Field(default='',max_length=180)
+    service_id:int|None=None
+    request_key:str|None=Field(default=None,min_length=8,max_length=120)
 
 @app.post('/api/orders',status_code=201)
 def add_order(data:OrderInput,u=Depends(principal)):
     require(u,'doctor')
     with db(True) as c:
-        visit_access(c,u,data.visit_id,clinical=True)
+        if LAN and not data.request_key:
+            raise HTTPException(422,'Chỉ định LAN phải có mã yêu cầu chống ghi trùng')
+        if data.request_key:
+            existing=c.execute('''SELECT q.order_id,q.visit_id,q.service_id,q.category,q.requested_by,ch.amount
+                FROM order_requests q JOIN charge_sources src ON src.source_type='order' AND src.source_id=q.order_id
+                JOIN charges ch ON ch.id=src.charge_id WHERE q.request_key=?''',(data.request_key,)).fetchone()
+            if existing:
+                if existing['visit_id']!=data.visit_id or existing['service_id']!=data.service_id or existing['category']!=data.category or existing['requested_by']!=u['id']:
+                    raise HTTPException(409,'Mã yêu cầu đã dùng cho nội dung khác')
+                return {'id':existing['order_id'],'charge_amount':existing['amount'],'status':'already_recorded'}
+        v=visit_access(c,u,data.visit_id,clinical=True)
+        ensure_open(v)
+        service=None
+        if data.service_id is not None:
+            service=c.execute('''SELECT sc.id,sc.name,sc.price,cat.category FROM service_catalog sc
+                JOIN service_categories cat ON cat.service_id=sc.id WHERE sc.id=?''',(data.service_id,)).fetchone()
+            if not service or service['category']!=data.category or service['price']<=0:
+                raise HTTPException(422,'Dịch vụ cận lâm sàng chưa có loại/giá hợp lệ')
+        elif LAN:
+            raise HTTPException(422,'Chỉ định LAN phải chọn dịch vụ từ bảng giá; không lập chỉ định miễn phí ngoài quy trình')
+        elif len(data.name.strip())<3:
+            raise HTTPException(422,'Cần nhập tên chỉ định thử nghiệm')
+        label=service['name'] if service else data.name.strip()
         c.execute('INSERT INTO orders(visit_id,category,name,requested_by,created_at) VALUES(?,?,?,?,?)',
-                  (data.visit_id,data.category,data.name,u['id'],NOW()))
+                  (data.visit_id,data.category,label,u['id'],NOW()))
         oid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
-        audit(c,u,'order_created','order',oid)
-        return {'id':oid}
+        if service:
+            c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',
+                      (data.visit_id,service['name'],service['price'],NOW()))
+            cid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+            c.execute("INSERT INTO charge_sources(charge_id,source_type,source_id) VALUES(?,'order',?)",(cid,oid))
+            if data.request_key:
+                c.execute('''INSERT INTO order_requests(request_key,order_id,visit_id,service_id,category,requested_by)
+                    VALUES(?,?,?,?,?,?)''',(data.request_key,oid,data.visit_id,data.service_id,data.category,u['id']))
+        audit(c,u,'order_created','order',oid,'Billed' if service else 'Unpriced demo')
+        return {'id':oid,'charge_amount':service['price'] if service else 0,'status':'ordered'}
 
 @app.get('/api/orders')
 def list_orders(u=Depends(principal)):
@@ -382,7 +462,8 @@ class ResultInput(BaseModel):
 def submit_result(order_id:int,data:ResultInput,u=Depends(principal)):
     require(u,'technician')
     with db(True) as c:
-        order=c.execute('SELECT status FROM orders WHERE id=?',(order_id,)).fetchone()
+        order=c.execute('SELECT o.status,v.status AS visit_status FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
+        if order and order['visit_status']=='completed':raise HTTPException(409,'Lượt khám đã kết thúc')
         if not order:raise HTTPException(404,'Không có chỉ định')
         if order['status'] not in ('ordered','pending_review'):raise HTTPException(409,'Kết quả đã duyệt, không được sửa trực tiếp')
         c.execute("UPDATE orders SET result_text=?,result_by=?,status='pending_review' WHERE id=?",(data.result_text,u['id'],order_id))
@@ -396,6 +477,7 @@ def approve_result(order_id:int,u=Depends(principal)):
         o=c.execute('SELECT o.*,v.doctor_id FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
         if not o:raise HTTPException(404,'Không có chỉ định')
         if o['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ phụ trách')
+        if c.execute("SELECT status FROM visits WHERE id=?",(o['visit_id'],)).fetchone()['status']=='completed':raise HTTPException(409,'Lượt khám đã kết thúc')
         if o['status']!='pending_review' or not o['result_text'].strip():raise HTTPException(409,'Chưa có kết quả chờ duyệt')
         c.execute("UPDATE orders SET status='approved',approved_by=?,approved_at=? WHERE id=?",(u['id'],NOW(),order_id))
         audit(c,u,'result_approved_demo','order',order_id,'Chưa ký số; phê duyệt mô phỏng')
@@ -415,7 +497,8 @@ def add_attachment(order_id:int,file:UploadFile=File(...),u=Depends(principal)):
     previous=None
     try:
         with db(True) as c:
-            o=c.execute('SELECT status,file_key FROM orders WHERE id=?',(order_id,)).fetchone()
+            o=c.execute('SELECT o.status,o.file_key,v.status AS visit_status FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
+            if o and o['visit_status']=='completed':raise HTTPException(409,'Lượt khám đã kết thúc')
             if not o:raise HTTPException(404,'Không có chỉ định')
             if o['status']=='approved':raise HTTPException(409,'Kết quả đã duyệt')
             if LAN:check_upload(FILES,len(raw))
@@ -461,23 +544,48 @@ def get_attachment(order_id:int,u=Depends(principal)):
         if not target.is_file():raise HTTPException(404,'Tệp không tồn tại')
         return FileResponse(target,filename=o['file_name'],headers={'Cache-Control':'no-store'})
 
+class RxItemInput(BaseModel):
+    medicine_id:int=Field(gt=0)
+    quantity:int=Field(gt=0,le=10000)
+    directions:str=Field(default='',max_length=300)
+
 class PrescriptionInput(BaseModel):
     visit_id:int
-    drug_lines:str=Field(min_length=1,max_length=6000)
+    drug_lines:str=Field(default='',max_length=6000)
+    items:list[RxItemInput]=Field(default_factory=list,max_length=30)
     instructions:str=Field(default='',max_length=3000)
     follow_up:str|None=Field(default=None,max_length=80)
+
+    @field_validator('follow_up')
+    @classmethod
+    def follow_up_day(cls,v):
+        return parse_day(v)
 
 @app.post('/api/prescriptions',status_code=201)
 def create_rx(data:PrescriptionInput,u=Depends(principal)):
     require(u,'doctor')
     with db(True) as c:
-        visit_access(c,u,data.visit_id,clinical=True)
+        v=visit_access(c,u,data.visit_id,clinical=True)
+        ensure_open(v)
+        if not (v['diagnosis'] or '').strip():raise HTTPException(409,'Cần lưu chẩn đoán trên phiếu khám trước khi lập đơn thuốc')
         if c.execute('SELECT 1 FROM prescriptions WHERE visit_id=?',(data.visit_id,)).fetchone():raise HTTPException(409,'Lượt khám đã có đơn nháp')
+        if LAN and not data.items:raise HTTPException(422,'Đơn LAN phải có dòng thuốc cấu trúc liên kết danh mục kho')
+        if not data.items and not data.drug_lines.strip():raise HTTPException(422,'Cần nhập thuốc')
+        lines=[]
+        for item in data.items:
+            med=c.execute('SELECT id,name,base_unit,controlled FROM medicines WHERE id=?',(item.medicine_id,)).fetchone()
+            if not med:raise HTTPException(422,'Thuốc không có trong danh mục')
+            if med['controlled']:raise HTTPException(403,'Chưa hỗ trợ kê/cấp thuốc phải kiểm soát đặc biệt')
+            lines.append(f'{med["name"]} | {item.quantity} {med["base_unit"]} | {item.directions}')
+        narrative='\n'.join(lines) if lines else data.drug_lines
         c.execute('INSERT INTO prescriptions(visit_id,doctor_id,drug_lines,instructions,follow_up,created_at) VALUES(?,?,?,?,?,?)',
-                  (data.visit_id,u['id'],data.drug_lines,data.instructions,data.follow_up,NOW()))
+                  (data.visit_id,u['id'],narrative,data.instructions,data.follow_up,NOW()))
         rid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        for item in data.items:
+            c.execute('INSERT INTO prescription_items(prescription_id,medicine_id,quantity,directions) VALUES(?,?,?,?)',
+                      (rid,item.medicine_id,item.quantity,item.directions))
         audit(c,u,'rx_draft_created','prescription',rid)
-        return {'id':rid,'status':'draft'}
+        return {'id':rid,'status':'draft','structured_items':len(data.items)}
 
 @app.get('/api/prescriptions')
 def get_rx(u=Depends(principal)):
@@ -487,14 +595,19 @@ def get_rx(u=Depends(principal)):
         args=[]
         if 'doctor' in u['roles'] and 'pharmacy' not in u['roles']:
             sql+=' WHERE rx.doctor_id=?';args=[u['id']]
-        return [dict(x) for x in c.execute(sql+' ORDER BY rx.id DESC',args)]
+        rows=[dict(x) for x in c.execute(sql+' ORDER BY rx.id DESC',args)]
+        for rx in rows:
+            rx['items']=[dict(x) for x in c.execute('''SELECT pi.medicine_id,pi.quantity,pi.directions,m.name,m.base_unit
+                FROM prescription_items pi JOIN medicines m ON m.id=pi.medicine_id
+                WHERE pi.prescription_id=? ORDER BY pi.id''',(rx['id'],))]
+        return rows
 
 @app.get('/api/dues')
 def dues(u=Depends(principal)):
     require(u,'cashier','reception','manager')
     with db() as c:
         sql='''SELECT v.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,
-         COALESCE((SELECT SUM(amount) FROM charges WHERE visit_id=v.id),0)-COALESCE((SELECT SUM(amount) FROM adjustments WHERE visit_id=v.id AND kind='discount' AND status='approved'),0) AS charged,
+         COALESCE((SELECT SUM(ch.amount) FROM charges ch WHERE ch.visit_id=v.id AND NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id)),0)-COALESCE((SELECT SUM(amount) FROM adjustments WHERE visit_id=v.id AND kind='discount' AND status='approved'),0) AS charged,
          COALESCE((SELECT SUM(amount) FROM payments WHERE visit_id=v.id),0)-COALESCE((SELECT SUM(amount) FROM adjustments WHERE visit_id=v.id AND kind='refund' AND status='approved'),0) AS paid
          FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'''
         return [dict(x) for x in c.execute(sql)]
@@ -515,7 +628,7 @@ def create_payment(data:PaymentInput,u=Depends(principal)):
             if old['created_by']!=u['id'] or old['amount']!=data.amount or old['visit_id']!=data.visit_id or old['method']!=data.method or (old['external_ref'] or None)!=(data.external_ref or None):raise HTTPException(409,'Khóa giao dịch đã được sử dụng với dữ liệu khác')
             return {'id':old['id'],'status':'already_recorded'}
         if not c.execute('SELECT 1 FROM visits WHERE id=?',(data.visit_id,)).fetchone():raise HTTPException(404,'Không có lượt khám')
-        charged=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM charges WHERE visit_id=?)-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE visit_id=? AND kind='discount' AND status='approved')",(data.visit_id,data.visit_id)).fetchone()[0]
+        charged=c.execute("SELECT (SELECT COALESCE(SUM(ch.amount),0) FROM charges ch WHERE ch.visit_id=? AND NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id))-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE visit_id=? AND kind='discount' AND status='approved')",(data.visit_id,data.visit_id)).fetchone()[0]
         paid=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM payments WHERE visit_id=?)-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE visit_id=? AND kind='refund' AND status='approved')",(data.visit_id,data.visit_id)).fetchone()[0]
         if data.amount>charged-paid:raise HTTPException(409,'Số tiền vượt khoản còn phải thu')
         c.execute('INSERT INTO payments(visit_id,amount,method,created_by,created_at,external_ref,idempotency_key) VALUES(?,?,?,?,?,?,?)',
@@ -579,7 +692,7 @@ def overview(u=Depends(principal)):
         orders=c.execute("SELECT COUNT(*) FROM orders WHERE status!='approved'").fetchone()[0]
         out={'visits':visits,'pending_orders':orders,'role':u['roles'][0]}
         if 'manager' in u['roles']:
-            charged=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM charges)-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE kind='discount' AND status='approved')").fetchone()[0]
+            charged=c.execute("SELECT (SELECT COALESCE(SUM(ch.amount),0) FROM charges ch WHERE NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id))-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE kind='discount' AND status='approved')").fetchone()[0]
             paid=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM payments)-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE kind='refund' AND status='approved')").fetchone()[0]
             out.update(charged=charged,paid=paid,outstanding=charged-paid,
                        stock_warning=c.execute("SELECT COUNT(*) FROM stock_lots WHERE quarantined=1 OR expiry_date<=date('now','+90 days')").fetchone()[0])
@@ -600,7 +713,8 @@ mount_forms(app, db, principal, require, audit)
 # The following extensions are strictly confined to the local pilot.
 
 def _invoice_state(c, vid:int):
-    charged=c.execute('SELECT COALESCE(SUM(amount),0) FROM charges WHERE visit_id=?',(vid,)).fetchone()[0]
+    charged=c.execute('''SELECT COALESCE(SUM(ch.amount),0) FROM charges ch WHERE ch.visit_id=?
+        AND NOT EXISTS (SELECT 1 FROM charge_voids v WHERE v.charge_id=ch.id)''',(vid,)).fetchone()[0]
     discounts=c.execute("SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE visit_id=? AND kind='discount' AND status='approved'",(vid,)).fetchone()[0]
     incoming=c.execute('SELECT COALESCE(SUM(amount),0) FROM payments WHERE visit_id=?',(vid,)).fetchone()[0]
     refunds=c.execute("SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE visit_id=? AND kind='refund' AND status='approved'",(vid,)).fetchone()[0]
@@ -730,9 +844,10 @@ def print_form(kind:str,item_id:int,u=Depends(principal)):
         elif kind in ('order','result'):
             o=c.execute('''SELECT o.*,v.doctor_id,p.code AS patient_code,p.full_name AS patient_name,
                       p.date_of_birth,p.sex,users.full_name AS doctor_name,
-                      appr.full_name AS approved_name FROM orders o
+                      appr.full_name AS approved_name,tech.full_name AS result_by_name FROM orders o
                       JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id
                       JOIN users ON users.id=v.doctor_id LEFT JOIN users appr ON appr.id=o.approved_by
+                      LEFT JOIN users tech ON tech.id=o.result_by
                       WHERE o.id=?''',(item_id,)).fetchone()
             if not o:raise HTTPException(404,'Không có chỉ định')
             require(u,'doctor')
@@ -789,7 +904,11 @@ def form_context(c, kind: str, object_id: int):
              'service_label':charge['label'] if charge else 'Chưa xác định',
              'orders':[dict(x) for x in c.execute('SELECT * FROM orders WHERE visit_id=? ORDER BY id LIMIT 201',(visit_id,))]}
     if len(context['orders'])>200:raise HTTPException(413,'Lượt khám quá nhiều chỉ định để xuất gộp; liên hệ quản trị')
-    if order:context['order']=order
+    if order:
+        names=lambda uid:(c.execute('SELECT full_name FROM users WHERE id=?',(uid,)).fetchone() or {'full_name':''})['full_name'] if uid else ''
+        order['result_by_name']=names(order.get('result_by'))
+        order['approved_by_name']=names(order.get('approved_by'))
+        context['order']=order
     if rx:context['rx']=rx
     if kind=='followup':
         r=c.execute('SELECT * FROM prescriptions WHERE visit_id=?',(visit_id,)).fetchone()
@@ -835,6 +954,7 @@ init_db()
 
 from .catalog import install_catalog
 install_catalog(app, db, principal, require, audit)
+install_workflows(app, db, principal, require, audit, visit_access, NOW)
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse

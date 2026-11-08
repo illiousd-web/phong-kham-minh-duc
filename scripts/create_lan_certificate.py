@@ -30,6 +30,7 @@ def main():
           .add_extension(x509.KeyUsage(digital_signature=True,key_cert_sign=True,crl_sign=True,
                           content_commitment=False,key_encipherment=False,data_encipherment=False,
                           key_agreement=False,encipher_only=None,decipher_only=None), critical=True)
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
           .sign(ca_key, hashes.SHA256()))
     cert = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,args.name)]))
             .issuer_name(ca_name).public_key(server_key.public_key()).serial_number(x509.random_serial_number())
@@ -37,6 +38,12 @@ def main():
             .add_extension(x509.BasicConstraints(ca=False,path_length=None), critical=True)
             .add_extension(x509.SubjectAlternativeName([x509.DNSName(args.name),x509.IPAddress(address)]),critical=False)
             .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),critical=False)
+            .add_extension(x509.KeyUsage(digital_signature=True,key_encipherment=True,content_commitment=False,
+                            data_encipherment=False,key_agreement=False,key_cert_sign=False,crl_sign=False,
+                            encipher_only=None,decipher_only=None), critical=True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(server_key.public_key()), critical=False)
+            # Python 3.13+ verifies with VERIFY_X509_STRICT, which rejects certificates without these identifiers.
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
             .sign(ca_key, hashes.SHA256()))
     for name, key in [('ca.key',ca_key),('server.key',server_key)]:
         path=args.output/name
