@@ -19,6 +19,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, field_validator
 from .print_forms import pdf_document
 
@@ -158,6 +159,11 @@ def init_db():
         # Dữ liệu được cố ý để trống: không tạo bệnh nhân giả nếu người dùng chưa thao tác.
 
 app=FastAPI(title='Phòng khám đa khoa Minh Đức - bản thử nghiệm',version='0.3.0',docs_url='/api/docs',openapi_url='/api/openapi.json')
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=['127.0.0.1', 'localhost', 'testserver'],
+    www_redirect=False,
+)
 init_db()
 app.mount('/assets',StaticFiles(directory=BASE/'static'),name='assets')
 
