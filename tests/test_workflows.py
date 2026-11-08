@@ -35,14 +35,14 @@ def test_login_and_unauthorized():
 
 def test_reception_creates_patient_appointment_and_visit():
     r=token('letan')
-    patient=client.post('/api/patients',headers=r,json={'full_name':'Người bệnh giả lập Sao','sex':'Nam','citizen_id':'DEMO-ONLY-0001'}).json()
+    patient=client.post('/api/patients',headers=r,json={'full_name':'Người bệnh giả lập Sao','sex':'Nam','date_of_birth':'1980-02-02','phone':'0900000001','citizen_id':'DEMO-ONLY-0001'}).json()
     doctors=client.get('/api/staff',headers=r).json()
     a=client.post('/api/appointments',headers=r,json={'patient_id':patient['id'],'doctor_id':doctors[0]['id'],'scheduled_at':'2026-11-11T08:00','reason':'Khám giả lập'})
     assert a.status_code==201
     v=client.post('/api/visits',headers=r,json={'patient_id':patient['id'],'doctor_id':doctors[0]['id'],'appointment_id':a.json()['id'],'service_id':1})
     assert v.status_code==201
     assert 'arrived' in [x['status'] for x in client.get('/api/appointments',headers=r).json()]
-    duplicated=client.post('/api/patients',headers=r,json={'full_name':'Bệnh nhân khác','citizen_id':'DEMO-ONLY-0001','sex':'Nam'})
+    duplicated=client.post('/api/patients',headers=r,json={'full_name':'Bệnh nhân khác','citizen_id':'DEMO-ONLY-0001','sex':'Nam','date_of_birth':'1981-03-03','phone':'0900000002'})
     assert duplicated.status_code==409
 
 def test_doctor_scope_and_optimistic_versioning():
@@ -81,6 +81,7 @@ def test_attachment_restrictions():
 def test_prescription_is_draft_and_pharmacy_cannot_edit():
     _,visit=prepare_visit()
     doc,pharm=token('bs_noi'),token('duoc')
+    assert client.put(f'/api/visits/{visit}/clinical',headers=doc,json={'version':0,'diagnosis':'Chẩn đoán giả lập'}).status_code==200
     created=client.post('/api/prescriptions',headers=doc,json={'visit_id':visit,'drug_lines':'Thuốc giả lập – không dùng điều trị','instructions':'Chỉ thử nghiệm'})
     assert created.status_code==201 and created.json()['status']=='draft'
     assert client.post('/api/prescriptions',headers=pharm,json={'visit_id':visit,'drug_lines':'Không hợp lệ'}).status_code==403

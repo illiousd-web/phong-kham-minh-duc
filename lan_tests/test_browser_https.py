@@ -13,10 +13,16 @@ import pytest
 from playwright.sync_api import sync_playwright
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from .conftest import ROOT,PASSWORDS,IDS,SERVICE
+from .conftest import ROOT,PASSWORDS,IDS,SERVICE,db
 
 
 def test_real_https_three_browser_roles_and_pdf():
+    # Pricing and medicine data must exist before the clinician can order/prescribe.
+    with db(True) as c:
+        c.execute('INSERT INTO service_catalog(name,price) VALUES(?,?)',('Xét nghiệm HTTPS giả lập',42000))
+        srv=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute('INSERT INTO service_categories(service_id,category) VALUES(?,?)',(srv,'lab'))
+        c.execute('INSERT INTO medicines(name,base_unit) VALUES(?,?)',('Thuốc HTTPS giả lập','viên'))
     certdir=ROOT/'certs'
     subprocess.run([sys.executable,'-m','scripts.create_lan_certificate','--name','minhduc.internal','--ip','127.0.0.1','--output',str(certdir)],check=True)
     env=os.environ.copy();env.update(CLINIC_TLS_CERT=str(certdir/'server.crt'),CLINIC_TLS_KEY=str(certdir/'server.key'))
@@ -62,6 +68,9 @@ def test_real_https_three_browser_roles_and_pdf():
                     return page
                 r=go('reception','reception')
                 r.locator('[data-form="patient"] [name="full_name"]').fill('Bệnh nhân giả lập HTTPS ba máy')
+                r.locator('[data-form="patient"] [name="date_of_birth"]').fill('15/03/1985')
+                r.locator('[data-form="patient"] [name="sex"]').select_option('Nữ')
+                r.locator('[data-form="patient"] [name="phone"]').fill('0900000099')
                 r.locator('[data-form="patient"] button').click()
                 r.get_by_text('Đã lưu bệnh nhân',exact=False).wait_for()
                 # Select the newly created synthetic patient explicitly.
@@ -76,7 +85,10 @@ def test_real_https_three_browser_roles_and_pdf():
                 d.locator('select[name="visit_choose"]').select_option(vid)
                 d.locator('[name="chief_complaint"]').fill('Ghi khám giả lập HTTPS')
                 d.locator('[name="diagnosis"]').fill('Chẩn đoán giả lập')
-                d.locator('[name="follow_up"]').fill('2027-01-01')
+                d.locator('#v_pulse').fill('88')
+                d.locator('#v_bp').fill('150/95')
+                d.locator('#vitals-flags').get_by_text('Huyết áp cao').wait_for()
+                d.locator('[name="follow_up"]').fill('01/01/2027')
                 d.locator('[data-form="clinical"] button.btn').click()
                 d.get_by_text('Đã lưu phiếu khám',exact=False).wait_for()
                 cash=go('cashier','cashier')
@@ -86,18 +98,18 @@ def test_real_https_three_browser_roles_and_pdf():
                     pages[role].screenshot(path=str(evidence/(role+'.png')),full_page=True)
                 d=go('doctor','orders')
                 d.locator('[data-form="order"] [name="visit_id"]').select_option(vid)
-                d.locator('[data-form="order"] [name="name"]').fill('Xét nghiệm giả lập HTTPS')
+                d.locator('[data-form="order"] [name="service_id"]').select_option(label='Xét nghiệm – Xét nghiệm HTTPS giả lập (42.000 đ)')
                 d.locator('[data-form="order"] button').click();d.get_by_text('Đã lập chỉ định',exact=False).wait_for()
                 tech=pages['technician'];tech.locator('[data-page="orders"]').click()
-                tech.locator('[data-form="result"] [name="result_text"]').fill('Kết quả giả lập HTTPS')
+                tech.locator('[data-form="result"] [name="result_text"]').fill('Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nKết luận: Kết quả giả lập HTTPS')
                 tech.locator('[data-form="result"] button').click();tech.get_by_text('Đã chuyển kết quả',exact=False).wait_for()
                 d=go('doctor','clinical');d=go('doctor','orders')
                 d.locator('[data-action="approve"]').first.click();d.get_by_text('Đã duyệt quy trình mô phỏng',exact=False).wait_for()
                 with d.expect_download() as download:d.locator('[data-kind="lab"][data-format="pdf"]').first.click()
                 download.value.save_as(str(evidence/'result.pdf'))
                 d=go('doctor','rx');d.locator('[data-form="rx"] [name="visit_id"]').select_option(vid)
-                d.locator('[data-form="rx"] [name="drug_lines"]').fill('Thuốc giả lập | 2 | Không điều trị')
-                d.locator('[data-form="rx"] button').click();d.get_by_text('Đã tạo đơn nháp',exact=False).wait_for()
+                d.locator('[data-form="rx"] [name="quantity"]').fill('2')
+                d.locator('[data-form="rx"] button').click();d.get_by_text('Đã lưu đơn thuốc cấu trúc',exact=False).wait_for()
                 with d.expect_download() as download:d.locator('[data-kind="rx"][data-format="pdf"]').first.click()
                 download.value.save_as(str(evidence/'rx.pdf'))
                 cash.locator('[data-form="payment"] [name="visit_id"]').select_option(vid)

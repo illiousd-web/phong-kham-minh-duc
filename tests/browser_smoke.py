@@ -16,6 +16,12 @@ from app.main import app
 import base64,re
 client=TestClient(app)
 assert client.get('/api/health').status_code==200
+# Tạo bảng giá CLS để tránh yêu cầu vô giá trong màn hình bác sĩ.
+manager=client.post('/api/login',json={'username':'quanly','password':env['DEMO_PASSWORD']}).json()
+headers={'Authorization':'Bearer '+manager['access_token']}
+assert client.post('/api/catalog/services',headers=headers,json={
+    'name':'Xét nghiệm mô phỏng kiểm thử','category':'lab','price':35000}).status_code==201
+
 
 with sync_playwright() as p:
   browser=p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
@@ -53,7 +59,8 @@ with sync_playwright() as p:
    page.wait_for_timeout(250)
   login('letan');go('reception')
   page.locator('[data-form="patient"] [name="full_name"]').fill('Bệnh nhân mô phỏng UI Minh Đức')
-  page.locator('[data-form="patient"] [name="date_of_birth"]').fill('1992-11-05')
+  page.locator('[data-form="patient"] [name="date_of_birth"]').fill('05/11/1992')
+  page.locator('[data-form="patient"] [name="sex"]').select_option('Nữ')
   page.locator('[data-form="patient"] [name="phone"]').fill('0000000000')
   page.locator('[data-form="patient"] button').click()
   page.get_by_text('Đã lưu bệnh nhân').wait_for(timeout=8000)
@@ -76,15 +83,14 @@ with sync_playwright() as p:
    page.locator('[data-action="export-form"][data-kind="visit"][data-format="pdf"]').click()
   dl.value.save_as(str(EVIDENCE/'phieu_kham_chromium.pdf'))
   go('orders')
-  page.locator('[data-form="order"] [name="category"]').select_option('lab')
-  page.locator('[data-form="order"] [name="name"]').fill('Xét nghiệm mô phỏng kiểm thử')
+  page.locator('[data-form="order"] [name="service_id"]').select_option(index=0)
   page.locator('[data-form="order"] button').click()
   page.get_by_text('Đã lập chỉ định').wait_for(timeout=8000)
   go('rx')
-  page.locator('[data-form="rx"] [name="drug_lines"]').fill('Thuốc giả lập A | 2 viên | chỉ dành cho thử nghiệm')
+  page.locator('[data-form="rx"] [name="quantity"]').fill('2')
   page.locator('[data-form="rx"] [name="instructions"]').fill('Không dùng để điều trị')
-  page.locator('[data-form="rx"] button').click()
-  page.get_by_text('Đã tạo đơn nháp').wait_for(timeout=8000)
+  page.locator('[data-form="rx"] button.btn').click()
+  page.get_by_text('Đã lưu đơn thuốc cấu trúc').wait_for(timeout=8000)
   with page.expect_download(timeout=10000) as dl:page.locator('[data-action="export-form"][data-kind="rx"][data-format="pdf"]').first.click()
   dl.value.save_as(str(EVIDENCE/'don_nhap_chromium.pdf'))
   logout();login('kythuat');go('orders')

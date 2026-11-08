@@ -8,6 +8,7 @@ from xml.sax.saxutils import escape
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime
+from .labels import vi, CATEGORY, METHOD, show_day, lab_rows
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -86,14 +87,14 @@ def pdf_document(kind:str, d:dict)->bytes:
         story.append(Paragraph(p(v or 'Chưa có thông tin'),body))
     line('Họ và tên',d.get('patient_name',''))
     line('Mã bệnh nhân',d.get('patient_code',''))
-    if d.get('date_of_birth'):line('Ngày sinh',d['date_of_birth'])
+    if d.get('date_of_birth'):line('Ngày sinh',show_day(d['date_of_birth']))
     if d.get('sex'):line('Giới tính',d['sex'])
     if kind in ('intake','clinical','rx','follow_up') and d.get('phone'):line('Điện thoại',d['phone'])
     if kind in ('intake','clinical','rx','follow_up') and d.get('address'):line('Địa chỉ',d['address'])
     if kind=='intake':
         line('Bác sĩ được phân công',d.get('doctor_name',''))
-        line('Thời gian tiếp nhận',d.get('created_at',''))
-        line('Tình trạng',d.get('status',''))
+        line('Thời gian tiếp nhận',show_day(d.get('created_at','')))
+        line('Tình trạng',vi(d.get('status')))
     elif kind=='clinical':
         line('Bác sĩ phụ trách',d.get('doctor_name',''))
         section('Lý do khám, triệu chứng',d.get('chief_complaint',''))
@@ -101,40 +102,58 @@ def pdf_document(kind:str, d:dict)->bytes:
         section('Dấu hiệu sinh tồn',d.get('vitals',''))
         section('Chẩn đoán',d.get('diagnosis',''))
         section('Hướng điều trị',d.get('treatment',''))
-        line('Hẹn tái khám',d.get('follow_up',''))
+        line('Hẹn tái khám',show_day(d.get('follow_up')))
     elif kind=='order':
         line('Bác sĩ chỉ định',d.get('doctor_name',''))
-        line('Loại dịch vụ',{'lab':'Xét nghiệm','ultrasound':'Siêu âm','xray':'X-quang','ecg':'Điện tim'}.get(d.get('category'),''))
+        line('Loại dịch vụ',vi(d.get('category'),CATEGORY))
         line('Tên chỉ định',d.get('name',''))
-        line('Ngày chỉ định',d.get('created_at',''))
-        line('Trạng thái',d.get('status',''))
+        line('Ngày chỉ định',show_day(d.get('created_at','')))
+        line('Trạng thái',vi(d.get('status')))
     elif kind=='result':
         line('Dịch vụ',d.get('name',''))
-        section('Kết quả',d.get('result_text',''))
-        line('Trạng thái', 'Đã duyệt theo quy trình mô phỏng')
-        line('Người duyệt thử nghiệm',d.get('approved_name',''))
-        line('Thời gian',d.get('approved_at',''))
+        rows,notes,conclusion=lab_rows(d.get('result_text',''))
+        if rows:
+            story.append(Paragraph('Kết quả',h))
+            cell=ParagraphStyle('cell',parent=body,spaceAfter=0)
+            data=[[Paragraph('<b>'+x+'</b>',cell) for x in ('Chỉ số','Kết quả','Đơn vị','Tham chiếu','Đánh dấu')]]
+            data+=[[Paragraph(p(x),cell) for x in r] for r in rows]
+            tbl=Table(data,colWidths=[width*.34,width*.16,width*.14,width*.24,width*.12],repeatRows=1)
+            tbl.setStyle(TableStyle([('GRID',(0,0),(-1,-1),.4,colors.HexColor('#B4C6C8')),('BACKGROUND',(0,0),(-1,0),colors.HexColor('#E7F7F4')),('VALIGN',(0,0),(-1,-1),'TOP')]))
+            story.append(tbl)
+        if notes:section('Mô tả / ghi chú' if rows else 'Kết quả','\n'.join(notes))
+        section('Kết luận',conclusion or 'Chưa ghi kết luận')
+        line('Trạng thái',vi(d.get('status')))
+        line('Người thực hiện',d.get('result_by_name') or '—')
+        line('Người duyệt',d.get('approved_name',''))
+        line('Thời điểm duyệt',show_day(d.get('approved_at','')))
     elif kind=='rx':
         line('Bác sĩ lập đơn nháp',d.get('doctor_name',''))
         line('Chẩn đoán',d.get('diagnosis',''))
         section('Nội dung thuốc mô phỏng',d.get('drug_lines',''))
         section('Hướng dẫn ghi chú',d.get('instructions',''))
-        line('Hẹn tái khám',d.get('follow_up',''))
+        line('Hẹn tái khám',show_day(d.get('follow_up')))
     elif kind=='follow_up':
         line('Bác sĩ',d.get('doctor_name',''))
         line('Chẩn đoán',d.get('diagnosis',''))
-        line('Lịch hẹn dự kiến',d.get('follow_up','Chưa chỉ định'))
+        line('Lịch hẹn dự kiến',show_day(d.get('follow_up')) if d.get('follow_up') else 'Chưa chỉ định')
         section('Lưu ý', 'Giấy hẹn thử nghiệm; thời điểm thực tế do cơ sở khám chữa bệnh xác nhận.')
     elif kind=='receipt':
         line('Mã lượt khám',d.get('visit_id',''))
         line('Số tiền thu',f"{int(d.get('amount',0)):,} đồng".replace(',','.'))
-        line('Hình thức',{'cash':'Tiền mặt','transfer':'Chuyển khoản đã đối soát thủ công'}.get(d.get('method'),''))
+        line('Hình thức',vi(d.get('method'),METHOD))
         line('Người thu',d.get('cashier_name',''))
-        line('Thời gian ghi nhận',d.get('created_at',''))
+        line('Thời gian ghi nhận',show_day(d.get('created_at','')))
         line('Mã tham chiếu giao dịch',d.get('external_ref','Không có'))
         section('Lưu ý', 'Phiếu thu demo không thay thế hóa đơn điện tử hợp lệ.')
     story.append(Spacer(1,12*mm))
-    story.append(Paragraph('Người lập / Người xác nhận (chỉ để minh họa, chưa ký số)',subtitle))
+    if kind=='result':
+        sign=Table([[Paragraph('<b>NGƯỜI THỰC HIỆN</b><br/>(chưa ký số)<br/><br/><br/>'+p(d.get('result_by_name') or ''),subtitle),
+                     Paragraph('<b>NGƯỜI DUYỆT KẾT QUẢ</b><br/>(chưa ký số)<br/><br/><br/>'+p(d.get('approved_name') or ''),subtitle)]],
+                   colWidths=[width/2,width/2])
+        sign.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER'),('VALIGN',(0,0),(-1,-1),'TOP')]))
+        story.append(sign)
+    else:
+        story.append(Paragraph('Người lập / Người xác nhận (chỉ để minh họa, chưa ký số)',subtitle))
     def page(canvas, doc):
         canvas.saveState()
         w,ht=pagesize
