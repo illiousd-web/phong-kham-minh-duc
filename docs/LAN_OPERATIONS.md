@@ -1,3 +1,5 @@
+> **Profile máy 8 GB (Issue #3):** mặc định mới 1 worker/pool4, backup7bản và ngưỡng dung lượng. Xem [hướng dẫn Windows ngắn](WINDOWS_8GB_QUICKSTART.md) và [cấu hình tài nguyên](RESOURCE_LIGHT.md); các con số 2worker/pool16/backup30 trong phần v0.4 cũ bên dưới là thông tin lịch sử.
+
 # Vận hành, sao lưu và xử lý sự cố LAN
 
 ## Phiên và quyền

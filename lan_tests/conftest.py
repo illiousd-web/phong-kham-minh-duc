@@ -23,6 +23,7 @@ ROOT=Path(TEMP.name)
 os.environ.update(CLINIC_MODE='lan',CLINIC_DATABASE_URL=URL,CLINIC_DATA_DIR=str(ROOT),
                   CLINIC_UPLOAD_DIR=str(ROOT/'attachments'),CLINIC_ORIGIN='https://127.0.0.1:58443',
                   CLINIC_ALLOWED_CIDRS='192.168.10.0/24,127.0.0.1/32',CLINIC_BIND_IP='127.0.0.1')
+os.environ.setdefault('CLINIC_MIN_FREE_MB','256') # Test workspace is smaller than the clinic SSD.
 os.environ.pop('DEMO_PASSWORD',None)
 from app.database import migrate,db
 migrate()

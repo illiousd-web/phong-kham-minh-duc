@@ -6,6 +6,8 @@ import ssl
 from urllib.parse import urlsplit
 import uvicorn
 from app.config import LAN, ORIGIN, client_allowed
+from app.resources import LIMITS
+from app.logging_config import server_logging
 
 
 def main():
@@ -34,10 +36,11 @@ def main():
     if origin.hostname not in names or certificate.not_valid_after_utc <= datetime.now(timezone.utc):
         raise SystemExit('Certificate must be unexpired and match CLINIC_ORIGIN')
     uvicorn.run('app.main:app', host=bind, port=origin.port or 443,
-                workers=2, proxy_headers=False, server_header=False, access_log=False,
+                workers=LIMITS.workers, proxy_headers=False, server_header=False, access_log=False,
                 ssl_certfile=str(cert), ssl_keyfile=str(key), ssl_version=ssl.PROTOCOL_TLS_SERVER,
                 ssl_ciphers='ECDHE+AESGCM:ECDHE+CHACHA20',
-                limit_concurrency=80, timeout_keep_alive=5)
+                limit_concurrency=LIMITS.concurrency, timeout_keep_alive=5,
+                log_config=server_logging())
 
 
 if __name__ == '__main__':

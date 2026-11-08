@@ -58,3 +58,38 @@ jobs:
           python-version: '3.12'
       - run: pip install pip-audit==2.10.1
       - run: pip-audit -r requirements.lock --no-deps --disable-pip
+  windows-preflight:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Windows interprocess operational log rotation
+        shell: python
+        run: |
+          import pathlib, subprocess, sys, tempfile
+          code = "import logging,sys\nfrom app.logging_config import LockedRotatingFileHandler\nh=LockedRotatingFileHandler(sys.argv[1],maxBytes=1024,backupCount=3,encoding='utf-8')\nl=logging.getLogger('fake');l.addHandler(h);l.setLevel(logging.WARNING)\nfor i in range(80):l.warning('Synthetic Windows log %s %s',i,'x'*70)\nh.close()"
+          with tempfile.TemporaryDirectory() as folder:
+              path = pathlib.Path(folder) / 'server.log'
+              processes = [subprocess.Popen([sys.executable, '-c', code, str(path)], stderr=subprocess.PIPE) for _ in range(3)]
+              for process in processes:
+                  _, errors = process.communicate(timeout=30)
+                  assert process.returncode == 0 and not errors, errors
+              files = [p for p in pathlib.Path(folder).glob('server.log*') if p.suffix != '.lock']
+              assert len(files) <= 4 and sum(p.stat().st_size for p in files) <= 4096
+          print('PASS: Windows three-process log rotation')
+      - name: PowerShell 5.1 parser and synthetic resource checks
+        shell: powershell
+        run: .\deploy\windows\Test-Preflight.ps1
+      - name: Read-only inventory smoke on hosted Windows (not clinic hardware)
+        shell: powershell
+        run: |
+          $reportPath = Join-Path $env:RUNNER_TEMP 'minhduc-preflight.json'
+          & powershell.exe -NoProfile -File .\deploy\windows\Preflight.ps1 -Root $env:GITHUB_WORKSPACE -OutputPath $reportPath
+          if ($LASTEXITCODE -notin @(0,2)) { throw 'Preflight execution failed' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          if ($report.source -ne 'WINDOWS_READ_ONLY') { throw 'Invalid report source' }
+          if ($report.snapshot.os.PSObject.Properties.Name -contains 'SerialNumber') { throw 'Forbidden identifier' }
+          Write-Output ('Read-only Windows smoke completed: ' + $report.assessment.overall)
+          $global:LASTEXITCODE = 0

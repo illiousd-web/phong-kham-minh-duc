@@ -2,6 +2,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from .resources import export_slot
 from .forms import generate_docx, generate_pdf, TEMPLATE_BY_TYPE
 
 
@@ -51,6 +52,7 @@ def mount_forms(app, db, principal, require, audit):
         })
 
     @router.get('/visits/{visit_id}/forms/{kind}')
+    @export_slot
     def visit_form(visit_id:int,kind:str,format:str='pdf',u=Depends(principal)):
         if kind not in ('reception','clinical','followup'):
             raise HTTPException(404,'Biểu mẫu không tồn tại')
@@ -68,6 +70,7 @@ def mount_forms(app, db, principal, require, audit):
             return result
 
     @router.get('/orders/{order_id}/forms/{kind}')
+    @export_slot
     def order_form(order_id:int,kind:str,format:str='pdf',u=Depends(principal)):
         if kind not in ('order','result'):raise HTTPException(404,'Biểu mẫu không tồn tại')
         require(u,'doctor','technician')
@@ -94,6 +97,7 @@ def mount_forms(app, db, principal, require, audit):
             return result
 
     @router.get('/prescriptions/{rx_id}/forms/prescription')
+    @export_slot
     def rx_form(rx_id:int,format:str='pdf',u=Depends(principal)):
         require(u,'doctor','pharmacy')
         with db(True) as c:

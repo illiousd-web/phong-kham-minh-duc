@@ -1,0 +1,121 @@
+{
+  "baseline_ref": "0058564",
+  "measurement_environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "clinic_windows_hardware_tested": false,
+    "cgroup_memory_max": "8589934592",
+    "cgroup_cpu_max": "200000 100000",
+    "postgres_container_cpu_limit": 2,
+    "postgres_container_memory_mib": 1536,
+    "synthetic_patients_seeded": 1000,
+    "synthetic_attachment_mib": 16,
+    "notes": [
+      "Load generator is excluded from app RSS/USS. PostgreSQL memory is reported separately.",
+      "RSS sums shared pages; USS approximates private memory. PostgreSQL is sampled from its own /proc entries, not shared Docker cgroup stats.",
+      "Benchmark reduces disk reserve to 256 MiB only in disposable test workspace."
+    ]
+  },
+  "profiles": {
+    "baseline_v04": {
+      "requests": 210,
+      "latency_ms": {
+        "p50": 54.04,
+        "p95": 67.35,
+        "max": 111.99
+      },
+      "pdf_latency_ms": {
+        "p95": 67.84,
+        "max": 106.72
+      },
+      "elapsed_seconds": 4.92,
+      "requests_per_second": 43.29,
+      "postgres_memory_after_load": {
+        "rss_sum_mib": 180.1,
+        "uss_sum_mib": 27.14,
+        "process_count": 11,
+        "kind": "snapshot after workload while app pool remains open, not peak"
+      },
+      "errors": [],
+      "disconnect_retry_single_payment": true,
+      "permission_checks_passed": true,
+      "resources": {
+        "rss_peak_mib": 200.9,
+        "uss_peak_mib": 143.66,
+        "rss_median_mib": 196.66,
+        "cpu_seconds": 3.59,
+        "disk_read_mib": 0.0,
+        "disk_write_mib": 0.29,
+        "scratch_peak_mib": 0.0,
+        "process_count_peak": 4
+      },
+      "backup_resources": {
+        "rss_peak_mib": 49.07,
+        "uss_peak_mib": 35.64,
+        "rss_median_mib": 41.23,
+        "cpu_seconds": 0.23,
+        "disk_read_mib": 0.0,
+        "disk_write_mib": 48.29,
+        "scratch_peak_mib": 38.66,
+        "process_count_peak": 2
+      },
+      "database_mib": 8.81,
+      "wal_mib": 16.0,
+      "durability": {
+        "fsync": "on",
+        "synchronous_commit": "on",
+        "full_page_writes": "on"
+      }
+    },
+    "resource_light": {
+      "requests": 210,
+      "latency_ms": {
+        "p50": 29.79,
+        "p95": 43.8,
+        "max": 63.16
+      },
+      "pdf_latency_ms": {
+        "p95": 68.13,
+        "max": 111.62
+      },
+      "elapsed_seconds": 2.31,
+      "requests_per_second": 92.07,
+      "postgres_memory_after_load": {
+        "rss_sum_mib": 152.77,
+        "uss_sum_mib": 22.87,
+        "process_count": 10,
+        "kind": "snapshot after workload while app pool remains open, not peak"
+      },
+      "errors": [],
+      "disconnect_retry_single_payment": true,
+      "permission_checks_passed": true,
+      "resources": {
+        "rss_peak_mib": 94.64,
+        "uss_peak_mib": 76.0,
+        "rss_median_mib": 92.29,
+        "cpu_seconds": 2.57,
+        "disk_read_mib": 0.0,
+        "disk_write_mib": 0.01,
+        "scratch_peak_mib": 0.0,
+        "process_count_peak": 1
+      },
+      "backup_resources": {
+        "rss_peak_mib": 48.91,
+        "uss_peak_mib": 35.16,
+        "rss_median_mib": 33.93,
+        "cpu_seconds": 0.24,
+        "disk_read_mib": 0.0,
+        "disk_write_mib": 16.18,
+        "scratch_peak_mib": 16.09,
+        "process_count_peak": 2
+      },
+      "database_mib": 8.81,
+      "wal_mib": 16.0,
+      "durability": {
+        "fsync": "on",
+        "synchronous_commit": "on",
+        "full_page_writes": "on"
+      }
+    }
+  }
+}
