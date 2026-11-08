@@ -1,22 +1,16 @@
-"""Phòng khám đa khoa Minh Đức - prototype v0.2 (fake data only).
-
-WARNING: This is NOT a production-grade medical record or e-prescription system.
-Local-only demonstration with SQLite and role-enforced API.
-"""
+"""Minh Duc clinic: local demo and HTTPS/PostgreSQL LAN pilot, synthetic data only."""
 from __future__ import annotations
 
 import hashlib
 import hmac
 import os
 import secrets
-import sqlite3
 import uuid
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone, date
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -25,10 +19,14 @@ from .print_forms import pdf_document
 
 BASE = Path(__file__).resolve().parent
 DB = Path(os.environ.get("CLINIC_DB_PATH", str(BASE.parent / "data" / "minh_duc_demo.sqlite3"))).resolve()
-FILES = Path(os.environ.get("CLINIC_UPLOAD_DIR", str(DB.parent / "attachments"))).resolve()
-PASS = os.environ.get("DEMO_PASSWORD")
-if not PASS:
-    raise RuntimeError("Set DEMO_PASSWORD before starting the demo (see README.md).")
+FILES = Path(os.environ.get('CLINIC_UPLOAD_DIR', str(DB.parent / 'attachments'))).resolve()
+from .config import LAN, ORIGIN, HOSTS, client_allowed, DATA
+from .database import DB, db
+if LAN:
+    FILES = Path(os.environ.get("CLINIC_UPLOAD_DIR", str(DATA / "attachments"))).resolve()
+PASS = os.environ.get('DEMO_PASSWORD')
+if not LAN and not PASS:
+    raise RuntimeError('Set DEMO_PASSWORD before starting the demo (see README.md).')
 DEMO_USERS = [
     ("quantri", "Quản trị hệ thống", ["admin"]),
     ("quanly", "Quản lý phòng khám", ["manager"]),
@@ -42,102 +40,16 @@ DEMO_USERS = [
 ]
 NOW = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-SCHEMA = """
-PRAGMA foreign_keys=ON;
-CREATE TABLE IF NOT EXISTS users (
- id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL,
- full_name TEXT NOT NULL, salt TEXT NOT NULL, password_hash TEXT NOT NULL,
- active INTEGER NOT NULL DEFAULT 1);
-CREATE TABLE IF NOT EXISTS user_roles (
- user_id INTEGER NOT NULL REFERENCES users(id), role TEXT NOT NULL,
- PRIMARY KEY(user_id,role));
-CREATE TABLE IF NOT EXISTS sessions (
- token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
- expires_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS patients (
- id INTEGER PRIMARY KEY, code TEXT UNIQUE, full_name TEXT NOT NULL,
- date_of_birth TEXT, sex TEXT NOT NULL, phone TEXT,
- citizen_id TEXT, address TEXT, created_at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_patients_phone ON patients(phone);
-CREATE TABLE IF NOT EXISTS appointments (
- id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id),
- doctor_id INTEGER NOT NULL REFERENCES users(id), scheduled_at TEXT NOT NULL,
- reason TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'booked', created_by INTEGER REFERENCES users(id));
-CREATE TABLE IF NOT EXISTS visits (
- id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id),
- doctor_id INTEGER NOT NULL REFERENCES users(id), created_by INTEGER NOT NULL REFERENCES users(id),
- appointment_id INTEGER REFERENCES appointments(id), status TEXT NOT NULL DEFAULT 'waiting',
- chief_complaint TEXT NOT NULL DEFAULT '', history TEXT NOT NULL DEFAULT '',
- vitals TEXT NOT NULL DEFAULT '', diagnosis TEXT NOT NULL DEFAULT '', treatment TEXT NOT NULL DEFAULT '',
- follow_up TEXT, version INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS service_catalog (
- id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, price INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS charges (
- id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL REFERENCES visits(id),
- label TEXT NOT NULL, amount INTEGER NOT NULL CHECK(amount>=0), created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS orders (
- id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL REFERENCES visits(id),
- category TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ordered',
- requested_by INTEGER NOT NULL REFERENCES users(id), result_text TEXT NOT NULL DEFAULT '',
- file_name TEXT, file_key TEXT, result_by INTEGER REFERENCES users(id),
- approved_by INTEGER REFERENCES users(id), approved_at TEXT, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS prescriptions (
- id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL UNIQUE REFERENCES visits(id),
- doctor_id INTEGER NOT NULL REFERENCES users(id), drug_lines TEXT NOT NULL,
- instructions TEXT NOT NULL DEFAULT '', follow_up TEXT,
- status TEXT NOT NULL DEFAULT 'draft', created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS payments (
- id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL REFERENCES visits(id),
- amount INTEGER NOT NULL CHECK(amount>0), method TEXT NOT NULL,
- created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
- external_ref TEXT, idempotency_key TEXT NOT NULL UNIQUE);
-CREATE TABLE IF NOT EXISTS medicines (
- id INTEGER PRIMARY KEY, name TEXT NOT NULL, base_unit TEXT NOT NULL,
- controlled INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS stock_lots (
- id INTEGER PRIMARY KEY, medicine_id INTEGER NOT NULL REFERENCES medicines(id),
- lot_number TEXT NOT NULL, expiry_date TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity>=0),
- quarantined INTEGER NOT NULL DEFAULT 0, UNIQUE(medicine_id,lot_number));
-CREATE TABLE IF NOT EXISTS stock_movements (
- id INTEGER PRIMARY KEY, stock_lot_id INTEGER NOT NULL REFERENCES stock_lots(id),
- movement_type TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity>0),
- created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS adjustments (
- id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL REFERENCES visits(id),
- payment_id INTEGER REFERENCES payments(id), kind TEXT NOT NULL CHECK(kind IN ('discount','refund')),
- amount INTEGER NOT NULL CHECK(amount>0), reason TEXT NOT NULL,
- status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
- proposed_by INTEGER NOT NULL REFERENCES users(id), reviewed_by INTEGER REFERENCES users(id),
- proposed_at TEXT NOT NULL, reviewed_at TEXT);
-CREATE INDEX IF NOT EXISTS idx_adjustments_visit ON adjustments(visit_id,status);
-CREATE TABLE IF NOT EXISTS audit_log (
- id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), event TEXT NOT NULL,
- object_type TEXT NOT NULL, object_id INTEGER, details TEXT NOT NULL DEFAULT '',
- created_at TEXT NOT NULL);
-"""
-
-def pw_hash(password:str,salt:str)->str:
-    return hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),260_000).hex()
-
-@contextmanager
-def db(write:bool=False):
-    DB.parent.mkdir(parents=True,exist_ok=True)
-    con=sqlite3.connect(DB,timeout=10)
-    con.row_factory=sqlite3.Row
-    con.execute('PRAGMA foreign_keys=ON')
-    con.execute('PRAGMA busy_timeout=10000')
-    try:
-        if write: con.execute('BEGIN IMMEDIATE')
-        yield con
-        if write: con.commit()
-    except Exception:
-        if write: con.rollback()
-        raise
-    finally: con.close()
+SCHEMA = (BASE.parent / 'schema.sql').read_text(encoding='utf-8')
 
 def row(x):return dict(x) if x is not None else None
 
 def init_db():
+    if LAN:
+        with db() as c:
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=1").fetchone():
+                raise RuntimeError("Run python -m scripts.manage migrate first")
+        return
     DB.parent.mkdir(parents=True,exist_ok=True)
     with db() as c:
         c.executescript(SCHEMA)
@@ -158,21 +70,51 @@ def init_db():
             (1,'LO-MAU-001','2027-03-30',120,0),(1,'LO-MAU-002','2027-09-30',300,0),(3,'KS-MAU-001','2027-10-15',10,1)])
         # Dữ liệu được cố ý để trống: không tạo bệnh nhân giả nếu người dùng chưa thao tác.
 
-app=FastAPI(title='Phòng khám đa khoa Minh Đức - bản thử nghiệm',version='0.3.0',docs_url='/api/docs',openapi_url='/api/openapi.json')
+app=FastAPI(title='Phòng khám đa khoa Minh Đức - bản thử nghiệm',version='0.4.0',docs_url=None if LAN else '/api/docs',openapi_url=None if LAN else '/api/openapi.json')
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=['127.0.0.1', 'localhost', 'testserver'],
+    allowed_hosts=HOSTS,
     www_redirect=False,
 )
-init_db()
+from .middleware import BodyLimitMiddleware
+app.add_middleware(BodyLimitMiddleware)
 app.mount('/assets',StaticFiles(directory=BASE/'static'),name='assets')
 
 @app.middleware('http')
 async def security_headers(request:Request,call_next):
-    if request.client and request.client.host not in ('127.0.0.1','::1','testclient'):
+    if not request.client or not client_allowed(request.client.host):
         from fastapi.responses import JSONResponse
-        return JSONResponse({'detail':'Bản thử nghiệm chỉ cho phép kết nối từ máy cục bộ'},status_code=403)
+        return JSONResponse({'detail':'Kết nối không thuộc mạng được cho phép'},status_code=403)
+    if LAN:
+        from fastapi.responses import JSONResponse
+        if request.url.scheme != 'https':
+            return JSONResponse({'detail':'Yêu cầu HTTPS nội bộ'}, status_code=400)
+        if request.method not in ('GET', 'HEAD', 'OPTIONS'):
+            if request.headers.get('origin') != ORIGIN or request.headers.get('x-clinic-request') != '1':
+                return JSONResponse({'detail':'Nguồn yêu cầu không hợp lệ'}, status_code=403)
+            if request.cookies.get('__Host-clinic') and request.url.path != '/api/login':
+                csrf = request.cookies.get('__Host-clinic-csrf', '')
+                if not csrf or not hmac.compare_digest(csrf, request.headers.get('x-csrf-token', '')):
+                    return JSONResponse({'detail':'Mã CSRF không hợp lệ'}, status_code=403)
     response=await call_next(request)
+    if LAN:
+        response.headers['Strict-Transport-Security']='max-age=31536000'
+        if response.status_code != 503 and request.url.path.startswith('/api/') and request.url.path not in ('/api/health','/api/login','/api/audit'):
+            token = request.cookies.get('__Host-clinic', '')
+            if token:
+                try:
+                    with db(True) as c:
+                        actor = c.execute('SELECT user_id FROM sessions WHERE token_hash=?', (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
+                        if actor:
+                            c.execute('INSERT INTO audit_log(user_id,event,object_type,details,created_at) VALUES(?,?,?,?,?)',
+                                      (actor['user_id'],'api_access','http',request.method+' '+request.url.path[:250]+' '+str(response.status_code),NOW()))
+                except Exception:
+                    # Business mutation audit is already committed atomically in
+                    # its own transaction. Supplemental HTTP logging must not turn
+                    # a committed payment into an ambiguous failure response.
+                    import logging
+                    logging.getLogger('clinic').error('Supplemental access audit unavailable')
+
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['X-Frame-Options']='DENY'
     response.headers['Referrer-Policy']='no-referrer'
@@ -184,34 +126,13 @@ async def security_headers(request:Request,call_next):
 def index():return FileResponse(BASE/'static'/'index.html',headers={'Cache-Control':'no-store'})
 
 @app.get('/api/health')
-def health():return {'status':'demo','version':'0.3.0','clinic':'Phòng khám đa khoa Minh Đức'}
+def health():
+    if LAN:
+        with db() as c:c.execute('SELECT 1').fetchone()
+    return {'status':'lan-pilot' if LAN else 'demo','version':'0.4.0','mode':'lan' if LAN else 'demo','clinic':'Phòng khám đa khoa Minh Đức'}
 
-class Login(BaseModel):
-    username:str=Field(min_length=2,max_length=40)
-    password:str=Field(min_length=1,max_length=250)
-
-@app.post('/api/login')
-def login(data:Login):
-    with db(True) as c:
-        u=c.execute('SELECT * FROM users WHERE username=? AND active=1',(data.username,)).fetchone()
-        if u is None or not hmac.compare_digest(pw_hash(data.password,u['salt']) if u else '0'*64,u['password_hash'] if u else '1'*64):
-            raise HTTPException(401,'Sai tài khoản hoặc mật khẩu')
-        token=secrets.token_urlsafe(48)
-        expires=(datetime.now(timezone.utc)+timedelta(hours=8)).isoformat()
-        c.execute('INSERT INTO sessions VALUES(?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),u['id'],expires))
-        roles=[r[0] for r in c.execute('SELECT role FROM user_roles WHERE user_id=?',(u['id'],))]
-        return {'access_token':token,'user':{'id':u['id'],'username':u['username'],'name':u['full_name'],'roles':roles}}
-
-def principal(authorization:Annotated[str|None,Header()]=None):
-    if not authorization or not authorization.startswith('Bearer '):raise HTTPException(401,'Cần đăng nhập')
-    token=authorization[7:]
-    if len(token)<48:raise HTTPException(401,'Phiên không hợp lệ')
-    digest=hashlib.sha256(token.encode()).hexdigest()
-    with db() as c:
-        u=c.execute('SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires_at>? AND active=1',(digest,NOW())).fetchone()
-        if not u:raise HTTPException(401,'Hết hạn phiên hoặc không hợp lệ')
-        roles=[r[0] for r in c.execute('SELECT role FROM user_roles WHERE user_id=?',(u['id'],))]
-        return {'id':u['id'],'username':u['username'],'name':u['full_name'],'roles':roles,'token_hash':digest}
+from .auth import install_auth, pw_hash
+principal = install_auth(app, db, LAN, NOW)
 
 def require(u, *roles):
     if not set(roles).intersection(u['roles']):raise HTTPException(403,'Không có quyền thực hiện chức năng')
@@ -229,19 +150,11 @@ def visit_access(c,u,vid:int,*,clinical=False):
         raise HTTPException(403,'Không được truy cập hồ sơ chuyên môn này')
     return v
 
-@app.get('/api/me')
-def me(u=Depends(principal)):return {k:v for k,v in u.items() if k!='token_hash'}
-
-@app.post('/api/logout')
-def logout(u=Depends(principal)):
-    with db(True) as c:c.execute('DELETE FROM sessions WHERE token_hash=?',(u['token_hash'],))
-    return {'ok':True}
-
 @app.get('/api/staff')
 def staff(u=Depends(principal)):
     require(u,'admin','manager','reception','doctor')
     with db() as c:
-        return [dict(x) for x in c.execute("SELECT u.id,u.full_name,u.username FROM users u JOIN user_roles r ON r.user_id=u.id WHERE r.role='doctor' ORDER BY u.id")]
+        return [dict(x) for x in c.execute("SELECT u.id,u.full_name,u.username FROM users u JOIN user_roles r ON r.user_id=u.id WHERE r.role='doctor' AND u.active=1 ORDER BY u.id")]
 
 class PatientInput(BaseModel):
     full_name:str=Field(min_length=2,max_length=180)
@@ -303,6 +216,13 @@ class AppointmentInput(BaseModel):
     scheduled_at:str=Field(min_length=10,max_length=40)
     reason:str=Field(default='',max_length=300)
 
+    @field_validator('scheduled_at')
+    @classmethod
+    def valid_schedule(cls,v):
+        if 'T' not in v:raise ValueError('Lịch hẹn cần ngày và giờ hợp lệ')
+        datetime.fromisoformat(v)
+        return v
+
 @app.post('/api/appointments',status_code=201)
 def add_appointment(data:AppointmentInput,u=Depends(principal)):
     require(u,'reception','admin')
@@ -326,7 +246,7 @@ def get_appointments(u=Depends(principal)):
         return [dict(x) for x in c.execute(sql+' ORDER BY a.id DESC LIMIT 100',args)]
 
 def ensure_doctor(c,doctor_id:int):
-    if not c.execute("SELECT 1 FROM user_roles WHERE user_id=? AND role='doctor'",(doctor_id,)).fetchone():raise HTTPException(422,'Bác sĩ không hợp lệ')
+    if not c.execute("SELECT 1 FROM user_roles r JOIN users u ON u.id=r.user_id WHERE r.user_id=? AND r.role='doctor' AND u.active=1",(doctor_id,)).fetchone():raise HTTPException(422,'Bác sĩ không hợp lệ')
 
 class VisitInput(BaseModel):
     patient_id:int
@@ -619,10 +539,11 @@ def overview(u=Depends(principal)):
         return out
 
 @app.get('/api/audit')
-def audit_entries(u=Depends(principal)):
+def audit_entries(offset:int=0,limit:int=100,u=Depends(principal)):
     require(u,'admin')
+    if offset<0 or limit<1 or limit>200:raise HTTPException(422,'Phân trang không hợp lệ')
     with db() as c:
-        return [dict(x) for x in c.execute('SELECT id,user_id,event,object_type,object_id,created_at FROM audit_log ORDER BY id DESC LIMIT 100')]
+        return [dict(x) for x in c.execute('SELECT a.id,a.user_id,u.username,a.event,a.object_type,a.object_id,a.details,a.created_at FROM audit_log a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT ? OFFSET ?',(limit,offset))]
 
 # Export only source-verified visit data; export endpoints enforce role/visit scope.
 from .forms_api import mount_forms
@@ -734,7 +655,8 @@ def stock_issue(data:StockIssue,u=Depends(principal)):
         for l in lots:
             if not remaining:break
             take=min(remaining,l['quantity']); remaining-=take
-            c.execute('UPDATE stock_lots SET quantity=quantity-? WHERE id=? AND quantity>=?',(take,l['id'],take))
+            updated=c.execute('UPDATE stock_lots SET quantity=quantity-? WHERE id=? AND quantity>=?',(take,l['id'],take))
+            if updated.rowcount!=1:raise HTTPException(409,'Tồn kho đã thay đổi; hãy tải lại')
             c.execute('INSERT INTO stock_movements(stock_lot_id,movement_type,quantity,created_by,created_at) VALUES(?,?,?,?,?)',
                       (l['id'],'issue',take,u['id'],NOW()))
             used.append({'lot_id':l['id'],'quantity':take})
@@ -856,3 +778,33 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
     name=f'MinhDuc_DEMO_{kind}_{object_id}.{ext}'
     return Response(payload,media_type=mime,headers={'Content-Disposition':f'attachment; filename="{name}"',
                                                    'Cache-Control':'no-store','X-Demo-Only':'true'})
+
+from .accounts import install_accounts
+install_accounts(app, db, principal, require, audit, pw_hash, NOW)
+init_db()
+
+from .catalog import install_catalog
+install_catalog(app, db, principal, require, audit)
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request, exc):
+    # Do not reflect passwords or clinical payloads in validation responses.
+    return JSONResponse(status_code=422, content={'detail':[
+        {'loc':list(e['loc']),'msg':e['msg'],'type':e['type']} for e in exc.errors()
+    ]})
+
+if LAN:
+    import psycopg
+    from psycopg_pool import PoolTimeout
+
+    @app.exception_handler(psycopg.IntegrityError)
+    async def integrity_error(request, exc):
+        return JSONResponse(status_code=409,content={'detail':'Dữ liệu trùng hoặc quan hệ không hợp lệ; hãy tải lại'})
+
+    @app.exception_handler(psycopg.OperationalError)
+    @app.exception_handler(PoolTimeout)
+    async def database_unavailable(request, exc):
+        return JSONResponse(status_code=503,content={'detail':'Cơ sở dữ liệu tạm không sẵn sàng; kiểm tra trước khi gửi lại giao dịch'},headers={'Retry-After':'5'})

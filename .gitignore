@@ -244,3 +244,8 @@ secrets*.json
 *.pfx
 *.sqlite3.*
 *.sqlite.*
+*.mdbackup
+*.dump
+*.tar
+*.crt
+!deploy/clinic.env.example

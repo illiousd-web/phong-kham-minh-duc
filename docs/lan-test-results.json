@@ -1,0 +1,40 @@
+{
+  "date_utc": "2026-11-08",
+  "base_commit": "793dcb1",
+  "branch": "feat/lan-server-postgresql",
+  "synthetic_data_only": true,
+  "local_test_runs": {
+    "demo": {
+      "tests": "43",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "35.799"
+    },
+    "lan": {
+      "tests": "21",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "31.451"
+    }
+  },
+  "runtime_audit": {
+    "dependencies_checked": 26,
+    "known_findings": 0,
+    "tool": "pip-audit 2.10.1"
+  },
+  "selected_versions": {
+    "fastapi": "0.162.2",
+    "uvicorn": "0.54.0",
+    "psycopg": "3.3.8",
+    "cryptography": "50.0.2",
+    "reportlab": "4.5.1",
+    "pytest": "9.2.0",
+    "playwright": "1.64.1"
+  },
+  "postgresql": "17.11 (official Docker, loopback only)",
+  "assets_original_checksums_passed": 31,
+  "clinic_hardware_deployed": false,
+  "windows_execution_verified": false
+}

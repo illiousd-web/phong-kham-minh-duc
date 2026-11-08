@@ -1,3 +1,15 @@
+# Minh Đức v0.4 — thử nghiệm máy chủ LAN
+
+Nhánh này bổ sung PostgreSQL, HTTPS nội bộ, tài khoản nhân viên riêng, quản lý phiên/phân quyền, nhật ký, sao lưu mã hóa và khôi phục. Giữ giao diện xanh ngọc–trắng, logo và 9 mẫu Word gốc. **Chỉ dùng dữ liệu giả lập; chưa nghiệm thu bảo mật và nghiệp vụ y tế.**
+
+- [Cài đặt Linux/Windows và máy trạm](docs/LAN_INSTALL.md)
+- [Vận hành, backup/restore, xử lý sự cố](docs/LAN_OPERATIONS.md)
+- [Rà soát mã nguồn và kết quả kiểm thử](docs/LAN_VALIDATION.md)
+
+Dùng `python -m scripts.run_lan` với cấu hình LAN; các launcher cũ bên dưới vẫn là demo loopback. Không public hosting, không port forwarding và không tự triển khai dữ liệu thật.
+
+---
+
 # Phòng khám đa khoa Minh Đức — phần mềm thử nghiệm v0.3.0
 
 **Trạng thái:** ĐÃ CHẠY VÀ KIỂM THỬ TRÊN MÔI TRƯỜNG CỤC BỘ. Đây là phiên bản thử nghiệm với dữ liệu giả lập; **không được sử dụng cho người bệnh thật, kê đơn hợp pháp, cấp phát thuốc thực tế, giao dịch tài chính thật hoặc mở ra Internet.**
