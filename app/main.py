@@ -1,0 +1,852 @@
+"""Phòng khám đa khoa Minh Đức - prototype v0.2 (fake data only).
+
+WARNING: This is NOT a production-grade medical record or e-prescription system.
+Local-only demonstration with SQLite and role-enforced API.
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import os
+import secrets
+import sqlite3
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone, date
+from pathlib import Path
+from typing import Annotated, Literal
+
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, field_validator
+from .print_forms import pdf_document
+
+BASE = Path(__file__).resolve().parent
+DB = Path(os.environ.get("CLINIC_DB_PATH", str(BASE.parent / "data" / "minh_duc_demo.sqlite3"))).resolve()
+FILES = Path(os.environ.get("CLINIC_UPLOAD_DIR", str(DB.parent / "attachments"))).resolve()
+PASS = os.environ.get("DEMO_PASSWORD")
+if not PASS:
+    raise RuntimeError("Set DEMO_PASSWORD before starting the demo (see README.md).")
+DEMO_USERS = [
+    ("quantri", "Quản trị hệ thống", ["admin"]),
+    ("quanly", "Quản lý phòng khám", ["manager"]),
+    ("letan", "Lễ tân", ["reception"]),
+    ("bs_noi", "BS Nội", ["doctor"]),
+    ("bs_san", "BS Sản", ["doctor"]),
+    ("kythuat", "Kỹ thuật viên", ["technician"]),
+    ("dieuduong", "Điều dưỡng", ["nurse"]),
+    ("duoc", "Nhân viên dược", ["pharmacy"]),
+    ("thungan", "Thu ngân", ["cashier"]),
+]
+NOW = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+SCHEMA = """
+PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS users (
+ id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL,
+ full_name TEXT NOT NULL, salt TEXT NOT NULL, password_hash TEXT NOT NULL,
+ active INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS user_roles (
+ user_id INTEGER NOT NULL REFERENCES users(id), role TEXT NOT NULL,
+ PRIMARY KEY(user_id,role));
+CREATE TABLE IF NOT EXISTS sessions (
+ token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+ expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS patients (
+ id INTEGER PRIMARY KEY, code TEXT UNIQUE, full_name TEXT NOT NULL,
+ date_of_birth TEXT, sex TEXT NOT NULL, phone TEXT,
+ citizen_id TEXT, address TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_patients_phone ON patients(phone);
+CREATE TABLE IF NOT EXISTS appointments (
+ id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id),
+ doctor_id INTEGER NOT NULL REFERENCES users(id), scheduled_at TEXT NOT NULL,
+ reason TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'booked', created_by INTEGER REFERENCES users(id));
+CREATE TABLE IF NOT EXISTS visits (
+ id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id),
+ doctor_id INTEGER NOT NULL REFERENCES users(id), created_by INTEGER NOT NULL REFERENCES users(id),
+ appointment_id INTEGER REFERENCES appointments(id), status TEXT NOT NULL DEFAULT 'waiting',
+ chief_complaint TEXT NOT NULL DEFAULT '', history TEXT NOT NULL DEFAULT '',
+ vitals TEXT NOT NULL DEFAULT '', diagnosis TEXT NOT NULL DEFAULT '', treatment TEXT NOT NULL DEFAULT '',
+ follow_up TEXT, version INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS service_catalog (
+ id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, price INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS charges (
+ id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL REFERENCES visits(id),
+ label TEXT NOT NULL, amount INTEGER NOT NULL CHECK(amount>=0), created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS orders (
+ id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL REFERENCES visits(id),
+ category TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ordered',
+ requested_by INTEGER NOT NULL REFERENCES users(id), result_text TEXT NOT NULL DEFAULT '',
+ file_name TEXT, file_key TEXT, result_by INTEGER REFERENCES users(id),
+ approved_by INTEGER REFERENCES users(id), approved_at TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS prescriptions (
+ id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL UNIQUE REFERENCES visits(id),
+ doctor_id INTEGER NOT NULL REFERENCES users(id), drug_lines TEXT NOT NULL,
+ instructions TEXT NOT NULL DEFAULT '', follow_up TEXT,
+ status TEXT NOT NULL DEFAULT 'draft', created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS payments (
+ id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL REFERENCES visits(id),
+ amount INTEGER NOT NULL CHECK(amount>0), method TEXT NOT NULL,
+ created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
+ external_ref TEXT, idempotency_key TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS medicines (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL, base_unit TEXT NOT NULL,
+ controlled INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS stock_lots (
+ id INTEGER PRIMARY KEY, medicine_id INTEGER NOT NULL REFERENCES medicines(id),
+ lot_number TEXT NOT NULL, expiry_date TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity>=0),
+ quarantined INTEGER NOT NULL DEFAULT 0, UNIQUE(medicine_id,lot_number));
+CREATE TABLE IF NOT EXISTS stock_movements (
+ id INTEGER PRIMARY KEY, stock_lot_id INTEGER NOT NULL REFERENCES stock_lots(id),
+ movement_type TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity>0),
+ created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS adjustments (
+ id INTEGER PRIMARY KEY, visit_id INTEGER NOT NULL REFERENCES visits(id),
+ payment_id INTEGER REFERENCES payments(id), kind TEXT NOT NULL CHECK(kind IN ('discount','refund')),
+ amount INTEGER NOT NULL CHECK(amount>0), reason TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+ proposed_by INTEGER NOT NULL REFERENCES users(id), reviewed_by INTEGER REFERENCES users(id),
+ proposed_at TEXT NOT NULL, reviewed_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_adjustments_visit ON adjustments(visit_id,status);
+CREATE TABLE IF NOT EXISTS audit_log (
+ id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), event TEXT NOT NULL,
+ object_type TEXT NOT NULL, object_id INTEGER, details TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL);
+"""
+
+def pw_hash(password:str,salt:str)->str:
+    return hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),260_000).hex()
+
+@contextmanager
+def db(write:bool=False):
+    DB.parent.mkdir(parents=True,exist_ok=True)
+    con=sqlite3.connect(DB,timeout=10)
+    con.row_factory=sqlite3.Row
+    con.execute('PRAGMA foreign_keys=ON')
+    con.execute('PRAGMA busy_timeout=10000')
+    try:
+        if write: con.execute('BEGIN IMMEDIATE')
+        yield con
+        if write: con.commit()
+    except Exception:
+        if write: con.rollback()
+        raise
+    finally: con.close()
+
+def row(x):return dict(x) if x is not None else None
+
+def init_db():
+    DB.parent.mkdir(parents=True,exist_ok=True)
+    with db() as c:
+        c.executescript(SCHEMA)
+        c.execute('PRAGMA journal_mode=WAL')
+    with db(True) as c:
+        if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
+        for user,full,roles in DEMO_USERS:
+            salt=secrets.token_hex(16)
+            c.execute('INSERT INTO users(username,full_name,salt,password_hash) VALUES(?,?,?,?)',
+                      (user,full,salt,pw_hash(PASS,salt)))
+            uid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+            for role in roles:c.execute('INSERT INTO user_roles VALUES(?,?)',(uid,role))
+        c.executemany('INSERT INTO service_catalog(name,price) VALUES(?,?)',[
+            ('Khám nội (mẫu)',150000),('Khám sản (mẫu)',180000),('Khám chuyên khoa (mẫu)',160000)])
+        c.executemany('INSERT INTO medicines(name,base_unit,controlled) VALUES(?,?,?)',[
+            ('Thuốc mẫu A - không dùng điều trị','viên',0),('Vật tư mẫu B','cái',0),('Thuốc kiểm soát - mẫu, không xuất','ống',1)])
+        c.executemany('INSERT INTO stock_lots(medicine_id,lot_number,expiry_date,quantity,quarantined) VALUES(?,?,?,?,?)',[
+            (1,'LO-MAU-001','2027-03-30',120,0),(1,'LO-MAU-002','2027-09-30',300,0),(3,'KS-MAU-001','2027-10-15',10,1)])
+        # Dữ liệu được cố ý để trống: không tạo bệnh nhân giả nếu người dùng chưa thao tác.
+
+app=FastAPI(title='Phòng khám đa khoa Minh Đức - bản thử nghiệm',version='0.3.0',docs_url='/api/docs',openapi_url='/api/openapi.json')
+init_db()
+app.mount('/assets',StaticFiles(directory=BASE/'static'),name='assets')
+
+@app.middleware('http')
+async def security_headers(request:Request,call_next):
+    if request.client and request.client.host not in ('127.0.0.1','::1','testclient'):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({'detail':'Bản thử nghiệm chỉ cho phép kết nối từ máy cục bộ'},status_code=403)
+    response=await call_next(request)
+    response.headers['X-Content-Type-Options']='nosniff'
+    response.headers['X-Frame-Options']='DENY'
+    response.headers['Referrer-Policy']='no-referrer'
+    response.headers['Cache-Control']='no-store'
+    response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    return response
+
+@app.get('/',include_in_schema=False)
+def index():return FileResponse(BASE/'static'/'index.html',headers={'Cache-Control':'no-store'})
+
+@app.get('/api/health')
+def health():return {'status':'demo','version':'0.3.0','clinic':'Phòng khám đa khoa Minh Đức'}
+
+class Login(BaseModel):
+    username:str=Field(min_length=2,max_length=40)
+    password:str=Field(min_length=1,max_length=250)
+
+@app.post('/api/login')
+def login(data:Login):
+    with db(True) as c:
+        u=c.execute('SELECT * FROM users WHERE username=? AND active=1',(data.username,)).fetchone()
+        if u is None or not hmac.compare_digest(pw_hash(data.password,u['salt']) if u else '0'*64,u['password_hash'] if u else '1'*64):
+            raise HTTPException(401,'Sai tài khoản hoặc mật khẩu')
+        token=secrets.token_urlsafe(48)
+        expires=(datetime.now(timezone.utc)+timedelta(hours=8)).isoformat()
+        c.execute('INSERT INTO sessions VALUES(?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),u['id'],expires))
+        roles=[r[0] for r in c.execute('SELECT role FROM user_roles WHERE user_id=?',(u['id'],))]
+        return {'access_token':token,'user':{'id':u['id'],'username':u['username'],'name':u['full_name'],'roles':roles}}
+
+def principal(authorization:Annotated[str|None,Header()]=None):
+    if not authorization or not authorization.startswith('Bearer '):raise HTTPException(401,'Cần đăng nhập')
+    token=authorization[7:]
+    if len(token)<48:raise HTTPException(401,'Phiên không hợp lệ')
+    digest=hashlib.sha256(token.encode()).hexdigest()
+    with db() as c:
+        u=c.execute('SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires_at>? AND active=1',(digest,NOW())).fetchone()
+        if not u:raise HTTPException(401,'Hết hạn phiên hoặc không hợp lệ')
+        roles=[r[0] for r in c.execute('SELECT role FROM user_roles WHERE user_id=?',(u['id'],))]
+        return {'id':u['id'],'username':u['username'],'name':u['full_name'],'roles':roles,'token_hash':digest}
+
+def require(u, *roles):
+    if not set(roles).intersection(u['roles']):raise HTTPException(403,'Không có quyền thực hiện chức năng')
+
+def audit(c,u,event,typ,obj,details=''):
+    c.execute('INSERT INTO audit_log(user_id,event,object_type,object_id,details,created_at) VALUES(?,?,?,?,?,?)',
+              (u['id'],event,typ,obj,details[:500],NOW()))
+
+def visit_access(c,u,vid:int,*,clinical=False):
+    v=c.execute('SELECT visits.*,patients.full_name AS patient_name,patients.code AS patient_code FROM visits JOIN patients ON patients.id=visits.patient_id WHERE visits.id=?',(vid,)).fetchone()
+    if not v:raise HTTPException(404,'Không tìm thấy lượt khám')
+    if clinical:
+        if 'doctor' in u['roles'] and v['doctor_id']==u['id']:return v
+        # Chưa có phân công điều dưỡng chi tiết: chặn quyền xem toàn bộ bệnh án.
+        raise HTTPException(403,'Không được truy cập hồ sơ chuyên môn này')
+    return v
+
+@app.get('/api/me')
+def me(u=Depends(principal)):return {k:v for k,v in u.items() if k!='token_hash'}
+
+@app.post('/api/logout')
+def logout(u=Depends(principal)):
+    with db(True) as c:c.execute('DELETE FROM sessions WHERE token_hash=?',(u['token_hash'],))
+    return {'ok':True}
+
+@app.get('/api/staff')
+def staff(u=Depends(principal)):
+    require(u,'admin','manager','reception','doctor')
+    with db() as c:
+        return [dict(x) for x in c.execute("SELECT u.id,u.full_name,u.username FROM users u JOIN user_roles r ON r.user_id=u.id WHERE r.role='doctor' ORDER BY u.id")]
+
+class PatientInput(BaseModel):
+    full_name:str=Field(min_length=2,max_length=180)
+    date_of_birth:str|None=None
+    sex:Literal['Nam','Nữ','Khác','Chưa rõ']='Chưa rõ'
+    phone:str|None=Field(default=None,max_length=30)
+    citizen_id:str|None=Field(default=None,max_length=24)
+    address:str|None=Field(default=None,max_length=300)
+
+    @field_validator('date_of_birth')
+    @classmethod
+    def date_valid(cls,v):
+        if v and (date.fromisoformat(v)>date.today() or date.fromisoformat(v)<date(1900,1,1)):raise ValueError('Ngày sinh không hợp lệ')
+        return v
+
+@app.post('/api/patients',status_code=201)
+def add_patient(data:PatientInput,u=Depends(principal)):
+    require(u,'reception','admin')
+    with db(True) as c:
+        if data.citizen_id:
+            exists=c.execute('SELECT id FROM patients WHERE citizen_id=?',(data.citizen_id,)).fetchone()
+            if exists:raise HTTPException(409,'Có hồ sơ trùng số định danh; hãy tìm hồ sơ cũ')
+        params=data.model_dump()
+        cols=','.join(params)
+        names=','.join('?' for _ in params)
+        c.execute(f'INSERT INTO patients({cols},created_at) VALUES({names},?)',(*params.values(),NOW()))
+        pid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        code=f'MD{pid:06d}'
+        c.execute('UPDATE patients SET code=? WHERE id=?',(code,pid))
+        audit(c,u,'patient_created','patient',pid)
+        return {'id':pid,'code':code}
+
+@app.get('/api/patients')
+def patients(q:str='',u=Depends(principal)):
+    require(u,'reception','doctor','nurse','admin')
+    q=q.strip()[:100]
+    with db() as c:
+        wh="WHERE (p.full_name LIKE ? OR p.code LIKE ? OR p.phone LIKE ?)" if q else ''
+        args=['%'+q+'%']*3 if q else []
+        if 'doctor' in u['roles'] and not {'reception','admin'}.intersection(u['roles']):
+            wh+=(' AND ' if wh else ' WHERE ')+ 'EXISTS (SELECT 1 FROM visits v WHERE v.patient_id=p.id AND v.doctor_id=?)'
+            args.append(u['id'])
+        sql=f'SELECT p.id,p.code,p.full_name,p.date_of_birth,p.sex,p.phone,p.address FROM patients p {wh} ORDER BY p.id DESC LIMIT 100'
+        return [dict(x) for x in c.execute(sql,args)]
+
+@app.get('/api/patients/{patient_id}')
+def patient_detail(patient_id:int,u=Depends(principal)):
+    require(u,'reception','doctor','nurse','admin')
+    with db() as c:
+        p=c.execute('SELECT * FROM patients WHERE id=?',(patient_id,)).fetchone()
+        if not p:raise HTTPException(404,'Không có bệnh nhân')
+        if 'doctor' in u['roles'] and not {'reception','admin'}.intersection(u['roles']):
+            if not c.execute('SELECT 1 FROM visits WHERE patient_id=? AND doctor_id=?',(patient_id,u['id'])).fetchone():raise HTTPException(403,'Không được xem hồ sơ này')
+        return dict(p)
+
+class AppointmentInput(BaseModel):
+    patient_id:int
+    doctor_id:int
+    scheduled_at:str=Field(min_length=10,max_length=40)
+    reason:str=Field(default='',max_length=300)
+
+@app.post('/api/appointments',status_code=201)
+def add_appointment(data:AppointmentInput,u=Depends(principal)):
+    require(u,'reception','admin')
+    with db(True) as c:
+        if not c.execute('SELECT 1 FROM patients WHERE id=?',(data.patient_id,)).fetchone():raise HTTPException(404,'Không có bệnh nhân')
+        ensure_doctor(c,data.doctor_id)
+        c.execute('INSERT INTO appointments(patient_id,doctor_id,scheduled_at,reason,created_by) VALUES(?,?,?,?,?)',
+                  (data.patient_id,data.doctor_id,data.scheduled_at,data.reason,u['id']))
+        aid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        audit(c,u,'appointment_created','appointment',aid)
+        return {'id':aid}
+
+@app.get('/api/appointments')
+def get_appointments(u=Depends(principal)):
+    require(u,'reception','doctor','admin')
+    with db() as c:
+        sql='SELECT a.*,p.code AS patient_code,p.full_name AS patient_name,users.full_name AS doctor_name FROM appointments a JOIN patients p ON p.id=a.patient_id JOIN users ON users.id=a.doctor_id'
+        args=[]
+        if 'doctor' in u['roles'] and 'reception' not in u['roles'] and 'admin' not in u['roles']:
+            sql+=' WHERE a.doctor_id=?';args=[u['id']]
+        return [dict(x) for x in c.execute(sql+' ORDER BY a.id DESC LIMIT 100',args)]
+
+def ensure_doctor(c,doctor_id:int):
+    if not c.execute("SELECT 1 FROM user_roles WHERE user_id=? AND role='doctor'",(doctor_id,)).fetchone():raise HTTPException(422,'Bác sĩ không hợp lệ')
+
+class VisitInput(BaseModel):
+    patient_id:int
+    doctor_id:int
+    service_id:int=1
+    appointment_id:int|None=None
+
+@app.post('/api/visits',status_code=201)
+def create_visit(data:VisitInput,u=Depends(principal)):
+    require(u,'reception','admin')
+    with db(True) as c:
+        if not c.execute('SELECT 1 FROM patients WHERE id=?',(data.patient_id,)).fetchone():raise HTTPException(404,'Không có bệnh nhân')
+        ensure_doctor(c,data.doctor_id)
+        service=c.execute('SELECT * FROM service_catalog WHERE id=?',(data.service_id,)).fetchone()
+        if not service:raise HTTPException(422,'Dịch vụ không tồn tại')
+        if data.appointment_id:
+            a=c.execute('SELECT * FROM appointments WHERE id=?',(data.appointment_id,)).fetchone()
+            if not a or a['patient_id']!=data.patient_id or a['doctor_id']!=data.doctor_id or a['status']!='booked':raise HTTPException(422,'Lịch hẹn không hợp lệ')
+        c.execute('INSERT INTO visits(patient_id,doctor_id,created_by,appointment_id,created_at) VALUES(?,?,?,?,?)',
+                  (data.patient_id,data.doctor_id,u['id'],data.appointment_id,NOW()))
+        vid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',(vid,service['name'],service['price'],NOW()))
+        if data.appointment_id:c.execute("UPDATE appointments SET status='arrived' WHERE id=?",(data.appointment_id,))
+        audit(c,u,'visit_created','visit',vid)
+        return {'id':vid}
+
+@app.get('/api/services')
+def services(u=Depends(principal)):
+    require(u,'reception','admin','manager')
+    with db() as c:return [dict(x) for x in c.execute('SELECT * FROM service_catalog')]
+
+@app.get('/api/visits')
+def list_visits(u=Depends(principal)):
+    require(u,'reception','doctor','nurse','technician','cashier','pharmacy','manager','admin')
+    with db() as c:
+        if 'manager' in u['roles'] or 'admin' in u['roles']:
+            return [{'id':x['id'],'status':x['status'],'created_at':x['created_at']} for x in c.execute('SELECT id,status,created_at FROM visits ORDER BY id DESC LIMIT 100')]
+        if 'doctor' in u['roles']:
+            sql='SELECT v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id WHERE v.doctor_id=? ORDER BY v.id DESC LIMIT 100'
+            return [dict(x) for x in c.execute(sql,(u['id'],))]
+        if 'technician' in u['roles']:
+            sql='SELECT DISTINCT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN orders o ON o.visit_id=v.id JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
+            return [dict(x) for x in c.execute(sql)]
+        if 'reception' in u['roles']:
+            sql='SELECT v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
+            return [dict(x) for x in c.execute(sql)]
+        if 'cashier' in u['roles'] or 'pharmacy' in u['roles']:
+            sql='SELECT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
+            return [dict(x) for x in c.execute(sql)]
+        if 'nurse' in u['roles']:
+            sql='SELECT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
+            return [dict(x) for x in c.execute(sql)]
+        return []
+
+@app.get('/api/visits/{visit_id}')
+def visit_detail(visit_id:int,u=Depends(principal)):
+    require(u,'doctor','nurse','reception','cashier','admin')
+    with db(True) as c:
+        v=visit_access(c,u,visit_id,clinical=True) if ('doctor' in u['roles'] or 'nurse' in u['roles']) else visit_access(c,u,visit_id)
+        if 'doctor' in u['roles']:
+            audit(c,u,'clinical_viewed','visit',visit_id)
+            return dict(v)
+        return {'id':v['id'],'patient_id':v['patient_id'],'patient_name':v['patient_name'],'patient_code':v['patient_code'],'status':v['status'],'doctor_id':v['doctor_id'],'created_at':v['created_at']}
+
+class ClinicalInput(BaseModel):
+    chief_complaint:str=Field(default='',max_length=3000)
+    history:str=Field(default='',max_length=4000)
+    vitals:str=Field(default='',max_length=1000)
+    diagnosis:str=Field(default='',max_length=3000)
+    treatment:str=Field(default='',max_length=3000)
+    follow_up:str|None=Field(default=None,max_length=80)
+    version:int=Field(ge=0)
+
+@app.put('/api/visits/{visit_id}/clinical')
+def update_clinical(visit_id:int,data:ClinicalInput,u=Depends(principal)):
+    require(u,'doctor')
+    with db(True) as c:
+        visit_access(c,u,visit_id,clinical=True)
+        changed=c.execute('UPDATE visits SET chief_complaint=?,history=?,vitals=?,diagnosis=?,treatment=?,follow_up=?,version=version+1,status=? WHERE id=? AND version=?',
+                          (data.chief_complaint,data.history,data.vitals,data.diagnosis,data.treatment,data.follow_up,'in_progress',visit_id,data.version))
+        if changed.rowcount!=1:raise HTTPException(409,'Hồ sơ đã được sửa ở phiên khác; hãy tải lại')
+        audit(c,u,'clinical_updated','visit',visit_id)
+        return {'version':data.version+1}
+
+class OrderInput(BaseModel):
+    visit_id:int
+    category:Literal['lab','ultrasound','xray','ecg']
+    name:str=Field(min_length=3,max_length=180)
+
+@app.post('/api/orders',status_code=201)
+def add_order(data:OrderInput,u=Depends(principal)):
+    require(u,'doctor')
+    with db(True) as c:
+        visit_access(c,u,data.visit_id,clinical=True)
+        c.execute('INSERT INTO orders(visit_id,category,name,requested_by,created_at) VALUES(?,?,?,?,?)',
+                  (data.visit_id,data.category,data.name,u['id'],NOW()))
+        oid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        audit(c,u,'order_created','order',oid)
+        return {'id':oid}
+
+@app.get('/api/orders')
+def list_orders(u=Depends(principal)):
+    require(u,'doctor','technician')
+    with db() as c:
+        sql='SELECT o.id,o.visit_id,o.category,o.name,o.status,o.result_text,o.file_name,o.created_at,p.code AS patient_code,p.full_name AS patient_name FROM orders o JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id'
+        args=[]
+        if 'doctor' in u['roles'] and 'technician' not in u['roles']:
+            sql+=' WHERE v.doctor_id=?';args=[u['id']]
+        return [dict(x) for x in c.execute(sql+' ORDER BY o.id DESC LIMIT 100',args)]
+
+class ResultInput(BaseModel):
+    result_text:str=Field(min_length=1,max_length=10000)
+
+@app.put('/api/orders/{order_id}/result')
+def submit_result(order_id:int,data:ResultInput,u=Depends(principal)):
+    require(u,'technician')
+    with db(True) as c:
+        order=c.execute('SELECT status FROM orders WHERE id=?',(order_id,)).fetchone()
+        if not order:raise HTTPException(404,'Không có chỉ định')
+        if order['status'] not in ('ordered','pending_review'):raise HTTPException(409,'Kết quả đã duyệt, không được sửa trực tiếp')
+        c.execute("UPDATE orders SET result_text=?,result_by=?,status='pending_review' WHERE id=?",(data.result_text,u['id'],order_id))
+        audit(c,u,'result_submitted','order',order_id)
+        return {'status':'pending_review'}
+
+@app.post('/api/orders/{order_id}/approve')
+def approve_result(order_id:int,u=Depends(principal)):
+    require(u,'doctor')
+    with db(True) as c:
+        o=c.execute('SELECT o.*,v.doctor_id FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
+        if not o:raise HTTPException(404,'Không có chỉ định')
+        if o['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ phụ trách')
+        if o['status']!='pending_review' or not o['result_text'].strip():raise HTTPException(409,'Chưa có kết quả chờ duyệt')
+        c.execute("UPDATE orders SET status='approved',approved_by=?,approved_at=? WHERE id=?",(u['id'],NOW(),order_id))
+        audit(c,u,'result_approved_demo','order',order_id,'Chưa ký số; phê duyệt mô phỏng')
+        return {'status':'approved','note':'Chỉ xác nhận quy trình demo, không có chữ ký số chuyên môn'}
+
+@app.post('/api/orders/{order_id}/attachment')
+async def add_attachment(order_id:int,file:UploadFile=File(...),u=Depends(principal)):
+    require(u,'technician')
+    if file.content_type not in ('application/pdf','image/png','image/jpeg'):raise HTTPException(415,'Chỉ chấp nhận PDF/PNG/JPEG')
+    raw=await file.read(5*1024*1024+1)
+    if not raw or len(raw)>5*1024*1024:raise HTTPException(413,'Tệp không được quá 5 MB')
+    if not (raw.startswith(b'%PDF-') or raw.startswith(b'\x89PNG\r\n\x1a\n') or raw.startswith(b'\xff\xd8\xff')):raise HTTPException(415,'Không nhận dạng định dạng tệp')
+    ext={'application/pdf':'.pdf','image/png':'.png','image/jpeg':'.jpg'}[file.content_type]
+    key=uuid.uuid4().hex+ext
+    FILES.mkdir(parents=True,exist_ok=True)
+    with db(True) as c:
+        o=c.execute('SELECT status FROM orders WHERE id=?',(order_id,)).fetchone()
+        if not o:raise HTTPException(404,'Không có chỉ định')
+        if o['status']=='approved':raise HTTPException(409,'Kết quả đã duyệt')
+        (FILES/key).write_bytes(raw)
+        c.execute('UPDATE orders SET file_key=?,file_name=? WHERE id=?',(key,(file.filename or 'Kết quả')[:120],order_id))
+        audit(c,u,'attachment_uploaded','order',order_id,key)
+    return {'ok':True,'file_name':file.filename}
+
+@app.get('/api/orders/{order_id}/attachment')
+def get_attachment(order_id:int,u=Depends(principal)):
+    require(u,'doctor','technician')
+    with db(True) as c:
+        o=c.execute('SELECT o.*,v.doctor_id FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
+        if not o or not o['file_key']:raise HTTPException(404,'Không có tệp')
+        if 'doctor' in u['roles'] and o['doctor_id']!=u['id'] and 'technician' not in u['roles']:raise HTTPException(403,'Không có quyền')
+        audit(c,u,'attachment_viewed','order',order_id)
+        target=FILES/o['file_key']
+        if not target.is_file():raise HTTPException(404,'Tệp không tồn tại')
+        return FileResponse(target,filename=o['file_name'],headers={'Cache-Control':'no-store'})
+
+class PrescriptionInput(BaseModel):
+    visit_id:int
+    drug_lines:str=Field(min_length=1,max_length=6000)
+    instructions:str=Field(default='',max_length=3000)
+    follow_up:str|None=Field(default=None,max_length=80)
+
+@app.post('/api/prescriptions',status_code=201)
+def create_rx(data:PrescriptionInput,u=Depends(principal)):
+    require(u,'doctor')
+    with db(True) as c:
+        visit_access(c,u,data.visit_id,clinical=True)
+        if c.execute('SELECT 1 FROM prescriptions WHERE visit_id=?',(data.visit_id,)).fetchone():raise HTTPException(409,'Lượt khám đã có đơn nháp')
+        c.execute('INSERT INTO prescriptions(visit_id,doctor_id,drug_lines,instructions,follow_up,created_at) VALUES(?,?,?,?,?,?)',
+                  (data.visit_id,u['id'],data.drug_lines,data.instructions,data.follow_up,NOW()))
+        rid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        audit(c,u,'rx_draft_created','prescription',rid)
+        return {'id':rid,'status':'draft'}
+
+@app.get('/api/prescriptions')
+def get_rx(u=Depends(principal)):
+    require(u,'doctor','pharmacy')
+    with db() as c:
+        sql="SELECT rx.*,v.patient_id,p.full_name AS patient_name,p.code AS patient_code FROM prescriptions rx JOIN visits v ON v.id=rx.visit_id JOIN patients p ON p.id=v.patient_id"
+        args=[]
+        if 'doctor' in u['roles'] and 'pharmacy' not in u['roles']:
+            sql+=' WHERE rx.doctor_id=?';args=[u['id']]
+        return [dict(x) for x in c.execute(sql+' ORDER BY rx.id DESC',args)]
+
+@app.get('/api/dues')
+def dues(u=Depends(principal)):
+    require(u,'cashier','reception','manager')
+    with db() as c:
+        sql='''SELECT v.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,
+         COALESCE((SELECT SUM(amount) FROM charges WHERE visit_id=v.id),0)-COALESCE((SELECT SUM(amount) FROM adjustments WHERE visit_id=v.id AND kind='discount' AND status='approved'),0) AS charged,
+         COALESCE((SELECT SUM(amount) FROM payments WHERE visit_id=v.id),0)-COALESCE((SELECT SUM(amount) FROM adjustments WHERE visit_id=v.id AND kind='refund' AND status='approved'),0) AS paid
+         FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'''
+        return [dict(x) for x in c.execute(sql)]
+
+class PaymentInput(BaseModel):
+    visit_id:int
+    amount:int=Field(gt=0,le=2_000_000_000)
+    method:Literal['cash','transfer']
+    idempotency_key:str=Field(min_length=8,max_length=120)
+    external_ref:str|None=Field(default=None,max_length=120)
+
+@app.post('/api/payments',status_code=201)
+def create_payment(data:PaymentInput,u=Depends(principal)):
+    require(u,'cashier')
+    with db(True) as c:
+        old=c.execute('SELECT * FROM payments WHERE idempotency_key=?',(data.idempotency_key,)).fetchone()
+        if old:
+            if old['created_by']!=u['id'] or old['amount']!=data.amount or old['visit_id']!=data.visit_id or old['method']!=data.method or (old['external_ref'] or None)!=(data.external_ref or None):raise HTTPException(409,'Khóa giao dịch đã được sử dụng với dữ liệu khác')
+            return {'id':old['id'],'status':'already_recorded'}
+        if not c.execute('SELECT 1 FROM visits WHERE id=?',(data.visit_id,)).fetchone():raise HTTPException(404,'Không có lượt khám')
+        charged=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM charges WHERE visit_id=?)-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE visit_id=? AND kind='discount' AND status='approved')",(data.visit_id,data.visit_id)).fetchone()[0]
+        paid=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM payments WHERE visit_id=?)-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE visit_id=? AND kind='refund' AND status='approved')",(data.visit_id,data.visit_id)).fetchone()[0]
+        if data.amount>charged-paid:raise HTTPException(409,'Số tiền vượt khoản còn phải thu')
+        c.execute('INSERT INTO payments(visit_id,amount,method,created_by,created_at,external_ref,idempotency_key) VALUES(?,?,?,?,?,?,?)',
+                  (data.visit_id,data.amount,data.method,u['id'],NOW(),data.external_ref,data.idempotency_key))
+        payid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        audit(c,u,'payment_recorded_demo','payment',payid)
+        return {'id':payid,'status':'recorded'}
+
+@app.get('/api/stock')
+def stock(u=Depends(principal)):
+    require(u,'pharmacy','manager')
+    with db() as c:
+        return [dict(x) for x in c.execute('''SELECT l.id,m.name,m.base_unit,m.controlled,l.lot_number,l.expiry_date,l.quantity,l.quarantined
+          FROM stock_lots l JOIN medicines m ON m.id=l.medicine_id ORDER BY m.id,l.expiry_date''')]
+
+
+@app.get('/api/medicines')
+def get_medicines(u=Depends(principal)):
+    require(u,'pharmacy','manager')
+    with db() as c:
+        return [dict(x) for x in c.execute('SELECT id,name,base_unit,controlled FROM medicines ORDER BY id')]
+
+class StockReceipt(BaseModel):
+    medicine_id:int=Field(gt=0)
+    lot_number:str=Field(min_length=2,max_length=80)
+    expiry_date:str
+    quantity:int=Field(gt=0,le=10_000_000)
+
+    @field_validator('expiry_date')
+    @classmethod
+    def check_expiry(cls,v):
+        if date.fromisoformat(v)<date.today():raise ValueError('Không nhận thuốc đã hết hạn')
+        return v
+
+@app.post('/api/stock/receipts',status_code=201)
+def add_stock_receipt(data:StockReceipt,u=Depends(principal)):
+    require(u,'pharmacy')
+    with db(True) as c:
+        med=c.execute('SELECT * FROM medicines WHERE id=?',(data.medicine_id,)).fetchone()
+        if not med:raise HTTPException(404,'Không tìm thấy mặt hàng')
+        if med['controlled']:raise HTTPException(403,'Chưa triển khai tiếp nhận thuốc phải kiểm soát đặc biệt trong bản demo')
+        old=c.execute('SELECT * FROM stock_lots WHERE medicine_id=? AND lot_number=?',(data.medicine_id,data.lot_number)).fetchone()
+        if old:
+            if old['expiry_date']!=data.expiry_date or old['quarantined']:
+                raise HTTPException(409,'Lô đã có thông tin khác hoặc đang cách ly')
+            c.execute('UPDATE stock_lots SET quantity=quantity+? WHERE id=?',(data.quantity,old['id']))
+            lid=old['id']
+        else:
+            c.execute('INSERT INTO stock_lots(medicine_id,lot_number,expiry_date,quantity) VALUES(?,?,?,?)',
+                      (data.medicine_id,data.lot_number,data.expiry_date,data.quantity))
+            lid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute('INSERT INTO stock_movements(stock_lot_id,movement_type,quantity,created_by,created_at) VALUES(?,?,?,?,?)',
+                  (lid,'receipt',data.quantity,u['id'],NOW()))
+        audit(c,u,'stock_received_demo','stock_lot',lid,str(data.quantity))
+        return {'stock_lot_id':lid,'quantity_added':data.quantity}
+
+@app.get('/api/overview')
+def overview(u=Depends(principal)):
+    with db() as c:
+        visits=c.execute('SELECT COUNT(*) FROM visits').fetchone()[0]
+        orders=c.execute("SELECT COUNT(*) FROM orders WHERE status!='approved'").fetchone()[0]
+        out={'visits':visits,'pending_orders':orders,'role':u['roles'][0]}
+        if 'manager' in u['roles']:
+            charged=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM charges)-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE kind='discount' AND status='approved')").fetchone()[0]
+            paid=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM payments)-(SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE kind='refund' AND status='approved')").fetchone()[0]
+            out.update(charged=charged,paid=paid,outstanding=charged-paid,
+                       stock_warning=c.execute("SELECT COUNT(*) FROM stock_lots WHERE quarantined=1 OR expiry_date<=date('now','+90 days')").fetchone()[0])
+        return out
+
+@app.get('/api/audit')
+def audit_entries(u=Depends(principal)):
+    require(u,'admin')
+    with db() as c:
+        return [dict(x) for x in c.execute('SELECT id,user_id,event,object_type,object_id,created_at FROM audit_log ORDER BY id DESC LIMIT 100')]
+
+# Export only source-verified visit data; export endpoints enforce role/visit scope.
+from .forms_api import mount_forms
+mount_forms(app, db, principal, require, audit)
+
+
+# The following extensions are strictly confined to the local pilot.
+
+def _invoice_state(c, vid:int):
+    charged=c.execute('SELECT COALESCE(SUM(amount),0) FROM charges WHERE visit_id=?',(vid,)).fetchone()[0]
+    discounts=c.execute("SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE visit_id=? AND kind='discount' AND status='approved'",(vid,)).fetchone()[0]
+    incoming=c.execute('SELECT COALESCE(SUM(amount),0) FROM payments WHERE visit_id=?',(vid,)).fetchone()[0]
+    refunds=c.execute("SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE visit_id=? AND kind='refund' AND status='approved'",(vid,)).fetchone()[0]
+    return {'charged':charged-discounts,'paid':incoming-refunds,'discounts':discounts,'refunds':refunds,'raw_charges':charged}
+
+@app.get('/api/payments')
+def list_payments(u=Depends(principal)):
+    require(u,'cashier','manager')
+    with db() as c:
+        return [dict(x) for x in c.execute('''SELECT m.id,m.visit_id,m.amount,m.method,m.created_at,m.external_ref,
+             p.code AS patient_code,p.full_name AS patient_name,users.full_name AS cashier_name
+             FROM payments m JOIN visits v ON v.id=m.visit_id JOIN patients p ON p.id=v.patient_id
+             JOIN users ON users.id=m.created_by ORDER BY m.id DESC LIMIT 100''')]
+
+class AdjustmentInput(BaseModel):
+    visit_id:int=Field(gt=0)
+    kind:Literal['discount','refund']
+    amount:int=Field(gt=0,le=2_000_000_000)
+    reason:str=Field(min_length=5,max_length=500)
+    payment_id:int|None=None
+
+@app.post('/api/adjustments',status_code=201)
+def propose_adjustment(data:AdjustmentInput,u=Depends(principal)):
+    require(u,'cashier')
+    with db(True) as c:
+        if not c.execute('SELECT 1 FROM visits WHERE id=?',(data.visit_id,)).fetchone():
+            raise HTTPException(404,'Không có lượt khám')
+        st=_invoice_state(c,data.visit_id)
+        if data.kind=='discount':
+            if data.payment_id is not None:raise HTTPException(422,'Giảm giá không gắn một phiếu thu')
+            if st['charged']-data.amount<0:raise HTTPException(409,'Giảm giá vượt tổng phí còn được giảm')
+        else:
+            if data.payment_id is None:raise HTTPException(422,'Cần chọn phiếu thu được đề nghị hoàn')
+            pay=c.execute('SELECT * FROM payments WHERE id=? AND visit_id=?',(data.payment_id,data.visit_id)).fetchone()
+            if not pay:raise HTTPException(422,'Phiếu thu không khớp lượt khám')
+            current=c.execute("SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE payment_id=? AND kind='refund' AND status='approved'",(data.payment_id,)).fetchone()[0]
+            if data.amount>pay['amount']-current:raise HTTPException(409,'Số hoàn vượt số đã thu ở phiếu')
+        c.execute('''INSERT INTO adjustments(visit_id,payment_id,kind,amount,reason,proposed_by,proposed_at)
+                     VALUES(?,?,?,?,?,?,?)''',(data.visit_id,data.payment_id,data.kind,data.amount,data.reason,u['id'],NOW()))
+        id=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        audit(c,u,'adjustment_requested','adjustment',id)
+        return {'id':id,'status':'pending'}
+
+@app.get('/api/adjustments')
+def adjustments_list(u=Depends(principal)):
+    require(u,'cashier','manager')
+    with db() as c:
+        sql='''SELECT a.id,a.visit_id,a.payment_id,a.kind,a.amount,a.reason,a.status,a.proposed_at,a.reviewed_at,
+          p.full_name AS patient_name,users.full_name AS proposed_name FROM adjustments a
+          JOIN visits v ON v.id=a.visit_id JOIN patients p ON p.id=v.patient_id JOIN users ON users.id=a.proposed_by'''
+        args=()
+        if 'manager' not in u['roles']:
+            sql+=' WHERE a.proposed_by=?';args=(u['id'],)
+        return [dict(x) for x in c.execute(sql+' ORDER BY a.id DESC LIMIT 100',args)]
+
+class AdjustmentReview(BaseModel):
+    approve:bool
+
+@app.post('/api/adjustments/{adj_id}/review')
+def review_adjustment(adj_id:int,data:AdjustmentReview,u=Depends(principal)):
+    require(u,'manager')
+    with db(True) as c:
+        a=c.execute('SELECT * FROM adjustments WHERE id=?',(adj_id,)).fetchone()
+        if not a:raise HTTPException(404,'Không có đề nghị')
+        if a['status']!='pending':raise HTTPException(409,'Đã giải quyết đề nghị này')
+        if a['proposed_by']==u['id']:raise HTTPException(403,'Không được tự duyệt đề nghị của mình')
+        st=_invoice_state(c,a['visit_id'])
+        if data.approve:
+            if a['kind']=='discount' and st['charged']-a['amount']<0:
+                raise HTTPException(409,'Số giảm giá vượt tổng phí còn được giảm')
+            if a['kind']=='refund':
+                pay=c.execute('SELECT amount FROM payments WHERE id=? AND visit_id=?',(a['payment_id'],a['visit_id'])).fetchone()
+                already=c.execute("SELECT COALESCE(SUM(amount),0) FROM adjustments WHERE payment_id=? AND kind='refund' AND status='approved'",(a['payment_id'],)).fetchone()[0]
+                if not pay or a['amount']>pay['amount']-already or a['amount']>st['paid']:
+                    raise HTTPException(409,'Số tiền hoàn vượt số còn có thể hoàn')
+                # Refund only for an agreed overpayment after a discount/cancellation, not an arbitrary cash payout.
+                if st['paid']-a['amount']<st['charged']:
+                    raise HTTPException(409,'Chỉ hoàn phần tiền lớn hơn khoản phải thu đã được giảm hoặc điều chỉnh')
+        new='approved' if data.approve else 'rejected'
+        c.execute('UPDATE adjustments SET status=?,reviewed_by=?,reviewed_at=? WHERE id=?',(new,u['id'],NOW(),adj_id))
+        audit(c,u,'adjustment_'+new,'adjustment',adj_id)
+        return {'id':adj_id,'status':new}
+
+class StockIssue(BaseModel):
+    medicine_id:int=Field(gt=0)
+    quantity:int=Field(gt=0,le=10_000_000)
+    purpose:str=Field(default='Sử dụng nội bộ mô phỏng',min_length=5,max_length=200)
+
+@app.post('/api/stock/issues',status_code=201)
+def stock_issue(data:StockIssue,u=Depends(principal)):
+    require(u,'pharmacy')
+    with db(True) as c:
+        med=c.execute('SELECT * FROM medicines WHERE id=?',(data.medicine_id,)).fetchone()
+        if not med:raise HTTPException(404,'Không có thuốc/vật tư')
+        if med['controlled']:raise HTTPException(403,'Chưa triển khai xuất thuốc phải kiểm soát đặc biệt')
+        lots=c.execute("SELECT id,quantity FROM stock_lots WHERE medicine_id=? AND quarantined=0 AND expiry_date>=? AND quantity>0 ORDER BY expiry_date,id",(data.medicine_id,date.today().isoformat())).fetchall()
+        if sum(l['quantity'] for l in lots)<data.quantity:raise HTTPException(409,'Không đủ tồn khả dụng hoặc đã hết hạn')
+        remaining=data.quantity;used=[]
+        for l in lots:
+            if not remaining:break
+            take=min(remaining,l['quantity']); remaining-=take
+            c.execute('UPDATE stock_lots SET quantity=quantity-? WHERE id=? AND quantity>=?',(take,l['id'],take))
+            c.execute('INSERT INTO stock_movements(stock_lot_id,movement_type,quantity,created_by,created_at) VALUES(?,?,?,?,?)',
+                      (l['id'],'issue',take,u['id'],NOW()))
+            used.append({'lot_id':l['id'],'quantity':take})
+        audit(c,u,'stock_issued_demo','medicine',data.medicine_id,f'{data.purpose}: {data.quantity} base units')
+        return {'medicine_id':data.medicine_id,'quantity':data.quantity,'lots':used,'status':'demo_issued'}
+
+@app.get('/api/print/{kind}/{item_id}')
+def print_form(kind:str,item_id:int,u=Depends(principal)):
+    if kind not in ('intake','clinical','order','result','rx','follow_up','receipt'):
+        raise HTTPException(404,'Biểu mẫu không tồn tại')
+    with db(True) as c:
+        if kind in ('intake','clinical','follow_up'):
+            v=c.execute('''SELECT v.*,p.full_name AS patient_name,p.code AS patient_code,
+                     p.date_of_birth,p.sex,p.phone,p.address,users.full_name AS doctor_name
+                     FROM visits v JOIN patients p ON p.id=v.patient_id
+                     JOIN users ON users.id=v.doctor_id WHERE v.id=?''',(item_id,)).fetchone()
+            if not v:raise HTTPException(404,'Lượt khám không tồn tại')
+            if kind=='intake':require(u,'reception','admin')
+            else:
+                require(u,'doctor')
+                if v['doctor_id']!=u['id']:raise HTTPException(403,'Bác sĩ không được phân công')
+            data=dict(v);data['code']=f'MD-V-{item_id:06d}'
+        elif kind in ('order','result'):
+            o=c.execute('''SELECT o.*,v.doctor_id,p.code AS patient_code,p.full_name AS patient_name,
+                      p.date_of_birth,p.sex,users.full_name AS doctor_name,
+                      appr.full_name AS approved_name FROM orders o
+                      JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id
+                      JOIN users ON users.id=v.doctor_id LEFT JOIN users appr ON appr.id=o.approved_by
+                      WHERE o.id=?''',(item_id,)).fetchone()
+            if not o:raise HTTPException(404,'Không có chỉ định')
+            require(u,'doctor')
+            if o['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ phụ trách')
+            if kind=='result' and o['status']!='approved':raise HTTPException(409,'Kết quả chưa được duyệt')
+            data=dict(o);data['code']=f'MD-CLS-{item_id:06d}'
+        elif kind=='rx':
+            rx=c.execute('''SELECT rx.*,v.diagnosis,v.doctor_id,p.full_name AS patient_name,
+                        p.code AS patient_code,p.date_of_birth,p.sex,p.phone,p.address,users.full_name AS doctor_name
+                        FROM prescriptions rx JOIN visits v ON v.id=rx.visit_id
+                        JOIN patients p ON p.id=v.patient_id JOIN users ON users.id=rx.doctor_id WHERE rx.id=?''',(item_id,)).fetchone()
+            if not rx:raise HTTPException(404,'Không có đơn nháp')
+            require(u,'doctor')
+            if rx['doctor_id']!=u['id']:raise HTTPException(403,'Không được in đơn bệnh nhân khác')
+            data=dict(rx);data['code']=f'MD-RX-{item_id:06d}'
+        else:
+            pay=c.execute('''SELECT pay.*,p.code AS patient_code,p.full_name AS patient_name,
+                         users.full_name AS cashier_name FROM payments pay
+                         JOIN visits v ON v.id=pay.visit_id JOIN patients p ON p.id=v.patient_id
+                         JOIN users ON users.id=pay.created_by WHERE pay.id=?''',(item_id,)).fetchone()
+            if not pay:raise HTTPException(404,'Không có khoản thu')
+            require(u,'cashier','manager')
+            data=dict(pay);data['code']=f'MD-PT-{item_id:06d}'
+        pdf=pdf_document(kind,data)
+        audit(c,u,'form_pdf_generated_demo',kind,item_id)
+        return Response(content=pdf,media_type='application/pdf',headers={
+            'Content-Disposition':f'attachment; filename="MinhDuc_{kind}_{item_id}.pdf"',
+            'Cache-Control':'no-store',
+            'X-Content-Type-Options':'nosniff'})
+
+# --- v0.2: Xuất biểu mẫu từ chính dữ liệu SQLite; quyền kiểm tra phía API. ---
+from fastapi.responses import Response
+from .forms import generate_docx, generate_pdf, TEMPLATE_BY_TYPE
+
+def form_context(c, kind: str, object_id: int):
+    order=None;rx=None
+    if kind in ('order','lab','ultrasound','xray','ecg'):
+        order=row(c.execute('SELECT * FROM orders WHERE id=?',(object_id,)).fetchone())
+        if not order:raise HTTPException(404,'Không có chỉ định / kết quả')
+        if kind in ('lab','ultrasound','xray','ecg') and order['category']!=kind:
+            raise HTTPException(422,'Loại biểu mẫu không phù hợp loại chỉ định')
+        visit_id=order['visit_id']
+    elif kind=='rx':
+        rx=row(c.execute('SELECT * FROM prescriptions WHERE id=?',(object_id,)).fetchone())
+        if not rx:raise HTTPException(404,'Không có đơn thuốc nháp')
+        visit_id=rx['visit_id']
+    else:visit_id=object_id
+    visit=row(c.execute('SELECT * FROM visits WHERE id=?',(visit_id,)).fetchone())
+    if not visit:raise HTTPException(404,'Không có lượt khám')
+    patient=row(c.execute('SELECT * FROM patients WHERE id=?',(visit['patient_id'],)).fetchone())
+    doctor=c.execute('SELECT full_name FROM users WHERE id=?',(visit['doctor_id'],)).fetchone()
+    charge=c.execute('SELECT label FROM charges WHERE visit_id=? ORDER BY id LIMIT 1',(visit_id,)).fetchone()
+    context={'visit':visit,'patient':patient,'doctor_name':doctor['full_name'],
+             'service_label':charge['label'] if charge else 'Chưa xác định',
+             'orders':[dict(x) for x in c.execute('SELECT * FROM orders WHERE visit_id=? ORDER BY id',(visit_id,))]}
+    if order:context['order']=order
+    if rx:context['rx']=rx
+    if kind=='followup':
+        r=c.execute('SELECT * FROM prescriptions WHERE visit_id=?',(visit_id,)).fetchone()
+        if r:context['rx']=dict(r)
+    return context
+
+@app.get('/api/forms/{kind}/{object_id}',name='download_demo_form')
+def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends(principal)):
+    if kind not in TEMPLATE_BY_TYPE:raise HTTPException(404,'Không có biểu mẫu')
+    if kind=='intake':require(u,'reception','admin')
+    elif kind in ('visit','order','followup'):require(u,'doctor')
+    elif kind=='rx':require(u,'doctor','pharmacy')
+    else:require(u,'doctor','technician')
+    with db(True) as c:
+        context=form_context(c,kind,object_id)
+        v=context['visit'];o=context.get('order')
+        if kind in ('visit','order','followup') or (kind=='rx' and 'doctor' in u['roles']):
+            if v['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ được phân công')
+        if kind=='rx' and 'doctor' not in u['roles'] and 'pharmacy' not in u['roles']:
+            raise HTTPException(403,'Không được truy cập đơn')
+        if kind in ('lab','ultrasound','xray','ecg'):
+            if 'doctor' in u['roles'] and v['doctor_id']!=u['id'] and 'technician' not in u['roles']:
+                raise HTTPException(403,'Không phải bác sĩ được phân công')
+            if (o or {}).get('status')!='approved':
+                raise HTTPException(409,'Kết quả chưa được duyệt mô phỏng')
+        # Data is fetched solely from the authorized record, never client-submitted text.
+        audit(c,u,'draft_form_exported','visit',v['id'],f'{kind}.{fmt}')
+    try:
+        payload=generate_pdf(kind,context) if fmt=='pdf' else generate_docx(kind,context)
+    except Exception as exc:
+        # Do not expose server-local file paths to clients.
+        raise HTTPException(503,'Không tạo được biểu mẫu, kiểm tra phông chữ hoặc tệp mẫu') from exc
+    ext='pdf' if fmt=='pdf' else 'docx'
+    mime='application/pdf' if fmt=='pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    name=f'MinhDuc_DEMO_{kind}_{object_id}.{ext}'
+    return Response(payload,media_type=mime,headers={'Content-Disposition':f'attachment; filename="{name}"',
+                                                   'Cache-Control':'no-store','X-Demo-Only':'true'})
