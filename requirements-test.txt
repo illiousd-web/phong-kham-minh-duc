@@ -1,0 +1,4 @@
+-r requirements.txt
+pymupdf>=1.25,<2
+playwright>=1.53,<2
+pypdf>=5,<8

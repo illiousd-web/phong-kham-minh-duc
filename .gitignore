@@ -218,3 +218,29 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Clinic runtime state, patient records, exports and credentials
+data/*
+!data/.keep
+backups/*
+!backups/.keep
+test_evidence/
+uploads/
+attachments/
+exports/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.sqlite-*
+*.db
+*.db-*
+.env.*
+*.pem
+*.key
+credentials*.json
+secrets*.json
+*.zip
+*.p12
+*.pfx
+*.sqlite3.*
+*.sqlite.*
