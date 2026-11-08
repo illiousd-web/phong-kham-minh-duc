@@ -31,7 +31,7 @@ Cả4 cấu hình/lượt đều không có lỗi request trong workload, quyề
 
 ## Kiểm thử và sửa lỗi
 
-- **47 pytest hồi quy/giới hạn tài nguyên**, **25 pytest LAN**: đủ 9 biểu mẫuPDF/DOCX, 3 context trình duyệt, quyền/phiên/CSRF, giao dịch đồng thời, khoFEFO, thanh toán/hoàn/giảm, backup/restore; bổ sung hết chỗ507, thayattachment/rollback, giới hạnexport, cấu hình sai, xoaylog3tiến trình, offsite mất kết nối không pruning bản tốt.
+- **47 pytest hồi quy/giới hạn tài nguyên**, **26 pytest LAN**: đủ 9 biểu mẫuPDF/DOCX, 3 context trình duyệt, quyền/phiên/CSRF, giao dịch đồng thời, khoFEFO, thanh toán/hoàn/giảm, backup/restore; bổ sung hết chỗ507, thayattachment/rollback, giới hạnexport, cấu hình sai, xoaylog3tiến trình, offsite mất kết nối không pruning bản tốt.
 - **6 tình huống Preflight giả lập** và PowerShell parser: máy đủ điều kiện, hết chỗ, thiếuRAMtrống, SMART unknown, PostgreSQL nghe public, Firewall tắt. Parser đã chạy PowerShell 7 trên Linux; kiểm thêm PowerShell 5.1 và inventory đọc Windows trong CI, trạng tháiCI phải xem riêng trên PR. HostedWindows không phải Windows 11Pro của phòng khám.
 - CVE runtime 26 phụ thuộc: không phát hiện lỗ hổng đã biết tại thời điểm audit; dependenciesruntime không tăng, psutil chỉ ở requirements-test. Không tương đương audit toàn bộWindows/PostgreSQL image hoặc pentest.
 - Checksum31 tài sản gốc, CSS/JS/HTML không đổi giao diện; compilePython, syntaxJS/YAML/PowerShell, pipcheck và gitdiffcheck.
@@ -39,7 +39,7 @@ Cả4 cấu hình/lượt đều không có lỗi request trong workload, quyề
 Các lỗi thực tế sửa trong quá trình:
 
 1. Backupv0.4 chép toànattachments +tạo TAR +mã hóa, tốnI/O và chỗ tạm; đổi TARstream vàoGCM, giữ dump/manifest/tính nhất quán. Báo cáo benchmark ban đầu gặp kiểuDecimal của SUMWAL, đã chuyển số choJSON và đo lại.
-2. Upload thay tệp để lại bản cũ không dùng, rollback có thể để lại tệp mới. Nay dọn mới khi rollback và chỉ bỏ bản cũ không tham chiếu sau commit, trong cùng advisorylock với backup. Không dọn dữ liệu đang dùng.
+2. Upload thay tệp để lại bản cũ không dùng, rollback có thể để lại tệp mới. Nay dọn mới khi rollback và chỉ bỏ bản cũ không tham chiếu sau commit, trong cùng advisorylock với backup. Không dọn dữ liệu đang dùng. Nếu mất ACK của COMMIT, đối chiếu tham chiếu DB trước khi xóa; DB chưa sẵn sàng thì giữ tệp để tránh mất dữ liệu đã commit.
 3. AuditHTTP đồng bộ chạy trên eventloop; nay chuyển sang threadpool có giới hạn, vẫn giữ audit nghiệp vụ atomic. Đọc file upload/fsync cũng chạy trong syncendpoint/threadpool, không chặn eventloop khi chờ khóabackup.
 4. Worker/pool/concurrency hardcode làm tăng process/RAM; đưa vào cấu hình có kiểm phạm vi và quan hệ. Tách importFastAPI khỏi module cấu hình tài nguyên để công cụ backup không nạp cả webframework chỉ để đọc giới hạn.
 5. Log vận hành chưa có giới hạn rõ, nay rotate5 MiB/7 filebackup, khóa liên tiến trình để rotate an toàn; không purge audit DB. PGlog7 tên theo ngày có cảnh báo dung lượng, không cam kết bytecap cứng.

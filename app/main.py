@@ -425,7 +425,17 @@ def add_attachment(order_id:int,file:UploadFile=File(...),u=Depends(principal)):
             c.execute('UPDATE orders SET file_key=?,file_name=? WHERE id=?',(key,(file.filename or 'Kết quả')[:120],order_id))
             audit(c,u,'attachment_uploaded','order',order_id,key)
     except Exception:
-        target.unlink(missing_ok=True)
+        if target.exists():
+            try:
+                # A lost COMMIT acknowledgement is ambiguous: the database may
+                # already reference this file. Delete only after reconciliation
+                # under the same lock as writers/backup; preserve on DB outage.
+                with db(True) as c:
+                    if not c.execute('SELECT 1 FROM orders WHERE file_key=?',(key,)).fetchone():
+                        target.unlink(missing_ok=True)
+            except Exception:
+                import logging
+                logging.getLogger('clinic').warning('Attachment preserved pending transaction reconciliation')
         raise
     # Retire only the replaced, unreferenced attachment after successful commit,
     # taking the same lock as backup so a directory scan cannot race deletion.

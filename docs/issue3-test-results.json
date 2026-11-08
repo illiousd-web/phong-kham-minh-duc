@@ -12,11 +12,11 @@
       "time": "45.417"
     },
     "lan": {
-      "tests": "25",
+      "tests": "26",
       "failures": "0",
       "errors": "0",
       "skipped": "0",
-      "time": "37.143"
+      "time": "32.525"
     }
   },
   "powershell_synthetic_checks": 6,

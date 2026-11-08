@@ -71,3 +71,25 @@ def test_backup_budget_and_required_offsite_fail_without_pruning(tmp_path,monkey
     monkeypatch.setattr(backup,'LIMITS',replace(backup.LIMITS,backup_total_bytes=1))
     with pytest.raises(backup.StorageLimitError):backup.backup(tmp_path/'local',key)
     assert not list((tmp_path/'local').glob('*.mdbackup'))
+
+
+def test_lost_commit_ack_preserves_referenced_attachment(clients,visit,monkeypatch):
+    """COMMIT may succeed even when the connection fails before its response."""
+    from app import main
+    from contextlib import contextmanager
+    import psycopg
+    oid=order(clients,visit)
+    original=main.db
+    failed=False
+    @contextmanager
+    def ambiguous(write=False):
+        nonlocal failed
+        with original(write) as c:yield c
+        if write and not failed:
+            failed=True
+            raise psycopg.OperationalError('Synthetic lost COMMIT acknowledgement')
+    monkeypatch.setattr(main,'db',ambiguous)
+    response=clients['technician'].post(f'/api/orders/{oid}/attachment',files={'file':('fake.pdf',b'%PDF-1.5\nFAKE_COMMIT','application/pdf')})
+    assert response.status_code==503
+    with original() as c:key=c.execute('SELECT file_key FROM orders WHERE id=?',(oid,)).fetchone()[0]
+    assert key and (main.FILES/key).read_bytes()==b'%PDF-1.5\nFAKE_COMMIT'
