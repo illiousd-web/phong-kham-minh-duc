@@ -384,6 +384,7 @@ function New-ServiceXml {
   </log>
   <env name="PYTHONUNBUFFERED" value="1"/>
   <env name="PYTHONIOENCODING" value="utf-8"/>
+  <env name="PYTHONUTF8" value="1"/>
   <env name="PYTHONDONTWRITEBYTECODE" value="1"/>
 </service>
 "@

@@ -165,7 +165,7 @@ def backup(destination, key_path):
                     if path.is_symlink():raise ValueError('Attachment storage must not contain symlinks')
                     if path.is_file():files['attachments/'+str(path.relative_to(uploads)).replace(os.sep,'/')]=checksum(path)
             manifest={'format':1,'created_at':datetime.now(timezone.utc).isoformat(),'files':files}
-            (root/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False))
+            (root/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False),encoding='utf-8')
             if not uploads.exists():(root/'attachments').mkdir()
             name='minhduc-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+secrets.token_hex(4)+'.mdbackup'
             pending=root/'encrypted.tmp'
@@ -197,7 +197,7 @@ def unpack_verified(source, key_path, root):
             if path.parts[0] not in ('database.dump','attachments','manifest.json'):
                 raise ValueError('Unexpected archive member')
         tar.extractall(root, filter='data')
-    manifest=json.loads((root/'manifest.json').read_text())
+    manifest=json.loads((root/'manifest.json').read_text(encoding='utf-8'))
     actual={str(p.relative_to(root)) for p in root.rglob('*') if p.is_file()}-{'payload.tar','manifest.json'}
     if manifest['format'] != 1 or actual != set(manifest['files']):
         raise ValueError('Backup manifest mismatch')

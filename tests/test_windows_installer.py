@@ -314,3 +314,13 @@ def test_powershell_no_drive_qualified_variable_in_strings():
         for number, line in enumerate(path.read_text(encoding='utf-8-sig').splitlines(), 1):
             if not line.lstrip().startswith('#'):
                 assert not pattern.search(line), f'{path.name}:{number}: dùng ${{ten}}: thay vì $ten:'
+
+
+def test_runtime_text_io_declares_utf8():
+    """Windows with a United States locale reads files as cp1252: Vietnamese text breaks startup."""
+    pattern = re.compile(r'\.(read_text|write_text)\((?!.*encoding)')
+    for path in [*sorted((ROOT / 'app').glob('*.py')), *sorted((ROOT / 'scripts').glob('*.py'))]:
+        if path.name == 'benchmark_lan.py':
+            continue  # Linux-only developer harness
+        for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+            assert not pattern.search(line), f'{path.name}:{number} thiếu encoding="utf-8"'
