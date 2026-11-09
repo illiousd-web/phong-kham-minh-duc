@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DB = Path(os.getenv('CLINIC_DB_PATH', str(ROOT / 'data' / 'minh_duc_demo.sqlite3'))).resolve()
 LOCK_ID = 764209431
 ID_TABLES=set(re.findall(r'CREATE TABLE IF NOT EXISTS (\w+)\s*\(\s*id\b',
-    (ROOT/'schema.postgresql.sql').read_text()+(ROOT/'migrations/003_v050.sql').read_text(),re.I))
+    (ROOT/'schema.postgresql.sql').read_text(encoding='utf-8')+(ROOT/'migrations/003_v050.sql').read_text(encoding='utf-8'),re.I))
 _pool = None
 
 
@@ -117,6 +117,6 @@ def migrate():
     import psycopg
     with psycopg.connect(DATABASE_URL,row_factory=record_factory) as con:
         con.execute('SELECT pg_advisory_xact_lock(%s)', (LOCK_ID,))
-        con.execute((ROOT / 'schema.postgresql.sql').read_text())
+        con.execute((ROOT / 'schema.postgresql.sql').read_text(encoding='utf-8'))
         from .migrations import migrate_v050
         migrate_v050(PGConnection(con),postgres=True)

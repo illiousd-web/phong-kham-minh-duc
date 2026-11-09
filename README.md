@@ -6,6 +6,7 @@ Danh mục/chỉ định và công nợ; đơn thuốc cấu trúc, quy đổi, 
 - [Hướng dẫn A–D](docs/V050_USAGE.md)
 - [Cài và nâng cấp, backup/rollback](docs/V050_UPGRADE.md)
 - [Kết quả kiểm thử và giới hạn](docs/V050_VALIDATION.md)
+- **[Cài đặt tự động trên Windows — từng bước cho người không chuyên](docs/CAI_DAT_TUNG_BUOC.md)**: `deploy\windows\CAI_DAT.bat` (máy chủ), `CAI_MAY_TRAM.bat`, `CAP_NHAT.bat`, `KIEM_TRA.bat`.
 
 Các phần bên dưới ghi lại những phiên bản trước.
 
