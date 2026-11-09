@@ -261,6 +261,7 @@ function Step-ChungChi {
         # Cùng IP, chỉ sắp hết hạn: gia hạn bằng CA hiện có, máy trạm không phải cài lại.
         $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_cert', 'renew', '--tls-dir', $P.Tls, '--ca-key', $P.CaKey)
         if (-not $r.Ok) { Stop-CaiDat 'Không gia hạn được chứng chỉ.' $r.Output 22 }
+        foreach ($f in @('server.crt', 'server.key')) { Invoke-Native -FilePath 'icacls.exe' -Arguments @((Join-Path $P.Tls $f), '/reset') -Quiet | Out-Null }
         Write-Dat ('Đã gia hạn chứng chỉ bằng CA hiện có (' + $state.reason + ' trước khi gia hạn); máy trạm không phải cài lại.')
     } elseif ($r.Code -ne 0) {
         if (Test-Path -LiteralPath $cert) {

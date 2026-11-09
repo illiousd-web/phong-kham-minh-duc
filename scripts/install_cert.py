@@ -88,8 +88,11 @@ def renew(tls_dir, ca_key_path, valid_days=365):
             .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
             .sign(ca_key, hashes.SHA256()))
     stamp = now.strftime('%Y%m%d%H%M%S')
-    with tempfile.TemporaryDirectory(prefix='.renew-', dir=tls_dir) as temp:
-        new_crt, new_key = Path(temp) / 'server.crt', Path(temp) / 'server.key'
+    # Write directly inside tls_dir so the new files inherit that folder's ACL (the
+    # service account may read it). A tempfile.mkdtemp folder on Windows is
+    # restricted to the current user, and a renamed file keeps that restriction.
+    new_crt, new_key = tls_dir / f'.server.crt.moi-{stamp}', tls_dir / f'.server.key.moi-{stamp}'
+    try:
         new_key.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                               serialization.NoEncryption()))
         new_crt.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
@@ -97,6 +100,9 @@ def renew(tls_dir, ca_key_path, valid_days=365):
             os.replace(tls_dir / name, tls_dir / f'{name}.cu-{stamp}')
         os.replace(new_key, tls_dir / 'server.key')
         os.replace(new_crt, tls_dir / 'server.crt')
+    finally:
+        new_key.unlink(missing_ok=True)
+        new_crt.unlink(missing_ok=True)
     return {'stamp': stamp, 'not_after': not_after.isoformat(), 'serial': format(cert.serial_number, 'X'),
             'ca_fingerprint': fingerprint(tls_dir / 'ca.crt')}
 

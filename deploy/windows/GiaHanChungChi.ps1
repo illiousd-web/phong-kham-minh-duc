@@ -51,6 +51,8 @@ try {
     $renewed = ConvertFrom-PythonJson $r
     $stamp = $renewed.stamp
     Set-SecureAcl -Path $P.Tls -Directory -Readers @($Names.ServiceAcct)
+    # Tệp mới nhận quyền đọc của thư mục tls (tài khoản dịch vụ phải đọc được server.key).
+    foreach ($f in @('server.crt', 'server.key')) { Invoke-Native -FilePath 'icacls.exe' -Arguments @((Join-Path $P.Tls $f), '/reset') -Quiet | Out-Null }
     Write-Dat ('Đã cấp chứng chỉ mới, hạn tới ' + $renewed.not_after.Substring(0, 10) + '; chứng chỉ cũ lưu với đuôi .cu-' + $stamp)
     Write-Dat ('CA giữ nguyên (vân tay ' + $renewed.ca_fingerprint.Substring(0, 8) + '): máy trạm không phải cài lại.')
 
@@ -76,6 +78,7 @@ try {
         $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_cert', 'rollback', '--tls-dir', $P.Tls, '--stamp', $stamp)
         if ($r.Ok) { Write-Dat 'Đã trả chứng chỉ cũ.' } else { Write-Loi 'Không trả được chứng chỉ cũ; báo người hỗ trợ ngay.' }
         Set-SecureAcl -Path $P.Tls -Directory -Readers @($Names.ServiceAcct)
+        foreach ($f in @('server.crt', 'server.key')) { Invoke-Native -FilePath 'icacls.exe' -Arguments @((Join-Path $P.Tls $f), '/reset') -Quiet | Out-Null }
         Restart-Service -Name $Names.Service -Force -ErrorAction SilentlyContinue
         if (Wait-Https -Origin $origin -Seconds 120) { Write-Dat 'Phần mềm chạy lại bằng chứng chỉ cũ.' } else { Write-Loi 'Dịch vụ chưa chạy lại. Bấm KIEM_TRA.bat và gửi kết quả cho người hỗ trợ.' }
         Write-Result 'da_tra_chung_chi_cu' $_.Exception.Message

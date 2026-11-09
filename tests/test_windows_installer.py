@@ -504,3 +504,17 @@ def test_accented_postgres_password_round_trips_into_connection_url(tmp_path):
         os.environ.clear(); os.environ.update(saved)
     parts = urlsplit(urls['super'])
     assert unquote(parts.password) == password and parts.username == 'postgres' and parts.hostname == '127.0.0.1'
+
+
+def test_renew_writes_new_files_inside_tls_folder_not_a_private_temp_dir(tmp_path, monkeypatch):
+    """Windows: files moved out of a mkdtemp folder keep a current-user-only ACL and the
+    service account cannot read server.key. Renewal must not use tempfile folders."""
+    import tempfile
+    from scripts import install_cert
+    install_cert.create('192.168.1.10', tmp_path / 'tls', tmp_path / 'ca.key')
+    def forbidden(*args, **kwargs):
+        raise AssertionError('renew() must not create a private temporary folder')
+    monkeypatch.setattr(tempfile, 'TemporaryDirectory', forbidden)
+    monkeypatch.setattr(tempfile, 'mkdtemp', forbidden)
+    install_cert.renew(tmp_path / 'tls', tmp_path / 'ca.key')
+    assert not list((tmp_path / 'tls').glob('.server.*'))
