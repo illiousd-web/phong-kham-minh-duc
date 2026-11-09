@@ -43,3 +43,19 @@ def test_pagination(get, post):
 def test_only_manager(get, post, doctor_id):
     target, _, _ = cases.old_settled_visit_is_found(get, post, 1, doctor_id)
     cases.only_manager_may_read(get, target)
+
+
+def test_dates_outside_2000_2100_rejected(get):
+    cases.dates_outside_2000_2100_are_rejected(get)
+
+
+def test_vietnamese_names_with_and_without_accents(get, post):
+    cases.vietnamese_names_are_found(get, post)
+
+
+def test_fold_name():
+    from app.manager_visits import fold_name
+    assert fold_name('  Đặng   Thị Thu BÍCH ') == 'dang thi thu bich'
+    assert fold_name('ĐẠT') == fold_name('đạt') == fold_name('dat') == 'dat'
+    import unicodedata
+    assert fold_name(unicodedata.normalize('NFD', 'Hằng')) == fold_name('HANG') == 'hang'

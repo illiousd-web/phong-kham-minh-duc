@@ -4,6 +4,7 @@ Chỉ dữ liệu giả lập. `call(role, path)` trả về phản hồi HTTP G
 role là một trong: manager, admin, reception, doctor, technician, nurse, pharmacy, cashier.
 """
 import secrets
+import unicodedata
 from urllib.parse import urlencode
 from datetime import datetime, timedelta, timezone
 
@@ -159,6 +160,56 @@ def money_filters_are_exact(get, post):
                 {'date_from': '10/11/2026', 'date_to': '09/11/2026'}, {'page': '0'}, {'page': 'abc'}):
         r = get('manager', '/api/manager/visits?' + urlencode(bad))
         assert r.status_code == 422 and isinstance(r.json()['detail'], str), (bad, r.text)
+
+
+def dates_outside_2000_2100_are_rejected(get):
+    """Ngày ngoài 01/01/2000–31/12/2100 trả 422 tiếng Việt, không phải 500."""
+    for bad in ({'date_from': '01/01/0001'}, {'date_to': '31/12/9999'}, {'date_from': '0001-01-01'}, {'date_to': '9999-12-31'},
+                {'date_from': '01/01/0001', 'date_to': '31/12/9999'}, {'date_from': '31/12/1999'}, {'date_to': '01/01/2101'}):
+        r = get('manager', '/api/manager/visits?' + urlencode(bad))
+        assert r.status_code == 422, (bad, r.status_code, r.text)
+        assert 'phải trong khoảng 01/01/2000 đến 31/12/2100' in r.json()['detail'], (bad, r.text)
+    edge = search(get, date_from='01/01/2000', date_to='31/12/2100')
+    assert edge['date_from'] == '2000-01-01' and edge['date_to'] == '2100-12-31'
+
+
+def vietnamese_names_are_found(get, post):
+    """Gõ có dấu hay không dấu, hoa hay thường đều ra đúng người; chữ có dấu ở đầu, giữa, cuối tên."""
+    from app.database import db
+    tag = secrets.token_hex(4)
+    names = {
+        'bich': f'Đặng Thị Thu Bích {tag}',           # chữ có dấu ở đầu (Đặng) và cuối (Bích)
+        'hang_end': f'Lê Thị Hằng {tag}',             # cuối
+        'hang_mid': f'Vũ Hằng Nga {tag}',             # giữa
+        'dat': f'Trần Hữu Đạt {tag}',                 # cuối, có đ
+        'nfd': unicodedata.normalize('NFD', f'Đỗ Mỹ Uyên {tag}'),  # tên lưu dạng tổ hợp rời (NFD)
+        'plain': f'Hoàng Văn Sơn {tag}',              # đối chứng
+    }
+    now = iso(datetime.now(timezone.utc) - timedelta(minutes=3))
+    visits = {}
+    for key, name in names.items():
+        pid, _, _ = new_patient(post, name)
+        with db(True) as c:
+            visits[key] = insert_visit(c, pid, now, charges=[1000])
+    mine = set(visits.values())
+
+    def hits(q):
+        return {x['visit_id'] for x in all_pages(get, q=q)[1]} & mine
+
+    expected = {
+        ('đặng', 'ĐẶNG', 'dang', 'Dang', 'DANG', 'Đặng'): {'bich'},
+        ('bích', 'BÍCH', 'bich', 'thu bich', 'đặng thị thu bích', 'DANG THI THU BICH', f'bích {tag}'): {'bich'},
+        ('hằng', 'HẰNG', 'HANG', 'hang', unicodedata.normalize('NFD', 'Hằng')): {'hang_end', 'hang_mid'},
+        ('Đạt', 'đạt', 'ĐẠT', 'dat', 'DAT', 'huu dat'): {'dat'},
+        ('uyên', 'UYEN', 'mỹ uyên', 'do my uyen', 'Đỗ'): {'nfd'},
+        ('sơn', 'SON', 'hoang van son'): {'plain'},
+        (tag, tag.upper()): set(names),
+    }
+    for queries, keys in expected.items():
+        for q in queries:
+            assert hits(q) == {visits[k] for k in keys}, (q, keys)
+    # Tên trả về giữ nguyên như đã lưu, không bị bỏ dấu.
+    assert {x['patient_name'] for x in search(get, q=f'dang thi thu bich {tag}')['items']} == {names['bich']}
 
 
 def pagination_is_exact(get, post):

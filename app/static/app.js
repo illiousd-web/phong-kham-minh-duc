@@ -346,7 +346,8 @@ async function managerVisitsTab(head){
  if(!sel.mgrVisit)return {html,after};
  const vid=sel.mgrVisit;const [lines,state,info]=await Promise.all([api('/charges/'+vid),api('/visits/'+vid+'/settlement'),api('/manager/visits/'+vid)]);
  const v=info.visit;
- html+=`<div id="mgr-visit-detail" class="patient-head"><div><b>${esc(v.patient_name)}</b> <span class="muted">${esc(v.patient_code||'')}</span></div><div class="muted">lượt #${v.id} ngày ${showDay(v.created_at)}</div><div>${pill(v.status)}</div></div>`;
+ // Mọi thứ của lượt đang xem nằm trong một khung có tiêu đề và nút Đóng; chuyển trang, đổi bộ lọc, tìm mới đều đóng khung này.
+ html+=`<div id="mgr-visit-detail"><div class="patient-head"><div><b id="mgr-visit-title">Đang xem lượt #${v.id} – ${esc(v.patient_name)}</b> <span class="muted">${esc(v.patient_code||'')}</span></div><div class="muted">ngày ${showDay(v.created_at)}</div><div class="multi-actions">${pill(v.status)}${btn('Đóng','mgr-close')}</div></div>`;
  html+=stats([['Chuyên môn',vi(state.clinical_status)],['Còn phải thu',money(state.billing.due)],['Cần hoàn',money(state.billing.refund_due)],['Cấp thuốc',vi(state.dispensing_status)]]);
  html+=card(t(lines.map(l=>`<tr><td>${esc(l.label)}</td><td>${money(l.amount)}</td><td>${esc(l.void_reason||'Còn hiệu lực')}</td></tr>`),['Khoản','Số tiền','Trạng thái'])+`<form data-form="reprice" class="fields">${selectField('Khoản cần điều chỉnh','charge_id',lines.filter(l=>!l.void_reason&&!l.price_at_collection).map(l=>[l.id,l.label]))}${field('Số tiền mới','amount','number','',true)}${field('Lý do','reason','text','Tối thiểu 8 ký tự',true)}<div class="wide"><button class="btn" ${lines.some(l=>!l.void_reason&&!l.price_at_collection)?'':'disabled'}>Điều chỉnh giá</button><p class="hint">Có nhật ký, giữ chứng từ gốc.</p></div></form>`,'Bảng kê và điều chỉnh giá');
  html+=manualChargeForms(lines);
@@ -354,7 +355,10 @@ async function managerVisitsTab(head){
  const discounts=info.adjustments.filter(a=>a.kind==='discount'&&a.status==='approved'&&!a.reversed);
  if(discounts.length)html+=card(t(discounts.map(a=>`<tr><td>#${a.id}</td><td>${money(a.amount)}</td><td>${esc(a.reason)}</td><td>${btn('Hoàn tác giảm phí','reverse-discount',`data-id="${a.id}"`)}</td></tr>`),['Mã','Số tiền','Lý do','']),'Giảm phí đã duyệt');
  if(OPEN({status:state.clinical_status}))html+=details('Hủy lượt khám',`<form data-form="cancel-visit" class="fields">${hidden('visit_id',vid)}${field('Lý do hủy lượt','reason','text','',true)}<div class="wide"><button class="btn danger">Hủy lượt</button><p class="hint">Chỉ hủy được khi chỉ định đã hủy, y lệnh đã xử lý và thuốc đã đối soát.</p></div></form>`);
- return {html,after}}
+ return {html:html+'</div>',after}}
+// Bỏ lượt đang xem ngay trên trang (không vẽ lại, để khỏi mất chữ đang gõ trong ô lọc).
+function closeMgrVisit(){sel.mgrVisit=null;const box=$('mgr-visit-detail');if(box)box.remove();
+ document.querySelectorAll('[data-action="pick"][data-kind="mgr-visit"]').forEach(b=>{b.setAttribute('aria-pressed','false');b.textContent='Xem lượt này';b.className='ghost smallbtn'})}
 async function managerScreen(){
  const p=await pendingApprovals();
  const head=tabs(sel.mgrTab,[['approve',`Cần duyệt (${p.total})`],['visits','Lượt khám'],['catalog','Danh mục'],['import','Nhập bảng giá'],['report','Báo cáo']],'mgr');
@@ -507,7 +511,8 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
  }
  if(action==='navigate'){active=element.dataset.page;uiLoaded=false;await render();return}
  if(action==='pick'){sel[PICK[element.dataset.kind]]=id;await render();if(element.dataset.kind==='patient')$('visit-step')?.scrollIntoView({block:'start'});if(element.dataset.kind==='mgr-visit')$('mgr-visit-detail')?.scrollIntoView({block:'start'});return}
- if(action==='mgr-page'){mgrSearch.page=id;await render();return}
+ if(action==='mgr-page'){mgrSearch.page=id;sel.mgrVisit=null;await render();return}
+ if(action==='mgr-close'){closeMgrVisit();return}
  if(action==='tab'){sel[element.dataset.kind==='mgr'?'mgrTab':'adminTab']=element.dataset.tab;await render();return}
  if(action==='clear-search'){sel.patientQuery='';await render();return}
  if(action==='audit-prev'||action==='audit-next'){auditOffset=Math.max(0,auditOffset+(action==='audit-next'?100:-100));await render();return}
@@ -536,6 +541,7 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
 document.addEventListener('submit',async ev=>{const form=ev.target.closest('[data-form]');if(!form)return;ev.preventDefault();if(form.dataset.busy)return;form.dataset.busy='1';const buttons=[...form.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);try{await handleForm(form)}catch(err){notify(err.message,true)}finally{delete form.dataset.busy;buttons.forEach(b=>b.disabled=false)}});
 document.addEventListener('click',async ev=>{const b=ev.target.closest('[data-action]');if(!b||b.disabled)return;if(b.dataset.busy)return;b.dataset.busy='1';try{await handleClick(b)}catch(err){notify(err.message,true)}finally{delete b.dataset.busy}});
 document.addEventListener('change',async ev=>{const el=ev.target;
+ if(el.closest('[data-form="mgr-visit-search"]')){closeMgrVisit();return;}
  if(el.id==='price-file'){pricePreview=null;priceFile=null;priceResult=null;$('price-review')?.remove();$('price-file-name').textContent=el.files[0]?.name||'Chưa chọn tệp';return;}
  if(el.closest('.rx-line')&&el.name==='medicine_id'){const unit=el.closest('.rx-line').querySelector('[name="unit_id"]');if(unit)unit.disabled=true;try{const med=(await api('/dispensable-medicines')).find(m=>m.id===Number(el.value));if(unit)unit.innerHTML='<option value="">Đơn vị cơ sở</option>'+(med?.units||[]).map(u=>`<option value="${u.id}">${esc(u.name)} = ${u.base_factor}</option>`).join('');}catch(e){notify(e.message,true)}finally{if(unit)unit.disabled=false;}return;}
  try{
@@ -547,6 +553,7 @@ document.addEventListener('change',async ev=>{const el=ev.target;
  }catch(e){notify(e.message,true)}});
 // Tự chèn dấu / khi gõ ngày; cập nhật cảnh báo sinh hiệu khi gõ.
 document.addEventListener('input',ev=>{const el=ev.target;
+ if(el.closest('[data-form="mgr-visit-search"]'))closeMgrVisit();
  if(el.name==='amount'&&el.closest('[data-form="payment"]'))capCheck(el.closest('form'));
  {const af=el.closest&&el.closest('[data-form="adjustment"]');if(af&&af.dataset.confirmed){delete af.dataset.confirmed;af.querySelector('[data-adjust-confirm]').classList.add('hidden');af.querySelector('button.btn').textContent='Xem lại đề nghị'}}
  if(el.id==='price-filter'){const q=el.value.trim().toLowerCase();document.querySelectorAll('tr[data-search]').forEach(tr=>tr.classList.toggle('hidden',!!q&&!tr.dataset.search.includes(q)));return}

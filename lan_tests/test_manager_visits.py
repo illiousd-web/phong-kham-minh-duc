@@ -40,6 +40,8 @@ def test_c3c_pg_search_filters_pages_and_roles(api):
     cases.money_filters_are_exact(get, post)
     cases.pagination_is_exact(get, post)
     cases.only_manager_may_read(get, target)
+    cases.dates_outside_2000_2100_are_rejected(get)
+    cases.vietnamese_names_are_found(get, post)
 
 
 @pytest.mark.parametrize('width', [1440, 390])
@@ -123,6 +125,107 @@ def test_c3c_browser_find_and_open_old_visit(https_server, api, width):
             assert not small_targets(page)
         page.screenshot(path=str(evidence / f'manager-visits-{width}.png'), full_page=True)
         (evidence / f'browser-{width}.json').write_text(json.dumps({'version': browser.version, 'width': width, 'errors': errors}))
+        assert not errors
+        context.close()
+        browser.close()
+
+
+def _login_manager(p, origin, certdir, width, errors):
+    cert = x509.load_pem_x509_certificate((certdir / 'server.crt').read_bytes())
+    pin = base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    browser = p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'), headless=True,
+        args=['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors-spki-list=' + pin])
+    expected_major = os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR')
+    if expected_major:
+        assert browser.version.split('.')[0] == expected_major
+    context = browser.new_context(accept_downloads=True, viewport={'width': width, 'height': 1000})
+    page = context.new_page()
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.goto(origin, wait_until='networkidle')
+    page.locator('[name="username"]').fill('test_manager')
+    page.locator('[name="password"]').fill(PASSWORDS['manager'])
+    page.locator('[data-form="login"] button').click(); page.locator('#logout').wait_for(); settle(page)
+    go(page, 'manager')
+    page.get_by_role('tab', name='Lượt khám', exact=True).click(); settle(page)
+    return browser, context, page
+
+
+def _search(page):
+    with page.expect_response(lambda r: '/api/manager/visits?' in r.url) as sent:
+        page.locator('[data-form="mgr-visit-search"] button.btn').click()
+    assert sent.value.status == 200
+    settle(page)
+    return sent.value.json()
+
+
+def _open(page, vid, name):
+    pick(page, 'mgr-visit', vid)
+    expect(page.locator('#mgr-visit-title')).to_have_text(f'Đang xem lượt #{vid} – {name}')
+    expect(page.locator('#mgr-visit-detail [data-form="reprice"]')).to_have_count(1)
+    expect(page.locator('#mgr-visit-detail [data-form="cancel-visit"]')).to_have_count(1)
+    expect(page.locator('#mgr-visit-detail [data-action="mgr-close"]')).to_have_text('Đóng')
+
+
+def _closed(page):
+    """Không còn khung chi tiết, không còn nút Hủy lượt / điều chỉnh giá của lượt cũ ở bất kỳ đâu trên trang."""
+    expect(page.locator('#mgr-visit-detail')).to_have_count(0)
+    expect(page.locator('[data-form="cancel-visit"]')).to_have_count(0)
+    expect(page.locator('[data-form="reprice"]')).to_have_count(0)
+    expect(page.locator('#workspace')).not_to_contain_text('Đang xem lượt')
+    expect(page.locator('[data-action="pick"][data-kind="mgr-visit"][aria-pressed="true"]')).to_have_count(0)
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+def test_c3c_browser_detail_closes_on_page_filter_and_search(https_server, api, width):
+    from app.database import db
+    get, post = api
+    tag = 'dong' + os.urandom(4).hex()
+    name = f'Người bệnh đóng chi tiết {tag}'
+    pid, _, _ = cases.new_patient(post, name)
+    base = datetime.now(timezone.utc) - timedelta(minutes=20)
+    with db(True) as c:
+        ids = [cases.insert_visit(c, pid, cases.iso(base + timedelta(seconds=i)), charges=[1000]) for i in range(60)]
+    newest, on_page_2 = max(ids), min(ids)
+    origin, certdir = https_server
+    errors = []
+    with sync_playwright() as p:
+        browser, context, page = _login_manager(p, origin, certdir, width, errors)
+        page.locator('#vs_q').fill(tag)
+        first = _search(page)
+        assert first['total'] == 60 and first['pages'] == 2 and first['items'][0]['visit_id'] == newest
+        # 1. Mở một lượt ở trang 1 rồi bấm Trang sau: chi tiết đóng.
+        _open(page, newest, name)
+        with page.expect_response(lambda r: '/api/manager/visits?' in r.url and 'page=2' in r.url):
+            page.locator('[data-action="mgr-page"]', has_text='Trang sau').click()
+        settle(page)
+        expect(page.locator('#mgr-visit-count')).to_contain_text('Trang 2/2')
+        _closed(page)
+        # Trang trước cũng vậy.
+        _open(page, on_page_2, name)
+        with page.expect_response(lambda r: '/api/manager/visits?' in r.url and 'page=1' in r.url):
+            page.locator('[data-action="mgr-page"]', has_text='Trang trước').click()
+        settle(page)
+        _closed(page)
+        # 2. Đổi bộ lọc (chưa bấm Tìm): chi tiết đóng ngay.
+        _open(page, newest, name)
+        page.locator('#vs_money').select_option('owing')
+        _closed(page)
+        _open(page, newest, name)
+        page.locator('#vs_q').fill(name)
+        _closed(page)
+        expect(page.locator('#vs_q')).to_have_value(name)  # không vẽ lại trang: chữ đang gõ còn nguyên
+        # 3. Tìm mới: chi tiết đóng.
+        assert _search(page)['total'] == 60
+        _open(page, newest, name)
+        assert _search(page)['total'] == 60
+        _closed(page)
+        # 4. Nút Đóng.
+        _open(page, newest, name)
+        page.locator('#mgr-visit-detail [data-action="mgr-close"]').click()
+        _closed(page)
+        no_horizontal_scroll(page)
+        if width == 390:
+            assert not small_targets(page)
         assert not errors
         context.close()
         browser.close()
