@@ -389,6 +389,21 @@ function New-ServiceXml {
 "@
 }
 
+function Show-ServiceDiagnostics {
+    # In vài dòng cuối nhật ký dịch vụ để người hỗ trợ đọc (nhật ký không ghi mật khẩu).
+    param([Parameter(Mandatory = $true)]$Paths)
+    $svc = Get-Service -Name $script:Names.Service -ErrorAction SilentlyContinue
+    if ($svc) { Write-Thongtin ('Trạng thái dịch vụ: ' + $svc.Status) }
+    $files = @(Get-ChildItem -LiteralPath (Join-Path $Paths.Logs 'service') -Filter '*.log' -ErrorAction SilentlyContinue) +
+             @(Get-ChildItem -LiteralPath $Paths.Logs -Filter 'server.log' -ErrorAction SilentlyContinue)
+    foreach ($f in $files) {
+        Write-Thongtin ('--- ' + $f.Name + ' (20 dòng cuối) ---')
+        Get-Content -LiteralPath $f.FullName -Tail 20 -ErrorAction SilentlyContinue | ForEach-Object { Write-Thongtin ('    ' + $_) }
+    }
+    Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; StartTime = (Get-Date).AddMinutes(-15) } -MaxEvents 5 -ErrorAction SilentlyContinue |
+        Where-Object { $_.Message -match $script:Names.Service } | ForEach-Object { Write-Thongtin ('    [SCM] ' + $_.Message) }
+}
+
 function Wait-Https {
     param([Parameter(Mandatory = $true)][string]$Origin, [int]$Seconds = 90)
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12

@@ -169,7 +169,7 @@ try {
     Set-SecureAcl -Path $P.Code -Directory -Readers @('*S-1-5-32-545', $Names.ServiceAcct)
     Start-Service -Name $Names.Service
     $origin = (Read-EnvFile -Path $P.ClinicEnv)['CLINIC_ORIGIN']
-    if (-not (Wait-Https -Origin $origin -Seconds 120)) { throw 'Dịch vụ web bản mới không trả lời sau 2 phút.' }
+    if (-not (Wait-Https -Origin $origin -Seconds 120)) { Show-ServiceDiagnostics -Paths $P; throw 'Dịch vụ web bản mới không trả lời sau 2 phút.' }
     $report = Join-Path $P.Journal ('kiem-tra-sau-cap-nhat-' + $Stamp + '.txt')
     Invoke-HealthReport -Paths $P -Output $report -Title 'KẾT QUẢ KIỂM TRA SAU CẬP NHẬT' | Out-Null
     if (Test-Path -LiteralPath $OldVenv) { Remove-Item -LiteralPath $OldVenv -Recurse -Force -ErrorAction SilentlyContinue }

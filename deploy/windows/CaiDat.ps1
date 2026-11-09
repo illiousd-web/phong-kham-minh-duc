@@ -317,6 +317,7 @@ function Step-DichVu {
     Set-SecureAcl -Path $P.Code -Directory -Readers @('*S-1-5-32-545', $Names.ServiceAcct)
     Start-Service -Name $Names.Service
     if (-not (Wait-Https -Origin $script:Origin -Seconds 120)) {
+        Show-ServiceDiagnostics -Paths $P
         Stop-CaiDat 'Dịch vụ web chưa trả lời sau 2 phút.' @(('Xem nhật ký: ' + (Join-Path $P.Logs 'service') + ' và ' + (Join-Path $P.Logs 'server.log')), 'Bấm đúp KIEM_TRA.bat và gửi kết quả cho người hỗ trợ.') 25
     }
     Write-Dat ('Dịch vụ "' + $Names.Service + '" đang chạy tại ' + $script:Origin)
