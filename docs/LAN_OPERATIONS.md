@@ -1,4 +1,4 @@
-> **v0.5.0:** xem [nâng cấp từ v0.4.x](V050_UPGRADE.md) và [hướng dẫn A–D](V050_USAGE.md). Migration hiện tại là schema 3; chạy bằng owner rồi cấp lại quyền runtime.
+> **v0.5.0:** xem [nâng cấp từ v0.4.x](V050_UPGRADE.md) và [hướng dẫn sử dụng](HUONG_DAN_SU_DUNG.md). Migration hiện tại là schema 3; chạy bằng owner rồi cấp lại quyền runtime.
 
 > **Profile máy 8 GB (Issue #3):** mặc định mới 1 worker/pool4, backup7bản và ngưỡng dung lượng. Xem [hướng dẫn Windows ngắn](WINDOWS_8GB_QUICKSTART.md) và [cấu hình tài nguyên](RESOURCE_LIGHT.md); các con số 2worker/pool16/backup30 trong phần v0.4 cũ bên dưới là thông tin lịch sử.
 

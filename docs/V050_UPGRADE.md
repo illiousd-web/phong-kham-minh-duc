@@ -42,7 +42,7 @@ Khởi động bằng `deploy\windows\Start-LAN.bat` hoặc `python -m scripts.w
 
 ## Nghiệm thu bản sao
 
-Đăng nhập ít nhất lễ tân, bác sĩ, thu ngân cùng lúc; thêm dược, kỹ thuật viên, điều dưỡng. Kiểm theo [hướng dẫn A–D](V050_USAGE.md): chỉ định nháp/duyệt; thanh toán nhiều lần/ứng trước/hoàn; đơn cấu trúc/quy đổi/FEFO/thiếu tồn/trả cách ly; phân công/sinh hiệu/y lệnh; hoàn tất và phụ lục. Kiểm số dư, lô, audit và chín biểu mẫu PDF/Word. Sau nâng cấp, tạo backup mới và restore lại một đích rỗng để kiểm cả bảng mới. Cấu hình lịch backup, ngoài máy và khóa giữ nguyên; không coi backup chỉ trên SSD là đủ chống mất máy.
+Đăng nhập ít nhất lễ tân, bác sĩ, thu ngân cùng lúc; thêm dược, kỹ thuật viên, điều dưỡng. Kiểm theo [hướng dẫn sử dụng](HUONG_DAN_SU_DUNG.md): chỉ định nháp/duyệt; thanh toán nhiều lần/ứng trước (bật tại Cài đặt)/hoàn; đơn cấu trúc/quy đổi/FEFO/thiếu tồn/trả cách ly; phân công/sinh hiệu/y lệnh; hoàn tất và phụ lục. Kiểm số dư, lô, audit và chín biểu mẫu PDF/Word. Sau nâng cấp, tạo backup mới và restore lại một đích rỗng để kiểm cả bảng mới. Cấu hình lịch backup, ngoài máy và khóa giữ nguyên; không coi backup chỉ trên SSD là đủ chống mất máy.
 
 ## Quay lui và xử lý lỗi
 

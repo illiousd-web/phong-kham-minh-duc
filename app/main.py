@@ -980,6 +980,8 @@ install_catalog(app, db, principal, require, audit)
 install_workflows(app, db, principal, require, audit, visit_access, NOW)
 from .workflows_v050 import install_v050
 install_v050(app,db,principal,require,audit,visit_access,NOW)
+from .ui_settings import install_ui_settings
+install_ui_settings(app,db,principal,require,audit,DATA if LAN else DB.parent)
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
