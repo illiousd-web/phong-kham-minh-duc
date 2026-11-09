@@ -40,6 +40,7 @@ def test_v050_all_workflows_https_browser(clients,visit):
                     page.on('dialog',lambda dialog:dialog.accept('Đã thực hiện y lệnh giả lập, theo dõi ổn định') if dialog.type=='prompt' else dialog.accept())
                     page.goto(origin,wait_until='networkidle')
                     assert page.evaluate('typeof v050Workflows')=='function',errors
+                    assert page.evaluate("showDay('2026-11-08T18:30:01.123456+00:00')")=='09/11/2026 01:30'
                     page.locator('[name="username"]').fill('test_'+role);page.locator('[name="password"]').fill(PASSWORDS[role])
                     page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for()
                 def go(role,where):

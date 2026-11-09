@@ -56,6 +56,7 @@ Không tuyên bố v0.5 nhanh hơn main: có thêm snapshot và kiểm tra giao 
 - Chọn đơn vị thuốc hoặc ca sinh hiệu đang tải có thể bị phản hồi cũ ghi đè; khóa nhập trong lúc tải và kiểm kết quả lưu.
 - Phản hồi render cũ ghi đè trang mới hoặc phản hồi nạp phiếu khám xóa chẩn đoán vừa nhập; dùng số thứ tự render, điền biểu mẫu đồng bộ từ snapshot đã tải trước khi cho nhập, trạng thái tải và khóa nội dung đã hoàn tất.
 - Trần 24 kết nối Uvicorn tính cả kết nối dự phòng/nhàn rỗi Chrome gây 503 tài nguyên trong sáu phiên; giữ giới hạn hữu hạn 48, keep-alive 2 giây; không tăng worker/pool/luồng.
+- Hiển thị ngày/giờ cố định UTC+7, kể cả timestamp có phần lẻ giây, không phụ thuộc múi giờ máy trạm; kiểm mốc đổi ngày trên backend và Chromium.
 - Bác sĩ duyệt độc lập không có lượt được giao không mở được hàng đợi; tách công cụ duyệt/danh mục khỏi điều kiện phải có lượt.
 
 ## Giới hạn và rủi ro còn lại

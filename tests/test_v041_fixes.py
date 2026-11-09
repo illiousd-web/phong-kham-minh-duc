@@ -87,6 +87,7 @@ def test_lab_rows_never_drop_lines():
     assert rows[2][4] == '4 | 5 | 6'
     assert parse_day('5/1/2027') == '2027-01-05' and parse_day('') is None
     # 18:30 UTC ngày 08/11 là 01:30 sáng 09/11 giờ Việt Nam.
+    assert show_day('2026-11-08T18:30:00.123456+00:00') == '09/11/2026'
     assert show_day('2026-11-08T18:30:00+00:00') == '09/11/2026' and show_day('2027-01-01') == '01/01/2027'
 
 
