@@ -1,15 +1,22 @@
 """Versioned catalogue values never rewrite historical charge snapshots."""
 from fastapi import Depends,HTTPException
-from pydantic import BaseModel,Field
+from pydantic import BaseModel,Field,model_validator
 from typing import Literal
 import json
 
 class ServiceInput(BaseModel):
     name:str=Field(min_length=2,max_length=180)
-    price:int=Field(ge=0,le=2_000_000_000)
-    category:Literal['consultation','lab','ultrasound','xray','ecg']='consultation'
+    price:int|None=Field(ge=0,le=2_000_000_000)
+    price_at_collection:bool=False
+    category:Literal['consultation','lab','ultrasound','xray','ecg','procedure']='consultation'
     code:str|None=Field(default=None,pattern=r'^[A-Za-z0-9_-]{2,40}$')
     active:bool=True
+
+    @model_validator(mode='after')
+    def require_fixed_price(self):
+        if self.price is None and not self.price_at_collection:
+            raise ValueError('Giá cố định cần số tiền; giá nhập khi thu phải bật cờ tương ứng')
+        return self
 
 class MedicineInput(BaseModel):
     name:str=Field(min_length=2,max_length=180)
@@ -31,7 +38,7 @@ def install_catalog(app,db,principal,require,audit):
         with db(True) as c:
             if data.code and c.execute('SELECT 1 FROM service_catalog WHERE code=?',(data.code,)).fetchone():raise HTTPException(409,'Trùng mã dịch vụ')
             if c.execute('SELECT 1 FROM service_catalog WHERE name=?',(data.name,)).fetchone():raise HTTPException(409,'Trùng tên dịch vụ')
-            c.execute('INSERT INTO service_catalog(name,price,code,active) VALUES(?,?,?,?)',(data.name,data.price,data.code,int(data.active)))
+            c.execute('INSERT INTO service_catalog(name,price,code,active,price_at_collection) VALUES(?,?,?,?,?)',(data.name,0 if data.price_at_collection else data.price,data.code,int(data.active),int(data.price_at_collection)))
             uid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
             if not data.code:c.execute('UPDATE service_catalog SET code=? WHERE id=?',('DV'+str(uid),uid))
             c.execute('INSERT INTO service_categories(service_id,category) VALUES(?,?)',(uid,data.category))
@@ -46,7 +53,7 @@ def install_catalog(app,db,principal,require,audit):
             if not old:raise HTTPException(404,'Không có dịch vụ')
             if data.code and c.execute('SELECT 1 FROM service_catalog WHERE code=? AND id<>?',(data.code,sid)).fetchone():raise HTTPException(409,'Trùng mã')
             if c.execute('SELECT 1 FROM service_catalog WHERE name=? AND id<>?',(data.name,sid)).fetchone():raise HTTPException(409,'Trùng tên')
-            c.execute('UPDATE service_catalog SET name=?,price=?,code=?,active=? WHERE id=?',(data.name,data.price,data.code or old['code'] or 'DV'+str(sid),int(data.active),sid))
+            c.execute('UPDATE service_catalog SET name=?,price=?,code=?,active=?,price_at_collection=? WHERE id=?',(data.name,0 if data.price_at_collection else data.price,data.code or old['code'] or 'DV'+str(sid),int(data.active),int(data.price_at_collection),sid))
             c.execute('INSERT INTO service_categories(service_id,category) VALUES(?,?) ON CONFLICT(service_id) DO UPDATE SET category=excluded.category',(sid,data.category))
             audit(c,u,'service_updated','service',sid,f"Giá {old['price']} -> {data.price}; hiệu lực {data.active}")
         return {'id':sid}

@@ -48,7 +48,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
 
     @app.post('/api/orders/{oid}/authorize')
     def authorize(oid:int,u=Depends(principal)):
-        require(u,'doctor')
+        require(u,'doctor','nurse')
         with db(True) as c:return authorize_order(c,oid,u,audit,now)
 
     @app.get('/api/visits/{vid}/settlement')
@@ -61,7 +61,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
                 return {'clinical_status':v['status'],'version':v['version'],'billing':{'due':None,'refund_due':None},'payment_status':'restricted','dispensing_status':'restricted'}
             state=invoice(c,vid)
             rx=c.execute('SELECT id,status FROM prescriptions WHERE visit_id=?',(vid,)).fetchone()
-            return {'clinical_status':v['status'],'version':v['version'],'billing':state,'payment_status':'refund_due' if state['refund_due'] else ('due' if state['due'] else 'settled'),'dispensing_status':rx['status'] if rx else 'not_prescribed'}
+            return {'clinical_status':v['status'],'version':v['version'],'billing':state,'payment_status':'unpriced' if state['unpriced_count'] else ('refund_due' if state['refund_due'] else ('due' if state['due'] else 'settled')),'dispensing_status':rx['status'] if rx else 'not_prescribed'}
 
     @app.post('/api/charges/{cid}/reprice')
     def reprice(cid:int,data:Reprice,u=Depends(principal)):
@@ -73,6 +73,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
                 return {'id':prior['id'],'status':'already_recorded'}
             ch=c.execute('SELECT * FROM effective_charges WHERE id=?',(cid,)).fetchone()
             if not ch:raise HTTPException(404,'Không có khoản phí')
+            if ch['original_amount'] is None:raise HTTPException(409,'Khoản giá nhập tay phải nhập lần đầu hoặc gửi đề nghị sửa giá để quản lý duyệt')
             if c.execute('SELECT 1 FROM charge_voids WHERE charge_id=?',(cid,)).fetchone():raise HTTPException(409,'Khoản đã hủy')
             if c.execute('SELECT 1 FROM charge_credits WHERE charge_id=?',(cid,)).fetchone():raise HTTPException(409,'Khoản đã có trả thuốc; cần đối soát trước')
             c.execute('INSERT INTO charge_pricing(charge_id,amount) VALUES(?,?) ON CONFLICT(charge_id) DO UPDATE SET amount=excluded.amount',(cid,data.amount))

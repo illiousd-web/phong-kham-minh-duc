@@ -64,7 +64,7 @@ def test_real_https_three_browser_roles_and_pdf():
                     assert page.evaluate("sessionStorage.getItem('md_token')") is None
                     assert '__Host-clinic=' not in page.evaluate('document.cookie')
                 # Mỗi vai trò vào thẳng màn hình công việc, chỉ thấy menu của mình, không còn menu mang số phiên bản.
-                expected={'reception':['reception','prices'],'doctor':['doctor'],'cashier':['cashier'],'technician':['lab'],'pharmacy':['pharmacy'],'admin':['admin','settings']}
+                expected={'reception':['reception','prices'],'doctor':['doctor'],'cashier':['cashier'],'technician':['lab'],'pharmacy':['pharmacy'],'admin':['admin','price-management','settings']}
                 for role,page in pages.items():
                     settle(page)
                     nav=page.locator('#navigation [data-action="navigate"]')

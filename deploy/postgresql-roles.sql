@@ -19,3 +19,4 @@ REVOKE UPDATE, DELETE, TRUNCATE ON clinical_revisions, nursing_notes,
 REVOKE UPDATE, DELETE, TRUNCATE ON order_authorizations, charge_sources,
  dispensation_items, dispensations, payments, charges, stock_movements,
  charge_voids, visit_closures, medicine_units FROM clinic_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON manual_charge_prices FROM clinic_app;

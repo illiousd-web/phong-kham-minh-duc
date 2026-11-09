@@ -23,7 +23,7 @@ def test_counts_match_the_role_queue():
     # Cùng điều kiện với hàng chờ Tiếp đón: lượt chưa hoàn tất, chưa hủy.
     assert client.get('/api/queue-counts', headers=h).json()['reception'] == sum(v['status'] not in ('completed', 'cancelled') for v in client.get('/api/visits', headers=h).json())
     h = token('thungan')
-    assert client.get('/api/queue-counts', headers=h).json()['cashier'] == sum(d['charged'] - d['paid'] > 0 for d in client.get('/api/dues', headers=h).json())
+    assert client.get('/api/queue-counts', headers=h).json()['cashier'] == sum(d['charged'] - d['paid'] > 0 or d['unpriced_count'] > 0 for d in client.get('/api/dues', headers=h).json())
 
 
 def test_dues_not_readable_by_reception_but_by_cashier_role():

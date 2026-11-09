@@ -27,7 +27,7 @@ Bản thử nghiệm. Chỉ nhập dữ liệu giả lập. Chưa dùng cho bệ
 Hàng chờ là các lượt được giao cho bạn và chưa hoàn tất. Bấm một lượt để mở.
 
 1. **Phiếu khám**: ghi lý do khám, sinh hiệu, chẩn đoán, hướng điều trị. Bấm **Lưu phiếu khám**. Cảnh báo sinh hiệu (huyết áp cao, sốt...) hiện ngay khi gõ.
-2. **Chỉ định cận lâm sàng**: chọn dịch vụ, bấm **Thêm chỉ định**. Chọn "Lưu nháp" nếu chưa muốn ghi tiền; sau đó bấm **Duyệt chỉ định / ghi phí**. Khi kỹ thuật viên gửi kết quả, nội dung hiện ngay dưới tên chỉ định; bấm **Duyệt kết quả**, rồi tải phiếu kết quả PDF.
+2. **Chỉ định cận lâm sàng**: chọn dịch vụ, bấm **Thêm chỉ định**. Dịch vụ giá nhập khi thu tạo khoản **CHƯA CÓ GIÁ**; bác sĩ không nhập số tiền. Chọn "Lưu nháp" nếu chưa muốn ghi tiền; sau đó bấm **Duyệt chỉ định / ghi phí**. Khi kỹ thuật viên gửi kết quả, nội dung hiện ngay dưới tên chỉ định; bấm **Duyệt kết quả**, rồi tải phiếu kết quả PDF.
 3. **Đơn thuốc**: lưu chẩn đoán trước. Chọn thuốc, đơn vị, số lượng, cách dùng. Bấm **Lưu đơn thuốc**. Mỗi lượt có một đơn. Đơn chưa cấp có thể hủy có lý do; đơn đã hủy không lập lại.
 4. **Điều dưỡng**: chọn điều dưỡng, bấm **Phân công**, rồi giao y lệnh. Y lệnh chưa làm có thể hủy có lý do.
 5. **Hoàn tất**: bấm **Hoàn tất và khóa phiếu khám** khi đã có chẩn đoán và không còn chỉ định hoặc y lệnh đang chờ. Hoàn tất khám không có nghĩa đã thu tiền hay đã cấp thuốc.
@@ -49,6 +49,7 @@ Bác sĩ có quyền duyệt thuốc kiểm soát thấy thêm khung **Đơn thu
 2. Nhập sinh hiệu, bấm **Lưu sinh hiệu**.
 3. Làm xong y lệnh thì bấm **Ghi nhận đã làm** và ghi kết quả.
 4. Ghi nhận chăm sóc ở bước 3. Mỗi lần ghi là một dòng mới, không sửa dòng cũ.
+5. **Chỉ định dịch vụ**: chọn dịch vụ cho lượt được phân công, bấm **Thêm chỉ định**. Giá nhập khi thu hiện **CHƯA CÓ GIÁ**; điều dưỡng không nhập giá và không xem công nợ.
 
 Điều dưỡng không xem, không sửa chẩn đoán và đơn thuốc.
 
@@ -67,17 +68,36 @@ Bác sĩ có quyền duyệt thuốc kiểm soát thấy thêm khung **Đơn thu
 4. Bấm **In phiếu thu (PDF)**.
 5. Giảm phí hoặc hoàn tiền: dùng khung **Đề nghị giảm phí / hoàn tiền cho lượt này** ngay dưới lượt đang xem. Khung ghi rõ tên bệnh nhân và mã lượt. Bấm **Xem lại đề nghị**, đọc lại dòng kiểm tra, đúng thì bấm **Xác nhận gửi đề nghị**. Quản lý duyệt. Không xóa phiếu thu.
 6. Lượt không nợ: chọn ở ô **Chọn lượt khác**.
+7. Khoản **CHƯA CÓ GIÁ**: nhập số nguyên lớn hơn 0 và **nội dung dịch vụ cụ thể**, bấm **Nhập giá khoản này**. Phải nhập từng khoản trước khi thu đủ. Khi còn khoản chưa có giá, chỉ có nút **Thu tạm một phần**; phần mềm tự ghi phiếu đó là **THU TẠM** (kể cả khi công tắc Ứng trước đang tắt). Lượt vẫn nằm trong hàng chờ, chưa được coi là hết nợ dù số tiền đã biết đã thu hết. Tổng thu tạm của lượt vượt **5.000.000 đ** hoặc vượt **3 lần** tổng các khoản đã có giá thì trang hiện ô xác nhận; phải đánh dấu mới thu được.
+   - Phiếu luôn in đúng loại đã ghi lúc thu: **PHIẾU THU TẠM**, **PHIẾU THU**, hoặc **PHIẾU THU TIỀN ỨNG TRƯỚC**. In lại phiếu thu tạm sau khi đã nhập đủ giá vẫn là PHIẾU THU TẠM.
+   - Hàng chờ thu ngân luôn có mọi lượt còn nợ, còn khoản chưa có giá, cần hoàn tiền, và các lượt trong ngày hôm nay; lượt cũ còn nợ không bị mất khỏi hàng chờ.
+8. Giá đã nhập không sửa trực tiếp: mở **Đề nghị sửa giá**, nhập giá mới, nội dung và lý do (ít nhất 8 ký tự, không tính khoảng trắng thừa); gửi để quản lý khác người đề nghị duyệt. Giá cũ giữ nguyên cho tới khi được duyệt. Quản lý cũng được nhập giá lần đầu, nhưng không được tự duyệt đề nghị của mình.
 
 Nhận tiền ứng trước chỉ hiện khi quản trị bật chức năng này.
 
 ## Quản lý — menu Quản lý
 
-Có bốn thẻ:
+Có năm thẻ:
 
-- **Cần duyệt**: giảm phí/hoàn tiền, hủy chỉ định, trả thuốc, phụ lục hồ sơ, nhập thuốc kiểm soát. Người duyệt phải khác người đề nghị.
+- **Cần duyệt**: đề nghị sửa giá nhập tay, giảm phí/hoàn tiền, hủy chỉ định, trả thuốc, phụ lục hồ sơ, nhập thuốc kiểm soát. Người duyệt phải khác người đề nghị.
 - **Lượt khám**: xem bảng kê một lượt, điều chỉnh giá có lý do, hoàn tác giảm phí, hủy lượt. Chỉ hủy lượt khi chỉ định đã hủy, y lệnh đã xử lý và thuốc đã đối soát. Tiền đã thu vẫn giữ; tiền cần hoàn hiện riêng.
 - **Danh mục**: dịch vụ và giá, thuốc và giá bán, đơn vị quy đổi (ví dụ vỉ = 10 viên). Ngừng dùng một dịch vụ chỉ chặn chỉ định mới, chứng từ cũ giữ nguyên.
-- **Báo cáo**: tổng phải thu, đã thu, công nợ từng lượt, tồn kho. Số liệu chỉ để kiểm thử, không dùng kế toán hay khai thuế.
+- **Nhập bảng giá**: tải tệp Excel, xem trước rồi xác nhận nhập theo hướng dẫn dưới đây.
+- **Báo cáo**: mục **Khoản giá nhập tay** theo ngày giờ Việt Nam, liệt kê khoản, người bệnh, nội dung, số tiền, người nhập và người duyệt sửa; có danh sách khoản trong ngày còn chưa có giá. Chọn ngày rồi bấm **Xem báo cáo ngày**. Bên dưới là tổng phải thu, đã thu, công nợ từng lượt, tồn kho. Khi còn khoản chưa có giá, tổng phải thu chỉ là phần đã biết, chưa phải tổng cuối. Số liệu chỉ để kiểm thử, không dùng kế toán hay khai thuế.
+
+### Nhập bảng giá dịch vụ từ Excel
+
+Chỉ **quản trị** và **quản lý** dùng được: mở **Quản lý → Nhập bảng giá**. Quản trị có thêm menu **Quản lý** bên cạnh menu Quản trị.
+
+1. Bấm **Tải tệp mẫu** để lấy `BANG_GIA.xlsx` (bản gốc: `templates/nhap_lieu/BANG_GIA.xlsx`). Mẫu có một trang tính, dòng hướng dẫn và bốn tiêu đề. Tệp tổng hợp `BANG_GIA_MINH_DUC.xlsx` cũng dùng được: chỉ đọc trang **BANG_GIA**; trang **CAN_XEM_LAI** bị bỏ qua, không đọc. Hai cột tham khảo không được nhập thành dữ liệu dịch vụ. Điền từ dòng 3, mỗi dịch vụ một dòng; tối đa 2.000 dòng và 2 MB.
+2. Điền **Tên dịch vụ**, chọn **Nhóm**, điền **Giá** bằng ô số nguyên từ 0 đến 2.000.000.000 đồng. **Để TRỐNG giá** nếu thu ngân sẽ nhập giá riêng khi thu; giá **0** vẫn là giá 0, không phải giá nhập khi thu. Không nhập giá dạng chữ, không dùng công thức ở bốn cột dữ liệu (Mã, Tên, Nhóm, Giá) của trang BANG_GIA; nếu sao chép từ tệp khác thì dán **giá trị**. Công thức ở cột tham khảo hoặc trang khác không được kiểm vì không được đọc. Có mã thì khớp theo mã, giữ đúng tên và nhóm; trống mã thì khớp theo **Tên + Nhóm** sau khi bỏ khác biệt hoa/thường và khoảng trắng thừa. Chưa có dịch vụ khớp thì thêm mới và tự cấp mã. Không lặp mã hoặc tên trong cùng tệp.
+3. Chọn một trong sáu nhóm: **Khám, Xét nghiệm, Siêu âm, X-quang, Điện tim, Thủ thuật**. Nhóm Thủ thuật đã được bổ sung theo phê duyệt C3; giữ nguyên mã TT001–TT003 trong tệp tổng hợp.
+4. Bấm **Chọn tệp Excel**, chọn tệp `.xlsx`, bấm **Xem trước**. Kiểm từng dòng **THÊM MỚI / ĐỔI GIÁ / KHÔNG ĐỔI / LỖI**, giá cũ → giá mới và lý do lỗi. Mở danh sách **Dịch vụ trong hệ thống không có trong tệp** để kiểm tra; các dịch vụ đó được giữ nguyên.
+5. Có dòng lỗi: sửa tệp rồi tải lại, chưa nhập dòng nào. Đúng hết thì bấm **Xác nhận nhập bảng giá**. Phần mềm nhập toàn bộ và ghi nhật ký người nhập, số dòng, từng dịch vụ đổi giá và từng dịch vụ **thêm mới** (mã, tên, nhóm, giá, dòng trong tệp, lần nhập) trong một giao dịch. Nếu bảng giá đã thay đổi sau bước xem trước, phải xem trước lại. Tệp được xử lý trong bộ nhớ, không lưu tệp tải lên ra đĩa.
+
+CSDL được nâng cấp bằng bộ cập nhật trước khi dùng tính năng. [Chi tiết migration và quay lui](C3_GIA_NHAP_KHI_THU.md).
+
+Giá mới áp dụng cho khoản phát sinh mới. Khoản phải thu, phiếu thu, chỉ định đã lập (kể cả chỉ định nháp) giữ giá cũ. Không có dịch vụ nào bị xóa hoặc tự bật lại nếu đã ngừng dùng.
 
 ## Quản trị — menu Quản trị và Cài đặt
 

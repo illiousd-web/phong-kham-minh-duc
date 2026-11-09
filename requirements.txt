@@ -5,3 +5,5 @@ python-docx>=1.1,<2
 reportlab>=4,<5
 psycopg[binary,pool]>=3.2,<4
 cryptography>=50,<51
+openpyxl>=3.1.5,<4
+defusedxml>=0.7.1,<1
