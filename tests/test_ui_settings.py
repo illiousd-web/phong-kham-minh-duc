@@ -29,3 +29,28 @@ def test_hidden_feature_keeps_server_permission_checks():
     client.put('/api/ui-settings', headers=admin, json={'advance_payment': False})
     # Lễ tân vẫn không nhận tiền được; thu ngân vẫn gọi được API (kiểm tra quyền giữ nguyên).
     assert client.post('/api/payments', headers=token('letan'), json={'visit_id': 1, 'amount': 1000, 'method': 'cash', 'idempotency_key': 'ui-settings-1', 'prepayment': True}).status_code == 403
+
+
+def test_audit_failure_leaves_settings_file_unchanged():
+    """Ghi tệp tạm -> ghi nhật ký -> thay tệp: nhật ký lỗi thì tệp cài đặt giữ nguyên, không để rác."""
+    import os
+    import pytest
+    from pathlib import Path
+    from app.database import db
+    from app.ui_settings import settings_path
+    admin = token('quantri')
+    assert client.put('/api/ui-settings', headers=admin, json={'advance_payment': False}).status_code == 200
+    path = settings_path(Path(os.environ['CLINIC_UPLOAD_DIR']))
+    before = path.read_bytes()
+    with db(True) as c:
+        c.execute("CREATE TRIGGER chan_nhat_ky BEFORE INSERT ON audit_log WHEN NEW.event='ui_settings_changed' "
+                  "BEGIN SELECT RAISE(ABORT, 'nhat ky loi gia'); END")
+    try:
+        with pytest.raises(Exception):
+            client.put('/api/ui-settings', headers=admin, json={'advance_payment': True})
+    finally:
+        with db(True) as c:
+            c.execute('DROP TRIGGER chan_nhat_ky')
+    assert path.read_bytes() == before
+    assert [p.name for p in path.parent.iterdir()] == ['ui_settings.json']
+    assert client.get('/api/ui-settings', headers=admin).json()['advance_payment'] is False

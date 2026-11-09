@@ -62,6 +62,7 @@ function Get-MinhDucPaths {
         BackupState = Join-Path $Data 'backup-status.json'
         Backups     = Join-Path $Data 'backups'
         Attachments = Join-Path $Data 'attachments'
+        Settings    = Join-Path $Data 'caidat'
         Logs        = Join-Path $Data 'logs'
         Journal     = Join-Path $Data 'nhatky'
         Tls         = Join-Path $Data 'tls'

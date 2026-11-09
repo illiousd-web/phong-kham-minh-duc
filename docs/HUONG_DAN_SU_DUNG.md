@@ -65,7 +65,7 @@ Bác sĩ có quyền duyệt thuốc kiểm soát thấy thêm khung **Đơn thu
 2. Xem **Bảng kê** gồm tiền khám, cận lâm sàng và thuốc.
 3. Số tiền thu được điền sẵn bằng số còn nợ. Sửa nếu thu một phần. Bấm **Thu tiền**.
 4. Bấm **In phiếu thu (PDF)**.
-5. Giảm phí hoặc hoàn tiền: mở **Đề nghị giảm phí / hoàn tiền**, ghi lý do. Quản lý duyệt. Không xóa phiếu thu.
+5. Giảm phí hoặc hoàn tiền: dùng khung **Đề nghị giảm phí / hoàn tiền cho lượt này** ngay dưới lượt đang xem. Khung ghi rõ tên bệnh nhân và mã lượt. Bấm **Xem lại đề nghị**, đọc lại dòng kiểm tra, đúng thì bấm **Xác nhận gửi đề nghị**. Quản lý duyệt. Không xóa phiếu thu.
 6. Lượt không nợ: chọn ở ô **Chọn lượt khác**.
 
 Nhận tiền ứng trước chỉ hiện khi quản trị bật chức năng này.
@@ -81,7 +81,12 @@ Có bốn thẻ:
 
 ## Quản trị — menu Quản trị và Cài đặt
 
-- **Quản trị**: tạo tài khoản, đổi vai trò, khóa tài khoản, đặt lại mật khẩu, xem nhật ký, sửa danh mục. Đổi quyền sẽ đăng xuất mọi phiên cũ của người đó.
+- **Quản trị**: tạo tài khoản, sửa tài khoản, xem nhật ký, sửa danh mục.
+  - Tạo tài khoản: không có vai trò nào được chọn sẵn; phải tự đánh dấu ít nhất một. Người kiêm hai việc (ví dụ lễ tân và thu ngân) thì đánh dấu cả hai.
+  - Sửa tài khoản: chọn nhân viên, phần mềm điền sẵn họ tên và đúng các quyền hiện có, kể cả quyền thuốc kiểm soát.
+  - **Khóa / Mở khóa** là nút riêng, chỉ đổi trạng thái, không đổi quyền.
+  - Cấp hoặc bỏ quyền **Quản trị** phải đánh dấu ô xác nhận hiện ngay trong trang.
+  - Đổi quyền hoặc khóa sẽ đăng xuất mọi phiên của người đó.
 - **Cài đặt**: bật hoặc tắt chức năng phụ cho cả phòng khám.
   - Ứng trước tiền: mặc định **tắt**.
   - Phụ lục đính chính: mặc định **bật**.
@@ -89,7 +94,7 @@ Có bốn thẻ:
 
 Tắt chỉ ẩn chức năng khỏi màn hình. Quyền kiểm tra ở máy chủ không đổi, dữ liệu cũ giữ nguyên. Người khác thấy thay đổi khi bấm lại menu hoặc đăng nhập lại.
 
-Cài đặt lưu trong tệp `ui_settings.json`, cạnh thư mục tệp đính kèm (thường là `CLINIC_DATA_DIR`). Tệp này nằm trong bản sao lưu và được khôi phục cùng dữ liệu. Tệp thiếu hoặc hỏng thì phần mềm dùng giá trị mặc định, ghi cảnh báo vào nhật ký máy chủ, và màn hình Cài đặt hiện dòng báo; bấm **Lưu cài đặt** để ghi lại tệp.
+Cài đặt lưu trong tệp `caidat/ui_settings.json` cạnh thư mục tệp đính kèm (Windows: `C:\ProgramData\MinhDuc\caidat\ui_settings.json`; thư mục này cho dịch vụ quyền ghi). Bộ cài tạo tệp mặc định. Tệp nằm trong bản sao lưu và được khôi phục cùng dữ liệu, kể cả khi CAP_NHAT lỗi tự quay về bản cũ. Tệp thiếu hoặc hỏng thì phần mềm dùng giá trị mặc định, ghi cảnh báo vào nhật ký máy chủ, màn hình Cài đặt hiện dòng báo, và **KIEM_TRA.bat báo KHÔNG ĐẠT**; quản trị kiểm tra rồi bấm **Lưu cài đặt** để ghi lại tệp. Mỗi lần đổi cài đặt được ghi nhật ký trước rồi mới thay tệp: nếu không ghi được nhật ký thì cài đặt không đổi.
 
 ## Thuốc kiểm soát đặc biệt (khi đang bật)
 

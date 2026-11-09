@@ -66,3 +66,8 @@
 }
 .queue-news{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#fff4e5;border:1px solid #f3c27a;color:#7a4c13;border-radius:10px;padding:10px 13px;margin:0 0 12px;font-weight:700}
 td.price{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}
+fieldset.roles{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:0;display:flex;flex-wrap:wrap;gap:2px 10px}
+fieldset.roles legend{font-size:12px;font-weight:700;padding:0 4px}
+.field .check input,.approve-box .check input{width:20px;height:20px;min-height:0;padding:0;flex:none}
+fieldset.roles .check{min-width:150px}
+fieldset.roles.field{flex-direction:row;align-items:center}

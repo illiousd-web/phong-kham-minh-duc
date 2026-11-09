@@ -623,7 +623,8 @@ def get_rx(u=Depends(principal)):
 
 @app.get('/api/dues')
 def dues(u=Depends(principal)):
-    require(u,'cashier','reception','manager')
+    # Lễ tân không xem công nợ từng lượt; người kiêm thu ngân đọc qua vai trò cashier.
+    require(u,'cashier','manager')
     with db() as c:
         sql='''SELECT v.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,
          COALESCE((SELECT SUM(ch.amount) FROM effective_charges ch WHERE ch.visit_id=v.id AND NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id)),0)-COALESCE((SELECT SUM(amount) FROM effective_adjustments WHERE visit_id=v.id AND kind='discount' AND status='approved'),0) AS charged,

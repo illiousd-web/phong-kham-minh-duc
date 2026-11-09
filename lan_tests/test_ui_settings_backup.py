@@ -26,9 +26,12 @@ def _drop(name):
         c.execute(sql.SQL('DROP DATABASE IF EXISTS {} WITH (FORCE)').format(sql.Identifier(name)))
 
 
-def test_backup_restore_keeps_ui_settings_and_defaults_on_bad_file(tmp_path, clients, caplog):
+def test_backup_restore_keeps_ui_settings_and_defaults_on_bad_file(tmp_path, clients, caplog, monkeypatch):
     from scripts.backup_lan import backup, restore, unpack_verified
     from app.ui_settings import settings_path, load_settings, DEFAULTS
+    from app.main import FILES
+    # Sao lưu đọc cùng thư mục với máy chủ đang chạy (kiểm thử khác có thể đã đổi biến môi trường).
+    monkeypatch.setenv('CLINIC_UPLOAD_DIR', str(FILES))
     if not shutil.which(os.getenv('CLINIC_PG_DUMP', 'pg_dump')):
         pytest.fail('Install PostgreSQL client tools to test real backup/restore')
     admin = clients['admin']
@@ -51,7 +54,7 @@ def test_backup_restore_keeps_ui_settings_and_defaults_on_bad_file(tmp_path, cli
         uploads = tmp_path / 'restored' / 'attachments'
         restore(good, key, target, uploads)
         restored = settings_path(uploads)
-        assert restored == tmp_path / 'restored' / 'ui_settings.json'
+        assert restored == tmp_path / 'restored' / 'caidat' / 'ui_settings.json'
         assert load_settings(restored) == (chosen, 'file')
 
         # Không bao giờ ghi đè cài đặt đang có ở đích.

@@ -19,7 +19,7 @@ let serverMode='demo',selectedRole=null,auditOffset=0;
 const pendingOrderKeys=new Map();
 let auth=null,active=null,patientList=[],orderList=[],dueList=[],accountList=[];
 // Lựa chọn đang mở trên từng màn hình (lượt khám, chỉ định, phiếu cấp...).
-const sel={visit:null,patient:null,patientQuery:'',nurseVisit:null,order:null,dispense:null,cashVisit:null,mgrVisit:null,mgrTab:'approve',adminTab:'accounts'};
+const sel={visit:null,patient:null,patientQuery:'',nurseVisit:null,order:null,dispense:null,cashVisit:null,mgrVisit:null,account:null,mgrTab:'approve',adminTab:'accounts'};
 // Cài đặt bật/tắt chức năng phụ, đọc từ máy chủ sau khi đăng nhập.
 let ui={advance_payment:false,addendum:true,controlled_drugs:true},uiLoaded=false;
 let toastTimer=null;
@@ -251,8 +251,8 @@ async function cashierScreen(){
  const head=card(queue(owing.map(d=>({id:d.visit_id,main:`#${d.visit_id} · ${esc(d.patient_name)}`,sub:`Còn ${money(d.charged-d.paid)}`})),{kind:'cash',current:sel.cashVisit,emptyText:'Không còn lượt nào nợ tiền.'})+
   `<div class="toolbar-actions">${selectField('Chọn lượt khác','cash_choose',[['','— Chọn —'],...dues.map(d=>[d.visit_id,`#${d.visit_id} – ${d.patient_name} (còn ${money(d.charged-d.paid)})`])])}</div>`,`Lượt còn nợ (${owing.length})`);
  const payHistory=details('Lịch sử thu',t(pays.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.patient_name)}<div class="muted">lượt #${x.visit_id} · ${showDay(x.created_at)}</div></td><td>${money(x.amount)}</td><td>${esc(vi(x.method))}</td><td>${btn('In phiếu thu','export-receipt',`data-id="${x.id}"`)}</td></tr>`),['Mã thu','Bệnh nhân','Số tiền','Hình thức','']));
- const adjust=details('Đề nghị giảm phí / hoàn tiền',`<form data-form="adjustment" class="fields">${selectField('Lượt khám','visit_id',dues.map(v=>[v.visit_id,`#${v.visit_id} – ${v.patient_name}`]))}${selectField('Loại đề nghị','kind',[['discount','Giảm phí'],['refund','Hoàn phần trả thừa']])}${field('Số tiền (VNĐ)','amount','number','',true)}${selectField('Phiếu thu cần hoàn (chỉ khi hoàn tiền)','payment_id',[['','Không áp dụng'],...pays.map(x=>[x.id,`#${x.id}: ${x.patient_name}, ${money(x.amount)}`])])}${field('Lý do','reason','text','Tối thiểu 5 ký tự',true)}<div class="wide"><button class="btn">Gửi quản lý duyệt</button></div></form>`+t(adj.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.patient_name)}</td><td>${esc(vi(x.kind))} — ${money(x.amount)}</td><td>${pill(x.status)}</td></tr>`),['Mã','Bệnh nhân','Loại','Trạng thái']));
- if(!sel.cashVisit)return head+adjust+payHistory;
+ const myRequests=details('Đề nghị giảm phí / hoàn tiền đã gửi',t(adj.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.patient_name)}<div class="muted">lượt #${x.visit_id}</div></td><td>${esc(vi(x.kind))} — ${money(x.amount)}</td><td>${pill(x.status)}</td></tr>`),['Mã','Bệnh nhân','Loại','Trạng thái']));
+ if(!sel.cashVisit)return head+myRequests+payHistory;
  const vid=sel.cashVisit,d=dues.find(x=>x.visit_id===vid);
  const [lines,state]=await Promise.all([api('/charges/'+vid),api('/visits/'+vid+'/settlement')]);
  const due=Math.max(0,d.charged-d.paid),mine=pays.filter(p=>p.visit_id===vid);
@@ -260,7 +260,9 @@ async function cashierScreen(){
  const pay=due>0&&state.clinical_status!=='cancelled'?`<form data-form="payment" class="fields">${hidden('visit_id',vid)}${field('Số tiền thu (VNĐ)','amount','number','',true)}${selectField('Hình thức','method',[['cash','Tiền mặt'],['transfer','Chuyển khoản (đã đối chiếu)']])}${field('Mã giao dịch (nếu chuyển khoản)','external_ref')}<div class="wide"><button class="btn">Thu tiền</button></div></form>`:'<p class="hint">Lượt này không còn khoản phải thu.</p>';
  const advance=ui.advance_payment&&OPEN({status:state.clinical_status})?details('Nhận tiền ứng trước',`<form data-form="advance" class="fields">${hidden('visit_id',vid)}${field('Số tiền ứng trước','amount','number','',true)}${selectField('Hình thức','method',[['cash','Tiền mặt'],['transfer','Chuyển khoản']])}<div class="wide"><button class="btn">Nhận ứng trước</button></div></form>`):'';
  const receipts=t(mine.map(x=>`<tr><td>#${x.id}</td><td>${money(x.amount)}<div class="muted">${showDay(x.created_at)}</div></td><td>${esc(vi(x.method))}</td><td>${btn('In phiếu thu (PDF)','export-receipt',`data-id="${x.id}"`,'btn smallbtn')}</td></tr>`),['Mã thu','Số tiền','Hình thức','']);
- return {html:head+`<div class="patient-head"><div><b>${esc(d.patient_name)}</b> <span class="muted">${esc(d.patient_code)}</span></div><div class="muted">lượt #${vid}</div><div>${pill(state.clinical_status)}</div></div>`+stepCard(1,'Bảng kê',bill)+stepCard(2,'Thu tiền',pay)+advance+stepCard(3,'In phiếu thu',receipts)+adjust+payHistory,
+ // Đề nghị giảm phí/hoàn tiền gắn với ĐÚNG lượt đang xem (visit_id ẩn), có bước xác nhận trong trang.
+ const adjust=card(`<form data-form="adjustment" class="fields" data-patient="${esc(d.patient_name)}" data-visit="${vid}">${hidden('visit_id',vid)}<div class="wide adjust-for">Cho bệnh nhân <b>${esc(d.patient_name)}</b> · lượt <b>#${vid}</b></div>${selectField('Loại đề nghị','kind',[['discount','Giảm phí'],['refund','Hoàn phần trả thừa']])}${field('Số tiền (VNĐ)','amount','number','',true)}${selectField('Phiếu thu cần hoàn (chỉ khi hoàn tiền)','payment_id',[['','Không áp dụng'],...mine.map(x=>[x.id,`#${x.id}: ${money(x.amount)}`])])}${field('Lý do','reason','text','Tối thiểu 5 ký tự',true)}<div class="approve-box hidden wide" data-adjust-confirm></div><div class="wide"><button class="btn">Xem lại đề nghị</button></div></form>`,'Đề nghị giảm phí / hoàn tiền cho lượt này');
+ return {html:head+`<div class="patient-head"><div><b>${esc(d.patient_name)}</b> <span class="muted">${esc(d.patient_code)}</span></div><div class="muted">lượt #${vid}</div><div>${pill(state.clinical_status)}</div></div>`+stepCard(1,'Bảng kê',bill)+stepCard(2,'Thu tiền',pay)+advance+stepCard(3,'In phiếu thu',receipts)+adjust+myRequests+payHistory,
   after(){const a=document.querySelector('[data-form="payment"] [name="amount"]');if(a)a.value=due}}}
 
 // ---------- Quản lý: duyệt, lượt khám, danh mục, báo cáo ----------
@@ -314,12 +316,27 @@ async function adminScreen(){
  if(sel.adminTab==='catalog')return head+await catalogSection();
  if(sel.adminTab==='audit'){const entries=await api('/audit?offset='+auditOffset+'&limit=100');return head+card(t(entries.map(x=>`<tr><td>${x.id}</td><td>${esc(x.username||x.user_id||'Hệ thống')}</td><td>${esc(x.event)}</td><td>${esc(x.object_type)} #${esc(x.object_id??'')}</td><td>${esc(x.details)}</td><td>${esc(x.created_at)}</td></tr>`),['ID','Nhân viên','Sự kiện','Đối tượng','Chi tiết','Thời gian UTC'])+`<div class="toolbar-actions"><button class="ghost" data-action="audit-prev" ${auditOffset===0?'disabled':''}>Trang trước</button><span>Từ dòng ${auditOffset+1}</span><button class="ghost" data-action="audit-next" ${entries.length<100?'disabled':''}>Trang sau</button></div>`,'Nhật ký sự kiện')}
  const users=accountList=await api('/accounts');
- const options=Object.entries(roles).filter(([r])=>!r.startsWith('controlled_'));
- const extras=ui.controlled_drugs?Object.entries(roles).filter(([r])=>r.startsWith('controlled_')).map(([r,n])=>`<label class="check"><input type="checkbox" name="extra_roles" value="${r}"> ${esc(n)}</label>`).join(''):'';
- return head+card(`<form data-form="account" class="fields">${field('Tài khoản (chữ thường, không dấu)','username','text','',true)}${field('Họ tên nhân viên','full_name','text','',true)}${field('Mật khẩu riêng (ít nhất 12 ký tự)','password','password','',true)}${selectField('Vai trò','role',options)}${extras?`<div class="field full">${extras}</div>`:''}<div class="wide"><button class="btn">Tạo tài khoản</button></div></form>`,'Tạo tài khoản')+
- card(t(users.map(u=>`<tr><td>${esc(u.username)}</td><td>${esc(u.full_name)}</td><td>${u.roles.map(r=>esc(roles[r])).join(', ')}</td><td>${u.active?'Hoạt động':'Đã khóa'}</td></tr>`),['Tài khoản','Họ tên','Quyền','Trạng thái']),'Nhân viên')+
- details('Đổi vai trò / khóa tài khoản',`<form data-form="account-update" class="fields">${selectField('Nhân viên','uid',users.map(u=>[u.id,u.full_name+' ('+u.username+')']))}${selectField('Vai trò mới','role',options)}${extras?`<div class="field full">${extras}</div>`:''}${selectField('Trạng thái','active',[['1','Hoạt động'],['0','Khóa']])}<div class="wide"><button class="btn">Cập nhật</button><p class="hint">Đổi quyền sẽ đăng xuất mọi phiên cũ của người đó.${ui.controlled_drugs?'':' Quyền thuốc kiểm soát hiện có được giữ nguyên.'}</p></div></form>`)+
- details('Đặt lại mật khẩu',`<form data-form="account-reset" class="fields">${selectField('Nhân viên','uid',users.map(u=>[u.id,u.full_name]))}${field('Mật khẩu mới (ít nhất 12 ký tự)','password','password','',true)}<div class="wide"><button class="btn">Đặt lại mật khẩu</button></div></form>`)}
+ if(!users.some(u=>u.id===sel.account))sel.account=null;
+ const u=users.find(x=>x.id===sel.account);
+ const create=`<form data-form="account" class="fields">${field('Tài khoản (chữ thường, không dấu)','username','text','',true)}${field('Họ tên nhân viên','full_name','text','',true)}${field('Mật khẩu riêng (ít nhất 12 ký tự)','password','password','',true)}${roleChecks([],'new')}<div class="wide"><button class="btn">Tạo tài khoản</button></div></form>`;
+ const pick=`<div class="toolbar-actions">${selectField('Chọn nhân viên cần sửa','account_choose',[['','— Chọn nhân viên —'],...users.map(x=>[x.id,`${x.full_name} (${x.username})`])])}</div>`;
+ const edit=u?`<div class="patient-head"><div><b>${esc(u.full_name)}</b> <span class="muted">${esc(u.username)}</span></div><div class="muted">Quyền hiện có: ${u.roles.map(r=>esc(roles[r])).join(', ')}</div><div>${u.active?'<span class="status">Hoạt động</span>':'<span class="status error">Đã khóa</span>'}</div></div>`+
+  `<form data-form="account-edit" class="fields" data-had-admin="${u.roles.includes('admin')?'1':'0'}">${hidden('uid',u.id)}<div class="field full"><label for="edit_full_name">Họ tên</label><input id="edit_full_name" name="full_name" value="${esc(u.full_name)}" required></div>${roleChecks(u.roles,'edit')}<div class="wide"><button class="btn">Lưu họ tên và quyền</button><p class="hint">Đổi quyền sẽ đăng xuất mọi phiên cũ của người đó.${ui.controlled_drugs?'':' Quyền thuốc kiểm soát hiện có được giữ nguyên.'}</p></div></form>`+
+  `<form data-form="account-lock" class="fields">${hidden('uid',u.id)}${hidden('active',u.active?'0':'1')}<div class="wide"><button class="${u.active?'btn danger':'btn'}">${u.active?'Khóa tài khoản':'Mở khóa tài khoản'}</button><p class="hint">Khóa/mở chỉ đổi trạng thái, giữ nguyên mọi quyền.</p></div></form>`+
+  `<form data-form="account-reset" class="fields">${hidden('uid',u.id)}${field('Mật khẩu mới (ít nhất 12 ký tự)','password','password','',true)}<div class="wide"><button class="ghost">Đặt lại mật khẩu</button></div></form>`:empty('Chọn một nhân viên để sửa họ tên, quyền, khóa/mở hoặc đặt lại mật khẩu.');
+ return {html:head+card(create,'Tạo tài khoản')+card(pick+edit,'Sửa tài khoản')+card(t(users.map(x=>`<tr><td>${esc(x.username)}</td><td>${esc(x.full_name)}</td><td>${x.roles.map(r=>esc(roles[r])).join(', ')}</td><td>${x.active?'Hoạt động':'Đã khóa'}</td></tr>`),['Tài khoản','Họ tên','Quyền','Trạng thái']),'Nhân viên'),
+  after(){if(u&&$('account_choose'))$('account_choose').value=String(u.id)}}}
+// Ô chọn vai trò: không chọn sẵn gì khi tạo mới; khi sửa thì đánh dấu đúng quyền hiện có.
+function roleChecks(current,prefix){
+ const base=Object.entries(roles).filter(([r])=>!r.startsWith('controlled_')),extra=Object.entries(roles).filter(([r])=>r.startsWith('controlled_'));
+ const box=([r,n])=>`<label class="check"><input type="checkbox" name="roles" value="${r}" ${current.includes(r)?'checked':''}> ${esc(n)}</label>`;
+ return `<fieldset class="field full roles"><legend>Vai trò (chọn ít nhất một)</legend>${base.map(box).join('')}</fieldset>`+
+  (ui.controlled_drugs?`<fieldset class="field full roles"><legend>Quyền phụ thuốc kiểm soát</legend>${extra.map(box).join('')}</fieldset>`:'')+
+  `<div class="approve-box hidden wide" data-admin-confirm><label class="check"><input type="checkbox" name="confirm_admin" value="1"> <b>Tôi xác nhận <span data-admin-verb>cấp</span> quyền Quản trị</b> (toàn quyền tài khoản, cài đặt, nhật ký).</label></div>`}
+// Cấp hoặc bỏ quyền Quản trị phải đánh dấu ô xác nhận ngay trong trang.
+function adminChange(form){const had=form.dataset.hadAdmin==='1',has=!!form.querySelector('[name="roles"][value="admin"]:checked');
+ const box=form.querySelector('[data-admin-confirm]');if(box){box.classList.toggle('hidden',had===has);box.querySelector('[data-admin-verb]').textContent=has?'cấp':'bỏ';if(had===has)box.querySelector('[name="confirm_admin"]').checked=false}
+ return had!==has}
 const SETTINGS=[['advance_payment','Ứng trước tiền','Thu ngân nhận tiền trước khi có chỉ định hoặc cấp thuốc.'],['addendum','Phụ lục đính chính','Bác sĩ bổ sung hồ sơ đã khóa, quản lý duyệt.'],['controlled_drugs','Thuốc kiểm soát đặc biệt','Kê, duyệt, nhập, cấp và sổ theo dõi thuốc kiểm soát.']];
 async function settingsScreen(){await loadUi();
  const warn=ui.source&&ui.source!=='file'?`<div class="notice">${ui.source==='missing'?'Chưa có tệp cài đặt trên máy chủ':'Tệp cài đặt trên máy chủ bị hỏng'}: đang dùng giá trị mặc định. Kiểm tra rồi bấm Lưu cài đặt để ghi lại.</div>`:'';
@@ -342,9 +359,18 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  if(kind==='service'){await api('/catalog/services',{method:'POST',body:{name:value('name'),price:num('price'),category:value('category')}});msg='Đã thêm dịch vụ';}
  else if(kind==='medicine-price'){await api('/medicines/'+num('medicine_id')+'/price',{method:'PUT',body:{unit_price:num('unit_price')}});msg='Đã đặt giá thuốc';}
  else if(kind==='medicine'){await api('/catalog/medicines',{method:'POST',body:{name:value('name'),base_unit:value('base_unit')}});msg='Đã thêm thuốc/vật tư';}
- else if(kind==='account'){await api('/accounts',{method:'POST',body:{username:value('username'),full_name:value('full_name'),password:value('password'),roles:[value('role'),...f.getAll('extra_roles').map(String)]}});msg='Đã tạo tài khoản riêng';}
- else if(kind==='account-update'){let extra=f.getAll('extra_roles').map(String);if(!ui.controlled_drugs){const u=accountList.find(x=>x.id===num('uid'));extra=(u?.roles||[]).filter(r=>r.startsWith('controlled_'))}
-  await api('/accounts/'+num('uid'),{method:'PUT',body:{active:value('active')==='1',roles:[value('role'),...extra]}});msg='Đã cập nhật quyền và thu hồi các phiên cũ';}
+ else if(kind==='account'){const picked=f.getAll('roles').map(String);if(!picked.length)throw new Error('Chọn ít nhất một vai trò cho tài khoản mới');
+  if(adminChange(form)&&!f.get('confirm_admin'))throw new Error('Đánh dấu ô xác nhận cấp quyền Quản trị trước khi tạo');
+  await api('/accounts',{method:'POST',body:{username:value('username'),full_name:value('full_name'),password:value('password'),roles:picked}});msg='Đã tạo tài khoản riêng';}
+ else if(kind==='account-edit'){const u=accountList.find(x=>x.id===num('uid'));if(!u)throw new Error('Không tìm thấy nhân viên');
+  let picked=f.getAll('roles').map(String);if(!ui.controlled_drugs)picked=[...picked,...u.roles.filter(r=>r.startsWith('controlled_'))];
+  if(!picked.length)throw new Error('Chọn ít nhất một vai trò');
+  const body={};if(value('full_name')!==u.full_name)body.full_name=value('full_name');
+  if([...picked].sort().join()!==[...u.roles].sort().join())body.roles=picked;
+  if(!Object.keys(body).length)throw new Error('Chưa có thay đổi nào');
+  if(adminChange(form)&&!f.get('confirm_admin'))throw new Error('Đánh dấu ô xác nhận '+(picked.includes('admin')?'cấp':'bỏ')+' quyền Quản trị trước khi lưu');
+  await api('/accounts/'+u.id,{method:'PUT',body});msg=body.roles?'Đã cập nhật quyền và thu hồi các phiên cũ':'Đã cập nhật họ tên';}
+ else if(kind==='account-lock'){const active=value('active')==='1';await api('/accounts/'+num('uid'),{method:'PUT',body:{active}});msg=active?'Đã mở khóa tài khoản, giữ nguyên quyền':'Đã khóa tài khoản, giữ nguyên quyền';}
  else if(kind==='account-reset'){await api('/accounts/'+num('uid')+'/password',{method:'POST',body:{password:value('password')}});msg='Đã đặt mật khẩu và thu hồi phiên';}
  else if(kind==='ui-settings'){const body={};for(const [k] of SETTINGS)body[k]=!!form.querySelector(`[name="${k}"]`).checked;ui=await api('/ui-settings',{method:'PUT',body});msg='Đã lưu cài đặt';}
  else if(kind==='patient'){const res=await api('/patients',{method:'POST',body:{full_name:value('full_name'),date_of_birth:parseDay(value('date_of_birth'),'Ngày sinh'),sex:value('sex'),phone:value('phone'),citizen_id:value('citizen_id')||null,address:value('address')||null}});sel.patient=res.id;sel.patientQuery='';msg='Đã lưu bệnh nhân '+res.code+'. Chọn bác sĩ để tạo lượt khám.';}
@@ -367,7 +393,12 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  else if(kind==='stock-issue'){await api('/stock/issues',{method:'POST',body:{medicine_id:num('medicine_id'),quantity:num('quantity'),purpose:value('purpose')}});msg='Đã xuất lô theo hạn dùng';}
  else if(kind==='payment'){const res=await keyed(kind,'/payments',{visit_id:num('visit_id'),amount:num('amount'),method:value('method'),external_ref:value('external_ref')||null},'idempotency_key');msg='Đã thu tiền, phiếu thu #'+res.id+'. Bấm "In phiếu thu".';}
  else if(kind==='advance'){await keyed(kind,'/payments',{visit_id:num('visit_id'),amount:num('amount'),method:value('method'),prepayment:true},'idempotency_key');msg='Đã nhận tiền ứng trước';}
- else if(kind==='adjustment'){await api('/adjustments',{method:'POST',body:{visit_id:num('visit_id'),kind:value('kind'),amount:num('amount'),payment_id:value('payment_id')?num('payment_id'):null,reason:value('reason')}});msg='Đã gửi đề nghị cho quản lý';}
+ else if(kind==='adjustment'){const body={visit_id:num('visit_id'),kind:value('kind'),amount:num('amount'),payment_id:value('payment_id')?num('payment_id'):null,reason:value('reason')};
+  const box=form.querySelector('[data-adjust-confirm]'),summary=`${vi(body.kind)} ${money(body.amount)} cho ${form.dataset.patient}, lượt #${body.visit_id}`;
+  if(form.dataset.confirmed!==summary+body.reason){if(!(body.amount>0))throw new Error('Nhập số tiền');
+   box.innerHTML=`<b>Kiểm tra trước khi gửi:</b> ${esc(summary)}. Lý do: ${esc(body.reason)}. Đúng thì bấm <b>Xác nhận gửi đề nghị</b>.`;box.classList.remove('hidden');
+   form.dataset.confirmed=summary+body.reason;form.querySelector('button.btn').textContent='Xác nhận gửi đề nghị';return;}
+  await api('/adjustments',{method:'POST',body});msg='Đã gửi đề nghị '+summary+' cho quản lý duyệt';}
  else if(kind==='reprice'){await keyed(kind,'/charges/'+num('charge_id')+'/reprice',{amount:num('amount'),reason:value('reason')});msg='Đã điều chỉnh giá, có nhật ký';}
  else if(kind==='unit'){await api('/medicines/'+num('medicine_id')+'/units',{method:'POST',body:{name:value('name'),base_factor:num('base_factor')}});msg='Đã thêm đơn vị quy đổi';}
  else if(kind==='service-update'){await api('/catalog/services/'+num('service_id'),{method:'PUT',body:{code:value('code'),name:value('name'),price:num('price'),active:value('active')==='1',category:value('category')}});msg='Đã cập nhật dịch vụ';}
@@ -416,9 +447,12 @@ document.addEventListener('change',async ev=>{const el=ev.target;
   else if(el.id==='visit_choose'&&el.value){sel.visit=Number(el.value);await render();}
   else if(el.id==='cash_choose'&&el.value){sel.cashVisit=Number(el.value);await render();}
   else if(el.id==='mgr_visit'){sel.mgrVisit=Number(el.value);await render();}
+  else if(el.id==='account_choose'){sel.account=el.value?Number(el.value):null;await render();}
+  else if(el.name==='roles'&&el.closest('form'))adminChange(el.closest('form'));
  }catch(e){notify(e.message,true)}});
 // Tự chèn dấu / khi gõ ngày; cập nhật cảnh báo sinh hiệu khi gõ.
 document.addEventListener('input',ev=>{const el=ev.target;
+ {const af=el.closest&&el.closest('[data-form="adjustment"]');if(af&&af.dataset.confirmed){delete af.dataset.confirmed;af.querySelector('[data-adjust-confirm]').classList.add('hidden');af.querySelector('button.btn').textContent='Xem lại đề nghị'}}
  if(el.id==='price-filter'){const q=el.value.trim().toLowerCase();document.querySelectorAll('tr[data-search]').forEach(tr=>tr.classList.toggle('hidden',!!q&&!tr.dataset.search.includes(q)));return}
  if(el.classList?.contains('date-vn')&&ev.inputType!=='deleteContentBackward'){const d=el.value.replace(/[^\d]/g,'').slice(0,8);if(/^\d+$/.test(el.value.replace(/\//g,''))){el.value=d.length>4?`${d.slice(0,2)}/${d.slice(2,4)}/${d.slice(4)}`:d.length>2?`${d.slice(0,2)}/${d.slice(2)}`:d}}
  if(el.id?.startsWith('v_'))vitalsFlags();});

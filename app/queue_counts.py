@@ -29,7 +29,8 @@ def install_queue_counts(app, peek, load_ui):
         if roles & {'reception', 'doctor', 'nurse'}:
             visits = get('/api/visits', u)
             if 'reception' in roles:
-                out['reception'] = sum(v['status'] == 'waiting' for v in visits)
+                # Cùng điều kiện với hàng chờ màn hình Tiếp đón: mọi lượt chưa hoàn tất/chưa hủy.
+                out['reception'] = sum(map(OPEN, visits))
             if 'doctor' in roles:
                 out['doctor'] = sum(map(OPEN, visits))
             if 'nurse' in roles:

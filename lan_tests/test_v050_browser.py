@@ -141,6 +141,74 @@ def test_v050_all_workflows_https_browser(clients,visit):
                 go(review,'doctor');assert review.locator('[data-form="controlled-approve"]').count()==0
                 assert clients['admin'].put('/api/ui-settings',json={'controlled_drugs':True}).status_code==200
                 independent.close()
+                # Mục 3: đề nghị giảm phí gắn đúng lượt đang xem (lượt B), có bước xác nhận trong trang.
+                patient_b=clients['reception'].post('/api/patients',json={'full_name':'Bệnh nhân B giả lập','sex':'Nam','date_of_birth':'1980-02-02','phone':'0900000022'}).json()['id']
+                visit_b=clients['reception'].post('/api/visits',json={'patient_id':patient_b,'doctor_id':IDS['doctor'],'service_id':sid}).json()['id']
+                cash=go(pages['cashier'],'cashier');cash.locator('#cash_choose').select_option(str(visit_b));settle(cash)
+                form=cash.locator('[data-form="adjustment"]')
+                expect(form.locator('.adjust-for')).to_contain_text('Bệnh nhân B giả lập');expect(form.locator('.adjust-for')).to_contain_text(f'#{visit_b}')
+                assert form.locator('select[name="visit_id"]').count()==0 and form.locator('input[type="hidden"][name="visit_id"]').get_attribute('value')==str(visit_b)
+                form.locator('[name="amount"]').fill('1000');form.locator('[name="reason"]').fill('Giảm phí giả lập cho lượt B')
+                posted=[]
+                cash.on('request',lambda r:posted.append(r.url) if r.method=='POST' and r.url.endswith('/api/adjustments') else None)
+                form.locator('button.btn').click()
+                expect(form.locator('[data-adjust-confirm]')).to_contain_text(f'lượt #{visit_b}')
+                expect(form.locator('button.btn')).to_have_text('Xác nhận gửi đề nghị')
+                assert posted==[]
+                response=send(cash,form.locator('button.btn'),'Đã gửi đề nghị')
+                assert response.request.post_data_json['visit_id']==visit_b
+                assert next(a for a in clients['cashier'].get('/api/adjustments').json() if a['reason']=='Giảm phí giả lập cho lượt B')['visit_id']==visit_b
+                # Mục 2: sửa tài khoản không làm mất quyền, không mặc định Quản trị.
+                admin_ctx=browser.new_context(viewport={'width':1440,'height':1050});adm=admin_ctx.new_page()
+                adm.on('pageerror',lambda e:errors.append(str(e)))
+                adm.goto(origin,wait_until='networkidle');adm.locator('[name="username"]').fill('test_admin');adm.locator('[name="password"]').fill(PASSWORDS['admin'])
+                adm.locator('[data-form="login"] button').click();adm.locator('#logout').wait_for();settle(adm)
+                account_posts=[]
+                adm.on('request',lambda r:account_posts.append(r.method) if '/api/accounts' in r.url and r.method in ('POST','PUT') else None)
+                create=adm.locator('[data-form="account"]')
+                assert create.locator('[name="roles"]').count()>=8 and create.locator('[name="roles"]:checked').count()==0
+                new_user='fake_le_tan_'+secrets.token_hex(4)
+                create.locator('[name="username"]').fill(new_user);create.locator('[name="full_name"]').fill('Lễ tân giả lập UI');create.locator('[name="password"]').fill(secrets.token_urlsafe(18))
+                create.locator('button.btn').click();expect(adm.locator('#toast')).to_contain_text('Chọn ít nhất một vai trò')
+                create.locator('[name="roles"][value="admin"]').check()
+                expect(create.locator('[data-admin-confirm]')).to_be_visible()
+                create.locator('button.btn').click();expect(adm.locator('#toast')).to_contain_text('xác nhận cấp quyền Quản trị')
+                assert account_posts==[],account_posts
+                create.locator('[name="roles"][value="admin"]').uncheck();create.locator('[name="roles"][value="reception"]').check()
+                expect(create.locator('[data-admin-confirm]')).to_be_hidden()
+                send(adm,create.locator('button.btn'),'Đã tạo tài khoản')
+                def account(name):return next(x for x in clients['admin'].get('/api/accounts').json() if x['username']==name)
+                staff=account(new_user);assert staff['roles']==['reception']
+                # Chọn lễ tân, CHỈ khóa rồi lưu: quyền trước và sau giống hệt, yêu cầu không gửi danh sách quyền.
+                adm.locator('#account_choose').select_option(str(staff['id']));settle(adm)
+                assert adm.locator('[data-form="account-edit"] [name="roles"]:checked').evaluate_all('els=>els.map(e=>e.value)')==['reception']
+                response=send(adm,adm.locator('[data-form="account-lock"] button.btn'),'Đã khóa tài khoản')
+                assert 'roles' not in response.request.post_data_json and response.request.post_data_json=={'active':False}
+                locked=account(new_user);assert locked['roles']==staff['roles'] and not locked['active']
+                send(adm,adm.locator('[data-form="account-lock"] button.btn'),'Đã mở khóa')
+                assert account(new_user)['roles']==staff['roles'] and account(new_user)['active']
+                # Bác sĩ có quyền thuốc kiểm soát: điền sẵn đúng quyền; sửa họ tên/trạng thái giữ nguyên quyền.
+                doc_user='fake_bs_ks_'+secrets.token_hex(4)
+                assert clients['admin'].post('/api/accounts',json={'username':doc_user,'password':secrets.token_urlsafe(18),'full_name':'Bác sĩ kiểm soát giả lập','roles':['doctor','controlled_prescriber']}).status_code==201
+                doc=account(doc_user)
+                adm=go(adm,'admin');adm.locator('#account_choose').select_option(str(doc['id']));settle(adm)
+                edit=adm.locator('[data-form="account-edit"]')
+                assert sorted(edit.locator('[name="roles"]:checked').evaluate_all('els=>els.map(e=>e.value)'))==['controlled_prescriber','doctor']
+                expect(edit.locator('[name="full_name"]')).to_have_value('Bác sĩ kiểm soát giả lập')
+                edit.locator('[name="full_name"]').fill('Bác sĩ kiểm soát đã đổi tên')
+                response=send(adm,edit.locator('button.btn'),'Đã cập nhật họ tên')
+                assert response.request.post_data_json=={'full_name':'Bác sĩ kiểm soát đã đổi tên'}
+                send(adm,adm.locator('[data-form="account-lock"] button.btn'),'Đã khóa tài khoản')
+                send(adm,adm.locator('[data-form="account-lock"] button.btn'),'Đã mở khóa')
+                after=account(doc_user)
+                assert after['roles']==doc['roles'] and after['full_name']=='Bác sĩ kiểm soát đã đổi tên' and after['active']
+                # Cấp quyền Quản trị phải xác nhận ngay trong trang.
+                count=len(account_posts)
+                edit=adm.locator('[data-form="account-edit"]');edit.locator('[name="roles"][value="admin"]').check()
+                expect(edit.locator('[data-admin-confirm]')).to_be_visible()
+                edit.locator('button.btn').click();expect(adm.locator('#toast')).to_contain_text('xác nhận cấp quyền Quản trị')
+                assert len(account_posts)==count and account(doc_user)['roles']==doc['roles']
+                admin_ctx.close()
                 assert not errors,errors
                 for context in contexts.values():context.close()
                 browser.close()

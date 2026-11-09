@@ -92,6 +92,9 @@ def test_real_https_three_browser_roles_and_pdf():
                 r.locator('[data-form="visit"] select[name="doctor_id"]').select_option(str(IDS['doctor']))
                 vid=str(submit(r,'visit','Đã tiếp nhận lượt khám').json()['id'])
                 expect(r.locator(f'[data-kind="intake"][data-id="{vid}"]').first).to_be_visible()
+                # Số đếm Tiếp đón đúng bằng số dòng của hàng chờ Tiếp đón.
+                rows=r.locator('#workspace [data-kind="intake"][data-format="pdf"]').count()
+                expect(r.locator('#navigation [data-count="reception"]')).to_have_text(str(rows))
                 # Số đếm tự cập nhật không cần bấm: mô phỏng lần hỏi định kỳ (cùng đường chạy khi quay lại tab).
                 with db() as c:open_visits=c.execute("SELECT COUNT(*) FROM visits WHERE doctor_id=? AND status NOT IN ('completed','cancelled')",(IDS['doctor'],)).fetchone()[0]
                 d.evaluate("document.dispatchEvent(new Event('visibilitychange'))")

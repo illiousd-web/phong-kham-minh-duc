@@ -13,6 +13,7 @@ from pathlib import Path
 import secrets
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from urllib.parse import urlsplit, unquote
@@ -225,11 +226,11 @@ def unpack_verified(source, key_path, root):
 
 
 def restore(source, key_path, url, uploads, settings=None):
-    """settings: nơi ghi ui_settings.json; mặc định cạnh thư mục tệp đính kèm đích,
+    """settings: nơi ghi ui_settings.json; mặc định <cha thư mục đính kèm đích>/caidat/,
     đúng chỗ ứng dụng đọc khi CLINIC_UPLOAD_DIR chuyển sang đích này."""
     # No in-place overwrites: operator must create a separate empty target.
     uploads = uploads.resolve()
-    settings = Path(settings).resolve() if settings else uploads.parent/SETTINGS_NAME
+    settings = Path(settings).resolve() if settings else uploads.parent/'caidat'/SETTINGS_NAME
     uploads.parent.mkdir(parents=True,exist_ok=True)
     if uploads.exists() and any(uploads.iterdir()):
         raise ValueError('Restore attachment destination must be empty')
@@ -240,10 +241,10 @@ def restore(source, key_path, url, uploads, settings=None):
         if SETTINGS_NAME in manifest['files']:
             try:restored_settings=parse_settings((root/SETTINGS_NAME).read_bytes())
             except ValueError:
-                print('CẢNH BÁO: cài đặt giao diện trong bản sao không hợp lệ; ghi giá trị mặc định.')
+                print('CẢNH BÁO: cài đặt giao diện trong bản sao không hợp lệ; ghi giá trị mặc định.',file=sys.stderr)
                 restored_settings=dict(SETTINGS_DEFAULTS)
         else:
-            print('CẢNH BÁO: bản sao cũ chưa có cài đặt giao diện; ứng dụng sẽ dùng mặc định. Vào Cài đặt kiểm tra lại.')
+            print('CẢNH BÁO: bản sao cũ chưa có cài đặt giao diện; giữ nguyên hoặc dùng mặc định. Vào Cài đặt kiểm tra lại.',file=sys.stderr)
         with maintenance_lock(url) as c:
             if c.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'").fetchone()[0]:
                 raise ValueError('Restore database must be empty; never overwrite the running clinic')

@@ -20,6 +20,23 @@ def test_counts_match_the_role_queue():
         visits = client.get('/api/visits', headers=h).json()
         assert client.get('/api/queue-counts', headers=h).json()['doctor'] == sum(v['status'] not in ('completed', 'cancelled') for v in visits)
     h = token('letan')
-    assert client.get('/api/queue-counts', headers=h).json()['reception'] == sum(v['status'] == 'waiting' for v in client.get('/api/visits', headers=h).json())
+    # Cùng điều kiện với hàng chờ Tiếp đón: lượt chưa hoàn tất, chưa hủy.
+    assert client.get('/api/queue-counts', headers=h).json()['reception'] == sum(v['status'] not in ('completed', 'cancelled') for v in client.get('/api/visits', headers=h).json())
     h = token('thungan')
     assert client.get('/api/queue-counts', headers=h).json()['cashier'] == sum(d['charged'] - d['paid'] > 0 for d in client.get('/api/dues', headers=h).json())
+
+
+def test_dues_not_readable_by_reception_but_by_cashier_role():
+    """Lễ tân không đọc công nợ; người kiêm lễ tân + thu ngân vẫn đọc qua vai trò thu ngân."""
+    import secrets
+    assert client.get('/api/dues', headers=token('letan')).status_code == 403
+    assert client.get('/api/dues', headers=token('thungan')).status_code == 200
+    assert client.get('/api/dues', headers=token('quanly')).status_code == 200
+    admin = token('quantri')
+    name = 'kiem_' + secrets.token_hex(3)
+    password = secrets.token_urlsafe(16)
+    assert client.post('/api/accounts', headers=admin, json={'username': name, 'full_name': 'Lễ tân kiêm thu ngân',
+        'password': password, 'roles': ['reception', 'cashier']}).status_code == 201
+    both = {'Authorization': 'Bearer ' + client.post('/api/login', json={'username': name, 'password': password}).json()['access_token']}
+    assert client.get('/api/dues', headers=both).status_code == 200
+    assert set(client.get('/api/queue-counts', headers=both).json()) == {'reception', 'cashier'}
