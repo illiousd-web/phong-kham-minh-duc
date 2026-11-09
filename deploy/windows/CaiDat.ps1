@@ -84,15 +84,17 @@ function Step-CaiPython {
     Write-Buoc "Bước 2/${Tong}: Cài Python $($Pins.Python.Version)"
     if (Test-Path -LiteralPath $P.BasePython) {
         $v = ((Invoke-Native -FilePath $P.BasePython -Arguments @('--version') -Quiet).Output -join '').Trim()
-        if ($v -match '^Python 3\.12\.\d+$') { Write-Dat ("Đã có $v, bỏ qua."); return }
-        Stop-CaiDat ("Thư mục $($Names.PythonRoot) đang có $v, không phải Python 3.12.") @('Gỡ bản Python đó trong Cài đặt > Ứng dụng, hoặc liên hệ người hỗ trợ.') 5
+        if ($v -match '^Python 3\.12\.\d+$') { Write-Dat ("Đã có $v tại $($P.BasePython), bỏ qua."); return }
+        Stop-CaiDat ("$($P.BasePython) là $v, không phải Python 3.12.") @('Liên hệ người hỗ trợ.') 5
     }
     $file = Get-PinnedFile -Pin $Pins.Python -CacheDir $P.Downloads -LocalDirs @((Join-Path $PSScriptRoot 'taive'))
     Write-Thongtin 'Đang cài Python (không cần bấm gì, khoảng 1–3 phút)...'
     $proc = Start-Process -FilePath $file -Wait -PassThru -ArgumentList @('/quiet', 'InstallAllUsers=1', 'PrependPath=0', 'Include_test=0',
         'Include_doc=0', 'Include_launcher=0', 'Shortcuts=0', 'AssociateFiles=0', ('TargetDir="' + $Names.PythonRoot + '"'))
-    if ($proc.ExitCode -notin @(0, 3010) -or -not (Test-Path -LiteralPath $P.BasePython)) {
-        Stop-CaiDat "Cài Python thất bại (mã $($proc.ExitCode))." @('Khởi động lại máy rồi chạy lại CAI_DAT.bat.') 6
+    $script:P = Get-MinhDucPaths -Code $ThuMucMa -Data $ThuMucDuLieu
+    if ($proc.ExitCode -notin @(0, 3010) -or -not (Test-Path -LiteralPath $script:P.BasePython)) {
+        Stop-CaiDat "Cài Python thất bại (mã $($proc.ExitCode))." @('Khởi động lại máy rồi chạy lại CAI_DAT.bat.',
+            'Nếu máy đã có Python 3.12 cài riêng cho một tài khoản: gỡ nó trong Settings > Apps > Installed apps rồi chạy lại.') 6
     }
     Write-Dat "Đã cài Python $($Pins.Python.Version)."
 }

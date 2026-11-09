@@ -32,6 +32,21 @@ $script:Names = @{
 function Get-MinhDucPins { return $script:Pins }
 function Get-MinhDucNames { return $script:Names }
 
+function Find-Python312 {
+    # Python 3.12 64-bit cài cho mọi người dùng (HKLM), để tài khoản dịch vụ đọc được.
+    # Không dùng bản cài riêng cho một người dùng (nằm trong hồ sơ cá nhân).
+    try {
+        $key = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Python\PythonCore\3.12\InstallPath' -ErrorAction Stop
+        $exe = $null
+        if ($key.PSObject.Properties.Name -contains 'ExecutablePath' -and $key.ExecutablePath) { $exe = $key.ExecutablePath }
+        elseif ($key.'(default)') { $exe = Join-Path $key.'(default)' 'python.exe' }
+        if ($exe -and (Test-Path -LiteralPath $exe)) { return $exe }
+    } catch { }
+    $default = Join-Path $script:Names.PythonRoot 'python.exe'
+    if (Test-Path -LiteralPath $default) { return $default }
+    return $null
+}
+
 function Get-MinhDucPaths {
     param([string]$Code = 'C:\MinhDuc', [string]$Data = 'C:\ProgramData\MinhDuc')
     return [pscustomobject]@{
@@ -56,7 +71,7 @@ function Get-MinhDucPaths {
         Share       = 'C:\MinhDuc-ChiaSe'
         Venv        = Join-Path $Code '.venv'
         VenvPython  = Join-Path $Code '.venv\Scripts\python.exe'
-        BasePython  = Join-Path $script:Names.PythonRoot 'python.exe'
+        BasePython  = $(if ($found = Find-Python312) { $found } else { Join-Path $script:Names.PythonRoot 'python.exe' })
         PgBin       = Join-Path $script:Names.PgRoot 'bin'
         PgData      = Join-Path $script:Names.PgRoot 'data'
     }
