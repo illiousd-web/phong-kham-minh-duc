@@ -8,7 +8,9 @@ create : run scripts.create_lan_certificate into a fresh temporary folder,
 fingerprint : SHA-256 of ca.crt, shown on server and workstation for comparison.
 renew  : issue a NEW server certificate (new key, same names/IPs) signed by the
          EXISTING clinic CA, so workstations do not need CAI_MAY_TRAM again.
-         Old files are kept as *.cu-<stamp>; `rollback --stamp` puts them back.
+         Stages for GIA_HAN_CHUNG_CHI: prepare (write *.moi-<stamp> next to the
+         old files) -> caller sets/checks the service ACL -> verify -> commit
+         (old files become *.cu-<stamp>). `rollback --stamp` works from any stage.
 served : read the certificate the running HTTPS service presents (verified
          against ca.crt) to prove the service picked up the renewed one.
 """
@@ -57,8 +59,24 @@ def days_left(cert_path, now=None):
     return (cert.not_valid_after_utc - (now or datetime.now(timezone.utc))).days
 
 
-def renew(tls_dir, ca_key_path, valid_days=365):
-    """New server key + certificate from the existing CA; CA itself unchanged."""
+PAIR = ('server.crt', 'server.key')
+TEST_FAULT = 'MINHDUC_TEST_LOI'  # test-only fault injection (CI), never set in production
+
+
+def _new_stamp():
+    return datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+
+
+def _temp(tls_dir, name, stamp):
+    return Path(tls_dir) / f'{name}.moi-{stamp}'
+
+
+def prepare(tls_dir, ca_key_path, stamp, valid_days=365):
+    """Write the new pair next to the old files as server.crt/.key.moi-<stamp>.
+
+    Files are created inside tls_dir so they inherit that folder's ACL (never a
+    private temporary folder). Nothing in use is touched.
+    """
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -87,39 +105,73 @@ def renew(tls_dir, ca_key_path, valid_days=365):
             .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
             .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
             .sign(ca_key, hashes.SHA256()))
-    stamp = now.strftime('%Y%m%d%H%M%S')
-    # Write directly inside tls_dir so the new files inherit that folder's ACL (the
-    # service account may read it). A tempfile.mkdtemp folder on Windows is
-    # restricted to the current user, and a renamed file keeps that restriction.
-    new_crt, new_key = tls_dir / f'.server.crt.moi-{stamp}', tls_dir / f'.server.key.moi-{stamp}'
-    try:
-        new_key.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                                              serialization.NoEncryption()))
-        new_crt.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-        for name in ('server.crt', 'server.key'):
-            os.replace(tls_dir / name, tls_dir / f'{name}.cu-{stamp}')
-        os.replace(new_key, tls_dir / 'server.key')
-        os.replace(new_crt, tls_dir / 'server.crt')
-    finally:
-        new_key.unlink(missing_ok=True)
-        new_crt.unlink(missing_ok=True)
+    _temp(tls_dir, 'server.key', stamp).write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    _temp(tls_dir, 'server.crt', stamp).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     return {'stamp': stamp, 'not_after': not_after.isoformat(), 'serial': format(cert.serial_number, 'X'),
-            'ca_fingerprint': fingerprint(tls_dir / 'ca.crt')}
+            'ca_fingerprint': fingerprint(tls_dir / 'ca.crt'),
+            'files': [str(_temp(tls_dir, n, stamp)) for n in PAIR]}
+
+
+def verify_pair(tls_dir, stamp):
+    """The prepared files are readable and the key matches the certificate."""
+    import ssl
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(_temp(tls_dir, 'server.crt', stamp)), str(_temp(tls_dir, 'server.key', stamp)))
+    return {'verified': True}
+
+
+def commit(tls_dir, stamp):
+    """Swap: in-use files become *.cu-<stamp>, prepared files become live."""
+    tls_dir = Path(tls_dir)
+    for index, name in enumerate(PAIR):
+        if not _temp(tls_dir, name, stamp).exists():
+            raise ValueError(f'Không thấy tệp đã chuẩn bị {name}.moi-{stamp}')
+    for index, name in enumerate(PAIR):
+        os.replace(tls_dir / name, tls_dir / f'{name}.cu-{stamp}')
+        os.replace(_temp(tls_dir, name, stamp), tls_dir / name)
+        if index == 0 and os.environ.get(TEST_FAULT) == 'loi-giua-thay':
+            raise OSError('Lỗi giả lập giữa lúc thay tệp (kiểm thử)')
+    return {'committed': stamp}
+
+
+def renew(tls_dir, ca_key_path, valid_days=365, stamp=None):
+    """prepare + verify + commit (used by CAI_DAT); on any error the old pair is restored."""
+    stamp = stamp or _new_stamp()
+    try:
+        result = prepare(tls_dir, ca_key_path, stamp, valid_days)
+        verify_pair(tls_dir, stamp)
+        commit(tls_dir, stamp)
+    except Exception:
+        rollback(tls_dir, stamp)
+        raise
+    return result
 
 
 def rollback(tls_dir, stamp):
-    """Put back the server certificate saved by renew(); keep the failed one aside."""
+    """Return to the pair that was live before <stamp>, from any stage.
+
+    Before commit: removes the prepared files, live files untouched. Mid-commit or
+    after: each file saved as *.cu-<stamp> goes back; the replaced one is kept as
+    *.loi-<stamp> for investigation.
+    """
+    if os.environ.get(TEST_FAULT) == 'khoi-phuc-loi':
+        raise OSError('Lỗi giả lập khi khôi phục (kiểm thử)')
     tls_dir = Path(tls_dir)
-    for name in ('server.crt', 'server.key'):
+    restored = []
+    for name in PAIR:
         saved = tls_dir / f'{name}.cu-{stamp}'
-        if not saved.exists():
-            raise ValueError(f'Không thấy bản lưu {saved.name}')
-    for name in ('server.crt', 'server.key'):
-        current = tls_dir / name
-        if current.exists():
-            os.replace(current, tls_dir / f'{name}.loi-{stamp}')
-        os.replace(tls_dir / f'{name}.cu-{stamp}', current)
-    return {'restored': stamp}
+        if saved.exists():
+            current = tls_dir / name
+            if current.exists():
+                os.replace(current, tls_dir / f'{name}.loi-{stamp}')
+            os.replace(saved, current)
+            restored.append(name)
+        _temp(tls_dir, name, stamp).unlink(missing_ok=True)
+    for name in PAIR:
+        if not (tls_dir / name).exists():
+            raise ValueError(f'Thiếu {name} sau khi khôi phục')
+    return {'restored': restored}
 
 
 def served(origin, ca_file, timeout=10):
@@ -177,7 +229,10 @@ def main(argv=None):
     n.add_argument('--ca-key', required=True)
     f = sub.add_parser('fingerprint'); f.add_argument('--ca', required=True)
     r = sub.add_parser('renew'); r.add_argument('--tls-dir', required=True); r.add_argument('--ca-key', required=True)
-    b = sub.add_parser('rollback'); b.add_argument('--tls-dir', required=True); b.add_argument('--stamp', required=True)
+    pr = sub.add_parser('prepare'); pr.add_argument('--tls-dir', required=True); pr.add_argument('--ca-key', required=True)
+    pr.add_argument('--stamp', required=True)
+    for cmd in ('verify', 'commit', 'rollback'):
+        x = sub.add_parser(cmd); x.add_argument('--tls-dir', required=True); x.add_argument('--stamp', required=True)
     s = sub.add_parser('served'); s.add_argument('--origin', required=True); s.add_argument('--ca', required=True)
     args = parser.parse_args(argv)
     if args.command == 'check':
@@ -188,13 +243,17 @@ def main(argv=None):
         if args.command == 'renew':
             print(json.dumps(renew(args.tls_dir, args.ca_key)))
             return 0
-        if args.command == 'rollback':
-            print(json.dumps(rollback(args.tls_dir, args.stamp)))
+        if args.command == 'prepare':
+            print(json.dumps(prepare(args.tls_dir, args.ca_key, args.stamp)))
+            return 0
+        if args.command in ('verify', 'commit', 'rollback'):
+            action = {'verify': verify_pair, 'commit': commit, 'rollback': rollback}[args.command]
+            print(json.dumps(action(args.tls_dir, args.stamp)))
             return 0
         if args.command == 'served':
             print(json.dumps(served(args.origin, args.ca)))
             return 0
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError) as error:  # ssl.SSLError is an OSError
         print(f'LOI: {error}', file=sys.stderr)
         return 2
     if args.command == 'create':

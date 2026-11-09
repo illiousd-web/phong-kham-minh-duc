@@ -322,6 +322,21 @@ function Set-SecureAcl {
     }
 }
 
+function Test-AccountCanRead {
+    # ĐẠT khi ACL của tệp cho tài khoản (theo SID) quyền đọc và không có quy tắc Deny đọc.
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Account)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $sid = (New-Object Security.Principal.NTAccount($Account)).Translate([Security.Principal.SecurityIdentifier]).Value
+    $read = [Security.AccessControl.FileSystemRights]::ReadData
+    $allow = $false; $deny = $false
+    foreach ($rule in (Get-Acl -LiteralPath $Path).Access) {
+        try { $ruleSid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { continue }
+        if ($ruleSid -ne $sid -or (($rule.FileSystemRights -band $read) -eq 0)) { continue }
+        if ([string]$rule.AccessControlType -eq 'Deny') { $deny = $true } else { $allow = $true }
+    }
+    return ($allow -and -not $deny)
+}
+
 function Test-SecureAcl {
     # ĐẠT khi Users / Everyone / Authenticated Users không có quyền đọc.
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -340,6 +355,16 @@ function Test-SecureAcl {
 # ---------------------------------------------------------------------------
 # Tệp cấu hình KEY=VALUE (chỉ đọc giá trị không bí mật khi cần)
 # ---------------------------------------------------------------------------
+function Set-EnvValue {
+    # Đặt một khóa KEY=VALUE (không bí mật) trong tệp cấu hình, ghi tại chỗ để giữ nguyên quyền tệp.
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Key, [Parameter(Mandatory = $true)][string]$Value)
+    $lines = @([IO.File]::ReadAllLines($Path, [Text.Encoding]::UTF8))
+    $found = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -like ($Key + '=*')) { $lines[$i] = $Key + '=' + $Value; $found = $true } }
+    if (-not $found) { $lines += ($Key + '=' + $Value) }
+    [IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+}
+
 function Read-EnvFile {
     param([Parameter(Mandatory = $true)][string]$Path)
     $values = @{}
@@ -467,7 +492,7 @@ function Get-WindowsFacts {
     }
     $facts['env_acl_ok'] = $aclOk
     $facts['env_acl_detail'] = ($details -join '; ')
-    $facts['external_declared'] = (Test-Path -LiteralPath $Paths.ExternalCfg)
+    $facts['external_declared'] = ((Test-Path -LiteralPath $Paths.ExternalCfg) -and (Read-EnvFile -Path $Paths.ClinicEnv)['CLINIC_EXTERNAL_BACKUP'] -eq '1')
     $facts['windows'] = ([string]$os.Caption + ' (bản ' + $os.BuildNumber + ')')
     $py = if (Test-Path -LiteralPath $Paths.BasePython) { (Invoke-Native -FilePath $Paths.BasePython -Arguments @('--version') -Quiet).Output -join '' } else { 'chưa cài' }
     $facts['python_version'] = ($py -replace 'Python ', '')

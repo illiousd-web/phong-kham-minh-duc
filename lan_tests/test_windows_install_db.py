@@ -139,11 +139,16 @@ def test_cli_reads_secrets_from_files_only(creds, tmp_path):
     assert install_db.main(['--clinic-env', str(clinic), '--owner-env', str(owner), '--super-env', str(sup), 'ensure']) == 2
 
 
-JOB = """import json,sys
+JOB = """import json,os,sys
 from pathlib import Path
 import scripts.backup_job as b
+import scripts.backup_lan as lan
 marker=Path(sys.argv[1])
 b.find_external=(lambda roots,ident,data: marker if ident=='usb-1' and marker.exists() else None)
+if os.environ.get('MINHDUC_TEST_VERIFY_FAIL')=='1':
+    def broken(*a, **k):
+        raise ValueError('Backup checksum mismatch (gia lap)')
+    lan.unpack_verified=broken
 sys.exit(b.main(sys.argv[2:]))
 """
 
@@ -156,7 +161,7 @@ def run_job(env, marker, args):
     return result
 
 
-def test_grant_cli_moves_old_install_to_7_local_30_external(creds, tmp_path):
+def test_grant_cli_moves_old_install_to_14_local(creds, tmp_path):
     clinic, owner = tmp_path / 'clinic.env', tmp_path / 'owner.env'
     env = {**_lan_env(tmp_path, creds), 'CLINIC_BACKUP_KEEP': '30', 'CLINIC_OFFSITE_KEEP': '30'}
     install_env.write_env(clinic, env, ['test'])
@@ -168,13 +173,15 @@ def test_grant_cli_moves_old_install_to_7_local_30_external(creds, tmp_path):
         os.environ.clear(); os.environ.update(saved)
     for path, url in ((clinic, app_url(creds)), (owner, owner_url(creds))):
         values = install_env.read_env(path)
-        assert values['CLINIC_BACKUP_KEEP'] == '7' and values['CLINIC_OFFSITE_KEEP'] == '30'
+        assert values['CLINIC_BACKUP_KEEP'] == '14' and values['CLINIC_OFFSITE_KEEP'] == '30'
         assert values['CLINIC_DATABASE_URL'] == url, 'passwords must be kept'
     assert install_db.can_login(app_url(creds))
 
 
 def test_nightly_job_backup_verify_external_copy_and_rollback(creds, tmp_path):
-    env = {**os.environ, **_lan_env(tmp_path, creds), 'CLINIC_MIN_FREE_MB': '256', 'CLINIC_BACKUP_KEEP': '30'}
+    # Hidden opt-in: external drive copies only when CLINIC_EXTERNAL_BACKUP=1.
+    env = {**os.environ, **_lan_env(tmp_path, creds), 'CLINIC_MIN_FREE_MB': '256', 'CLINIC_BACKUP_KEEP': '30',
+           'CLINIC_EXTERNAL_BACKUP': '1'}
     key = tmp_path / 'backup.key'
     key.write_bytes(secrets.token_bytes(32))
     (tmp_path / 'attachments').mkdir()
@@ -209,6 +216,7 @@ def test_nightly_job_backup_verify_external_copy_and_rollback(creds, tmp_path):
     assert result.returncode == 1 and alert.exists()
     assert 'THẤT BẠI' in alert.read_text(encoding='utf-8-sig')
     assert len(list((tmp_path / 'backups').glob('minhduc-*.mdbackup'))) == 2
+    assert len(list((tmp_path / 'backups').glob('*.mdbackup.verified'))) == 2
     backup_file = sorted((tmp_path / 'backups').glob('minhduc-*.mdbackup'))[0]
     # Simulate a failed update that changed data/schema, then roll back via the CLI.
     with psycopg.connect(owner_url(creds)) as c:
@@ -237,3 +245,59 @@ def test_nightly_job_backup_verify_external_copy_and_rollback(creds, tmp_path):
         assert install_db.admin_count(app_url(creds)) == 1
     assert sorted(p.name for p in (tmp_path / 'attachments').iterdir()) == ['ket-qua-gia-lap.pdf']
     assert (Path(report['kept_attachments']) / 'tep-moi.pdf').exists()
+
+
+def _job_env(tmp_path, creds, **extra):
+    env = {**os.environ, **_lan_env(tmp_path, creds), 'CLINIC_MIN_FREE_MB': '256', 'CLINIC_BACKUP_KEEP': '14'}
+    env.update(extra)
+    return env
+
+
+def _legacy(directory, count):
+    """Backups left by an older installer (30 kept, no verification marker)."""
+    import time
+    directory.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    for i in range(count):
+        path = directory / f'minhduc-2026{i:04d}T000000Z-legacy{i:02d}.mdbackup'
+        path.write_bytes(b'legacy synthetic backup ' + bytes([i]))
+        os.utime(path, (now - 86400 * (count - i), now - 86400 * (count - i)))
+
+
+def test_switch_from_30_to_14_prunes_only_after_first_verified_backup(creds, tmp_path):
+    key = tmp_path / 'backup.key'
+    key.write_bytes(secrets.token_bytes(32))
+    backups = tmp_path / 'backups'
+    _legacy(backups, 30)
+    state, alert = tmp_path / 'state.json', tmp_path / 'alert.txt'
+    args = ['--key', str(key), '--directory', str(backups), '--state', str(state), '--alert-file', str(alert)]
+    # First run fails verification: nothing old is deleted, the bad new file is removed, alert written.
+    failed = run_job(_job_env(tmp_path, creds, MINHDUC_TEST_VERIFY_FAIL='1'), tmp_path / 'none', args)
+    assert failed.returncode == 1, failed.stdout + failed.stderr
+    assert len(list(backups.glob('minhduc-*.mdbackup'))) == 30 and not list(backups.glob('*.verified'))
+    text = alert.read_text(encoding='utf-8-sig')
+    assert 'THẤT BẠI' in text and 'không xóa bản cũ nào' in text
+    # Next run verifies the new backup, then trims to 14 (oldest legacy first).
+    ok = run_job(_job_env(tmp_path, creds), tmp_path / 'none', args)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    names = sorted(p.name for p in backups.glob('minhduc-*.mdbackup'))
+    assert len(names) == 14 and not any(f'legacy{i:02d}' in ' '.join(names) for i in range(17))
+    saved = json.loads(state.read_text(encoding='utf-8'))
+    assert saved['verified_count'] == 1 and len(saved['pruned']) == 17 and not alert.exists()
+    assert (backups / (saved['last_file'] + '.verified')).exists()
+
+
+def test_external_copy_is_off_by_default(creds, tmp_path):
+    key = tmp_path / 'backup.key'
+    key.write_bytes(secrets.token_bytes(32))
+    usb = tmp_path / 'usb' / backup_job.MARKER_DIR
+    usb.mkdir(parents=True)
+    (usb / backup_job.MARKER_FILE).write_text(json.dumps({'id': 'usb-1'}))
+    config = tmp_path / 'external.json'
+    config.write_text(json.dumps({'id': 'usb-1', 'label': 'USB', 'declared_at': '2026-01-01T00:00:00+00:00'}))
+    args = ['--key', str(key), '--directory', str(tmp_path / 'backups'), '--state', str(tmp_path / 's.json'),
+            '--external-config', str(config), '--alert-file', str(tmp_path / 'alert.txt')]
+    result = run_job(_job_env(tmp_path, creds), usb, args)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not list(usb.glob('minhduc-*.mdbackup')), 'no external copy unless CLINIC_EXTERNAL_BACKUP=1'
+    assert not (tmp_path / 'alert.txt').exists(), 'an old declared drive must not raise absence warnings'

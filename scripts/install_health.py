@@ -71,7 +71,8 @@ def collect(env, state_file=None, ca_file=None, timeout=15):
         try:
             state = json.loads(Path(state_file).read_text(encoding='utf-8'))
             facts['backup_state'] = {k: state.get(k) for k in (
-                'last_success_utc', 'last_error', 'external_present', 'external_last_copy_utc', 'warnings')}
+                'last_success_utc', 'last_error', 'external_present', 'external_last_copy_utc', 'warnings',
+                'verified_count', 'over_budget')}
         except (OSError, ValueError):
             pass
     return facts
@@ -111,7 +112,7 @@ def evaluate(facts, now=None):
         add(title, days >= CERT_WARNING_DAYS, f'Còn {days} ngày' + (
             '' if days >= CERT_WARNING_DAYS else ' — bấm GIA_HAN_CHUNG_CHI.bat (máy trạm không phải cài lại)'))
     else:
-        add(title, False, 'Không đọc được chứng chỉ')
+        add(title, False, 'Không đọc được chứng chỉ (thiếu hoặc hỏng) — báo người hỗ trợ; nếu còn khóa CA, bấm GIA_HAN_CHUNG_CHI.bat')
     fw = facts.get('firewall') or {}
     add('Tường lửa chỉ mở cổng web cho mạng nội bộ', fw.get('exists') and fw.get('enabled') and fw.get('scoped'),
         f"Cổng {fw.get('port', '?')} cho {fw.get('remote', '?')}")
@@ -124,6 +125,7 @@ def evaluate(facts, now=None):
         hours = _age_hours(newest, now)
         add('Bản sao lưu gần nhất mới hơn 36 giờ', hours <= 36 and not state.get('last_error'),
             f'Cách đây {hours:.0f} giờ; số bản trên máy: {facts.get("backup_count", 0)}'
+            + (f' (đã kiểm: {state["verified_count"]})' if state.get('verified_count') is not None else '')
             + (f"; lỗi lần cuối: {state['last_error']}" if state.get('last_error') else ''))
     else:
         add('Bản sao lưu gần nhất mới hơn 36 giờ', False, 'Chưa có bản sao lưu nào')

@@ -105,8 +105,9 @@ def desired(ip, cidr, data_dir, pg_bin, app_password):
 
 
 # Values the installer owns: re-running CAI_DAT or CAP_NHAT resets them on machines
-# installed by an older version (e.g. 30 local backups -> 7). Never secrets.
-MANAGED = {'CLINIC_BACKUP_KEEP': '7', 'CLINIC_OFFSITE_KEEP': '30'}
+# installed by an older version (e.g. 30 local backups -> 14). Never secrets.
+# CLINIC_OFFSITE_KEEP only matters when the hidden external-drive option is on.
+MANAGED = {'CLINIC_BACKUP_KEEP': '14', 'CLINIC_OFFSITE_KEEP': '30'}
 
 
 def merge(existing, wanted):

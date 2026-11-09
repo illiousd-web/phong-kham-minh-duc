@@ -105,6 +105,49 @@ def restore_test():
     print(f'PASS: khôi phục bản sao lưu {backups[-1].name} sang CSDL riêng, khớp {restored} dịch vụ, {users} tài khoản')
 
 
+def pg_set_password():
+    """CI: change the postgres superuser password to NEW_PG_PW (accented) with the current one."""
+    import psycopg
+    from psycopg import sql
+    old = read_env(DATA / 'quantri' / 'postgres.env')['MINHDUC_PG_SUPER_PASSWORD']
+    with psycopg.connect(host='127.0.0.1', user='postgres', password=old, dbname='postgres', autocommit=True) as c:
+        c.execute(sql.SQL('ALTER ROLE postgres PASSWORD {}').format(sql.Literal(os.environ['NEW_PG_PW'])))
+    print('postgres password changed to an accented one')
+
+
+def pg_accent_check():
+    """CI: postgres.env written by the manual-entry path is UTF-8 and logs in with real SCRAM."""
+    import psycopg
+    from scripts import install_db
+    password = os.environ['NEW_PG_PW']
+    path = DATA / 'quantri' / 'postgres.env'
+    assert read_env(path)['MINHDUC_PG_SUPER_PASSWORD'] == password, 'password file does not round-trip'
+    raw = path.read_bytes()
+    assert password.encode('utf-8') in raw and b'?' not in raw.split(b'=', 1)[1], 'password file is not UTF-8'
+
+    class Args:
+        clinic_env = str(DATA / 'clinic.env')
+        owner_env = None
+        super_env = str(path)
+    saved = dict(os.environ)
+    try:
+        url = install_db.load(Args)['super']
+    finally:
+        os.environ.clear(); os.environ.update(saved)
+    with psycopg.connect(url) as c:
+        scram = c.execute("SELECT rolpassword LIKE 'SCRAM-SHA-256$%' FROM pg_authid WHERE rolname='postgres'").fetchone()[0]
+        method = c.execute('SHOW password_encryption').fetchone()[0]
+    assert scram and method == 'scram-sha-256', (scram, method)
+    try:
+        psycopg.connect(host='127.0.0.1', user='postgres', dbname='postgres',
+                        password=password.encode('ascii', 'ignore').decode()).close()
+    except psycopg.OperationalError:
+        pass
+    else:
+        raise SystemExit('password without diacritics must be rejected')
+    print('PASS: mật khẩu postgres có dấu -> tệp UTF-8, đăng nhập SCRAM-SHA-256 thật đạt; bản bỏ dấu bị từ chối')
+
+
 if __name__ == '__main__':
     command = sys.argv[1]
     if command == 'login':
@@ -115,3 +158,7 @@ if __name__ == '__main__':
         count()
     elif command == 'restore-test':
         restore_test()
+    elif command == 'pg-set-password':
+        pg_set_password()
+    elif command == 'pg-accent-check':
+        pg_accent_check()

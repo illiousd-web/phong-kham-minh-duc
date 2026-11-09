@@ -108,10 +108,16 @@ function Step-CaiPostgres {
         if ($v -notmatch 'PostgreSQL\) 17\.') { Stop-CaiDat "Đã có PostgreSQL nhưng không phải bản 17 ($v)." @('Liên hệ người hỗ trợ; không gỡ PostgreSQL đang có dữ liệu.') 7 }
         Write-Dat 'Đã có PostgreSQL 17, bỏ qua bước cài.'
         if (-not (Read-EnvFile -Path $P.SuperEnv)['MINHDUC_PG_SUPER_PASSWORD']) {
-            if ($KhongHoi) { Stop-CaiDat 'PostgreSQL 17 đã có sẵn nhưng bộ cài không biết mật khẩu tài khoản postgres.' @('Chạy lại không có tham số -KhongHoi để nhập mật khẩu.') 8 }
-            Write-Thongtin 'PostgreSQL này được cài trước đó. Cần mật khẩu tài khoản "postgres" đã đặt khi cài (nhập sẽ không hiện chữ).'
-            $sec = Read-Host -AsSecureString '  Mật khẩu postgres'
-            $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+            if ($KhongHoi) {
+                # Cài không hỏi (kiểm thử tự động): mật khẩu lấy từ biến môi trường của tiến trình, không qua dòng lệnh.
+                $plain = [string]$env:MINHDUC_PG_SUPER_PASSWORD
+                Remove-Item Env:\MINHDUC_PG_SUPER_PASSWORD -ErrorAction SilentlyContinue
+                if (-not $plain) { Stop-CaiDat 'PostgreSQL 17 đã có sẵn nhưng bộ cài không biết mật khẩu tài khoản postgres.' @('Chạy lại không có tham số -KhongHoi để nhập mật khẩu.') 8 }
+            } else {
+                Write-Thongtin 'PostgreSQL này được cài trước đó. Cần mật khẩu tài khoản "postgres" đã đặt khi cài (nhập sẽ không hiện chữ).'
+                $sec = Read-Host -AsSecureString '  Mật khẩu postgres'
+                $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+            }
             if ($plain -match '[\r\n]') { Stop-CaiDat 'Mật khẩu không hợp lệ.' @() 8 }
             # UTF-8 (không BOM): mật khẩu có chữ có dấu không bị hỏng như khi ghi ASCII.
             [IO.File]::WriteAllText($P.SuperEnv, ('MINHDUC_PG_SUPER_PASSWORD=' + $plain + "`r`n"), (New-Object Text.UTF8Encoding($false)))
@@ -188,7 +194,7 @@ function Step-CauHinhVaCSDL {
             'Nếu buộc phải đổi IP: liên hệ người hỗ trợ (cần tạo lại chứng chỉ và cài lại cho máy trạm).') 15
     }
     if ($report.clinic_env_created) { Write-Dat 'Đã tạo clinic.env với mật khẩu ngẫu nhiên mạnh.' } else { Write-Dat 'Giữ nguyên clinic.env và mật khẩu đang dùng.' }
-    if (@($report.managed_changed).Count -gt 0) { Write-Dat 'Đã chuyển chính sách sao lưu: giữ 7 bản trên máy chủ, 30 bản trên ổ ngoài.' }
+    if (@($report.managed_changed).Count -gt 0) { Write-Dat 'Đã chuyển chính sách sao lưu: giữ 14 bản trên máy chủ (xóa bớt bản cũ chỉ sau lần sao lưu mới đầu tiên đã kiểm).' }
     $script:Origin = $report.origin
     $script:Cidr = $report.cidr
     $dbArgs = @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, '--owner-env', $P.OwnerEnv, '--super-env', $P.SuperEnv, 'ensure')
@@ -283,8 +289,11 @@ function Step-ChungChi {
     # Thư mục chia sẻ chỉ đọc cho máy trạm: ca.crt + bộ cài máy trạm (không có khóa bí mật).
     New-Item -ItemType Directory -Force -Path $P.Share | Out-Null
     Copy-Item -LiteralPath $ca -Destination (Join-Path $P.Share 'ca.crt') -Force
-    foreach ($f in @('CAI_MAY_TRAM.bat', 'CaiMayTram.ps1')) { Copy-Item -LiteralPath (Join-Path $P.Code ('deploy\windows\' + $f)) -Destination (Join-Path $P.Share $f) -Force }
-    Set-Content -LiteralPath (Join-Path $P.Share 'may-chu.txt') -Encoding UTF8 -Value @("DIA_CHI=$($script:Origin)", "VAN_TAY_CA=$fp")
+    # Bộ cài máy trạm chạy được trên Windows 7 SP1: chỉ .bat + .vbs, không cần PowerShell.
+    foreach ($f in @('CAI_MAY_TRAM.bat', 'MayTram.vbs')) { Copy-Item -LiteralPath (Join-Path $P.Code ('deploy\windows\' + $f)) -Destination (Join-Path $P.Share $f) -Force }
+    Remove-Item -LiteralPath (Join-Path $P.Share 'CaiMayTram.ps1') -Force -ErrorAction SilentlyContinue
+    # ASCII không BOM: CAI_MAY_TRAM.bat (cmd.exe trên Windows 7) đọc trực tiếp tệp này.
+    [IO.File]::WriteAllText((Join-Path $P.Share 'may-chu.txt'), ("DIA_CHI=$($script:Origin)`r`nVAN_TAY_CA=$fp`r`n"), (New-Object Text.ASCIIEncoding))
     Set-SecureAcl -Path $P.Share -Directory -Readers @('*S-1-1-0')
     try {
         if (-not (Get-SmbShare -Name $Names.Share -ErrorAction SilentlyContinue)) {
@@ -356,36 +365,43 @@ function Step-TuongLua {
 }
 
 function Step-SaoLuu {
-    Write-Buoc "Bước 11/${Tong}: Lịch sao lưu 20:00 hằng ngày, giữ 7 bản trên máy, 30 bản trên ổ ngoài"
+    Write-Buoc "Bước 11/${Tong}: Lịch sao lưu 20:00 hằng ngày, giữ 14 bản trên máy chủ"
     if (-not (Test-Path -LiteralPath $P.BackupKey)) {
         $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_lan', 'keygen', '--key', $P.BackupKey)
         if (-not $r.Ok) { Stop-CaiDat 'Không tạo được khóa sao lưu.' $r.Output 26 }
         Write-Dat 'Đã tạo khóa mã hóa sao lưu.'
     } else { Write-Dat 'Giữ nguyên khóa sao lưu đang có (không tạo lại).' }
     Set-SecureAcl -Path $P.BackupKey
-    # Ổ ngoài: nhận biết bằng tệp đánh dấu, không phụ thuộc chữ cái ổ đĩa.
-    if (-not (Test-Path -LiteralPath $P.ExternalCfg)) {
-        $letter = $OSaoLuuNgoai
-        if (-not $letter -and -not $KhongHoi) {
-            if (Read-CoKhong 'Có ổ USB hoặc ổ cứng gắn ngoài dùng riêng để chép thêm bản sao lưu không?') {
-                Write-Thongtin 'Cắm ổ vào máy. Các ổ đang thấy:'
-                Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveLetter -ne 'C' -and $_.DriveType -in @('Removable', 'Fixed') } |
-                    ForEach-Object { Write-Thongtin ("  " + $_.DriveLetter + ':  ' + $_.FileSystemLabel + '  (' + [math]::Round($_.SizeRemaining / 1GB, 1) + ' GB trống)') }
-                $letter = (Read-Host '  Gõ chữ cái của ổ (ví dụ E) rồi Enter, để trống nếu bỏ qua').Trim()
+    # Phòng khám đã chốt KHÔNG dùng ổ ngoài. Tính năng giữ ở dạng tùy chọn ẩn: chỉ bật khi
+    # đặt biến môi trường MINHDUC_SAO_LUU_NGOAI=1 trước khi chạy CAI_DAT (mặc định tắt).
+    if ($env:MINHDUC_SAO_LUU_NGOAI -eq '1') {
+        # Ổ ngoài: nhận biết bằng tệp đánh dấu, không phụ thuộc chữ cái ổ đĩa.
+        if (-not (Test-Path -LiteralPath $P.ExternalCfg)) {
+            $letter = $OSaoLuuNgoai
+            if (-not $letter -and -not $KhongHoi) {
+                if (Read-CoKhong 'Có ổ USB hoặc ổ cứng gắn ngoài dùng riêng để chép thêm bản sao lưu không?') {
+                    Write-Thongtin 'Cắm ổ vào máy. Các ổ đang thấy:'
+                    Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveLetter -ne 'C' -and $_.DriveType -in @('Removable', 'Fixed') } |
+                        ForEach-Object { Write-Thongtin ("  " + $_.DriveLetter + ':  ' + $_.FileSystemLabel + '  (' + [math]::Round($_.SizeRemaining / 1GB, 1) + ' GB trống)') }
+                    $letter = (Read-Host '  Gõ chữ cái của ổ (ví dụ E) rồi Enter, để trống nếu bỏ qua').Trim()
+                }
             }
-        }
-        if ($letter) {
-            $letter = $letter.TrimEnd(':', '\').ToUpperInvariant()
-            if ($letter -notmatch '^[D-Z]$' -or -not (Test-Path -LiteralPath ($letter + ':\'))) { Stop-CaiDat "Không thấy ổ $letter`:." @('Cắm ổ, kiểm tra trong This PC rồi chạy lại.') 27 }
-            $id = [guid]::NewGuid().ToString('N')
-            $folder = $letter + ':\MinhDuc-SaoLuu'
-            New-Item -ItemType Directory -Force -Path $folder | Out-Null
-            Set-Content -LiteralPath (Join-Path $folder 'minhduc-backup-target.json') -Encoding UTF8 -Value (@{ id = $id } | ConvertTo-Json)
-            $label = (Get-Volume -DriveLetter $letter).FileSystemLabel
-            Set-Content -LiteralPath $P.ExternalCfg -Encoding UTF8 -Value (@{ id = $id; label = ([string]$label + ' (' + $letter + ':)'); declared_at = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json)
-            Write-Dat "Đã khai báo ổ $letter`: cho bản sao lưu ngoài."
-        } else { Write-Luu 'Chưa khai báo ổ ngoài: bản sao lưu chỉ nằm trên máy này. Nên có ổ ngoài trước khi dùng dữ liệu thật.' }
-    } else { Write-Dat 'Giữ ổ sao lưu ngoài đã khai báo.' }
+            if ($letter) {
+                $letter = $letter.TrimEnd(':', '\').ToUpperInvariant()
+                if ($letter -notmatch '^[D-Z]$' -or -not (Test-Path -LiteralPath ($letter + ':\'))) { Stop-CaiDat "Không thấy ổ $letter`:." @('Cắm ổ, kiểm tra trong This PC rồi chạy lại.') 27 }
+                $id = [guid]::NewGuid().ToString('N')
+                $folder = $letter + ':\MinhDuc-SaoLuu'
+                New-Item -ItemType Directory -Force -Path $folder | Out-Null
+                Set-Content -LiteralPath (Join-Path $folder 'minhduc-backup-target.json') -Encoding UTF8 -Value (@{ id = $id } | ConvertTo-Json)
+                $label = (Get-Volume -DriveLetter $letter).FileSystemLabel
+                Set-Content -LiteralPath $P.ExternalCfg -Encoding UTF8 -Value (@{ id = $id; label = ([string]$label + ' (' + $letter + ':)'); declared_at = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json)
+                Write-Dat "Đã khai báo ổ $letter`: cho bản sao lưu ngoài."
+            } else { Write-Luu 'Chưa khai báo ổ ngoài: bản sao lưu chỉ nằm trên máy này. Nên có ổ ngoài trước khi dùng dữ liệu thật.' }
+        } else { Write-Dat 'Giữ ổ sao lưu ngoài đã khai báo.' }
+        if (Test-Path -LiteralPath $P.ExternalCfg) { Set-EnvValue -Path $P.ClinicEnv -Key 'CLINIC_EXTERNAL_BACKUP' -Value '1' }
+    } else {
+        Write-Luu 'Chỉ sao lưu trên máy chủ (giữ 14 bản), không dùng ổ ngoài. Máy chủ hỏng hoặc bị mất thì mất toàn bộ dữ liệu.'
+    }
     $alert = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) $Names.AlertFile
     $jobArgs = @('-m', 'scripts.with_env', ('"' + $P.ClinicEnv + '"'), 'scripts.backup_job', '--key', ('"' + $P.BackupKey + '"'),
         '--directory', ('"' + $P.Backups + '"'), '--state', ('"' + $P.BackupState + '"'),
@@ -396,7 +412,7 @@ function Step-SaoLuu {
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 3) `
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $Names.BackupTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings `
-        -Description 'Sao luu ma hoa + kiem tra ban sao luu; giu 7 ban tren may, 30 ban tren o ngoai; canh bao chung chi duoi 60 ngay.' -Force | Out-Null
+        -Description 'Sao luu ma hoa; kiem tra ban moi truoc khi xoa ban cu; giu 14 ban tren may chu (toi thieu 3 ban da kiem); canh bao chung chi duoi 60 ngay.' -Force | Out-Null
     Write-Dat 'Đã đặt lịch sao lưu 20:00 hằng ngày (chạy bù nếu máy tắt lúc 20:00).'
     Write-Thongtin 'Chạy sao lưu thử ngay bây giờ...'
     $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 3) -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_job', '--key', $P.BackupKey,

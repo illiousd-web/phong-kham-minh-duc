@@ -39,7 +39,7 @@ def test_write_configs_creates_strong_unique_passwords(tmp_path):
     assert c['CLINIC_ALLOWED_CIDRS'] == '192.168.1.0/24'
     assert c['CLINIC_UPLOAD_DIR'] == 'C:\\ProgramData\\MinhDuc\\attachments'
     assert c['CLINIC_PG_DUMP'] == 'C:\\Program Files\\PostgreSQL\\17\\bin\\pg_dump.exe'
-    assert c['CLINIC_BACKUP_KEEP'] == '7' and c['CLINIC_OFFSITE_KEEP'] == '30'
+    assert c['CLINIC_BACKUP_KEEP'] == '14' and c['CLINIC_OFFSITE_KEEP'] == '30'
     assert c['CLINIC_WORKERS'] == '1' and c['CLINIC_POOL_MAX'] == '4'
     assert app_pw not in json.dumps(report) and owner_pw not in json.dumps(report)
     # owner.env is a full LAN config (migration imports app.config) with the owner URL.
@@ -65,18 +65,18 @@ def _old_installer_files(tmp_path):
     clinic, owner = tmp_path / 'clinic.env', tmp_path / 'owner.env'
     install_env.write_configs(clinic, owner, '192.168.1.10', 24, '/data', '/pg')
     for path in (clinic, owner):
-        path.write_text(path.read_text().replace('CLINIC_BACKUP_KEEP=7', 'CLINIC_BACKUP_KEEP=30'))
+        path.write_text(path.read_text().replace('CLINIC_BACKUP_KEEP=14', 'CLINIC_BACKUP_KEEP=30'))
     return clinic, owner
 
 
-def test_rerun_cai_dat_moves_old_install_to_7_local_30_external_keeping_passwords(tmp_path):
+def test_rerun_cai_dat_moves_old_install_to_14_local_keeping_passwords(tmp_path):
     clinic, owner = _old_installer_files(tmp_path)
     urls = (install_env.read_env(clinic)['CLINIC_DATABASE_URL'], install_env.read_env(owner)['CLINIC_DATABASE_URL'])
     report = install_env.write_configs(clinic, owner, '192.168.1.10', 24, '/data', '/pg')
     assert report['managed_changed'] == ['CLINIC_BACKUP_KEEP'] and report['new_password_roles'] == []
     for path, url in zip((clinic, owner), urls):
         values = install_env.read_env(path)
-        assert values['CLINIC_BACKUP_KEEP'] == '7' and values['CLINIC_OFFSITE_KEEP'] == '30'
+        assert values['CLINIC_BACKUP_KEEP'] == '14' and values['CLINIC_OFFSITE_KEEP'] == '30'
         assert values['CLINIC_DATABASE_URL'] == url
 
 
@@ -90,7 +90,7 @@ def test_cap_nhat_managed_update_changes_only_policy_keys(tmp_path):
         new_lines = [l for l in path.read_text().splitlines() if not l.startswith(('CLINIC_BACKUP_KEEP', 'CLINIC_OFFSITE_KEEP'))]
         assert old_lines == new_lines, 'passwords, comments and other values must be untouched'
         values = install_env.read_env(path)
-        assert values['CLINIC_BACKUP_KEEP'] == '7' and values['CLINIC_OFFSITE_KEEP'] == '30'
+        assert values['CLINIC_BACKUP_KEEP'] == '14' and values['CLINIC_OFFSITE_KEEP'] == '30'
     # Second call: nothing to change, file not rewritten.
     stamp = clinic.stat().st_mtime_ns
     assert install_env.apply_managed(clinic) == [] and clinic.stat().st_mtime_ns == stamp
@@ -290,9 +290,26 @@ def test_batch_files_are_ascii_and_elevate():
     assert {'CAI_DAT.bat', 'CAI_MAY_TRAM.bat', 'CAP_NHAT.bat', 'KIEM_TRA.bat'} <= names
     for path in _windows_files('*.bat'):
         path.read_bytes().decode('ascii')
-    for name in ('CAI_DAT.bat', 'CAI_MAY_TRAM.bat', 'CAP_NHAT.bat', 'KIEM_TRA.bat'):
+    for name in ('CAI_DAT.bat', 'CAP_NHAT.bat', 'KIEM_TRA.bat', 'GIA_HAN_CHUNG_CHI.bat'):
         text = (WIN / name).read_text()
         assert 'RunAs' in text and '-ExecutionPolicy Bypass' in text
+
+
+def test_workstation_installer_runs_on_windows7_without_powershell():
+    """Windows 7 SP1 workstations: only cmd.exe built-ins, certutil and cscript."""
+    bat = (WIN / 'CAI_MAY_TRAM.bat').read_text()
+    vbs = (WIN / 'MayTram.vbs').read_bytes()
+    vbs.decode('ascii')  # cscript reads ANSI; Vietnamese name is built with ChrW
+    assert 'powershell' not in bat.lower() and 'pwsh' not in bat.lower()
+    assert 'certutil -addstore -f Root' in bat and '-user' not in bat  # local machine Trusted Root
+    assert 'certutil -hashfile' in bat and 'SHA256' in bat and 'VAN_TAY_CA=' in bat
+    assert 'MayTram.vbs" elevate' in bat and 'MayTram.vbs" shortcut' in bat
+    text = vbs.decode('ascii')
+    assert '"runas"' in text and '--app=' in text and 'chrome.exe' in text and 'msedge.exe' in text
+    assert 'ChrW(272) & ChrW(7913)' in text  # "Đứ" in "Phòng khám Minh Đức"
+    cai_dat = (WIN / 'CaiDat.ps1').read_text(encoding='utf-8-sig')
+    assert "'MayTram.vbs'" in cai_dat and 'CaiMayTram.ps1' not in cai_dat.replace("'CaiMayTram.ps1') -Force", '')
+    assert 'ASCIIEncoding' in cai_dat.split('may-chu.txt')[1][:200]
 
 
 def test_pinned_downloads_have_sha256_and_https():
@@ -406,8 +423,9 @@ def test_renew_keeps_ca_and_names_new_key_and_rollback(tmp_path):
     install_cert.rollback(tls, result['stamp'])
     assert (tls / 'server.crt').read_bytes() == old_cert and (tls / 'server.key').read_bytes() == old_key
     assert (tls / f"server.crt.loi-{result['stamp']}").exists()
-    with pytest.raises(ValueError):
-        install_cert.rollback(tls, result['stamp'])
+    # Rolling back again is harmless: nothing saved any more, live pair untouched.
+    assert install_cert.rollback(tls, result['stamp']) == {'restored': []}
+    assert (tls / 'server.crt').read_bytes() == old_cert
 
 
 def test_renew_refuses_foreign_ca_key(tmp_path):
@@ -473,7 +491,7 @@ def test_gia_han_bat_exists_elevates_and_ps_rolls_back():
     text = (WIN / 'GIA_HAN_CHUNG_CHI.bat').read_text()
     assert 'RunAs' in text and 'GiaHanChungChi.ps1' in text
     ps = (WIN / 'GiaHanChungChi.ps1').read_text(encoding='utf-8-sig')
-    for needle in ("'renew'", "'rollback'", "'served'", 'Restart-Service', 'Wait-Https'):
+    for needle in ("'prepare'", "'commit'", "'rollback'", "'served'", 'Restart-Service', 'Wait-Https'):
         assert needle in ps, needle
 
 
@@ -517,4 +535,168 @@ def test_renew_writes_new_files_inside_tls_folder_not_a_private_temp_dir(tmp_pat
     monkeypatch.setattr(tempfile, 'TemporaryDirectory', forbidden)
     monkeypatch.setattr(tempfile, 'mkdtemp', forbidden)
     install_cert.renew(tmp_path / 'tls', tmp_path / 'ca.key')
-    assert not list((tmp_path / 'tls').glob('.server.*'))
+    assert not list((tmp_path / 'tls').glob('server.*.moi-*'))
+
+
+# ---------- Máy trạm Windows 7 / Chrome 109: chứng chỉ theo chính sách Chrome ----------
+
+def test_certificates_meet_chrome_policy_for_new_and_renewed(tmp_path):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
+    from scripts import install_cert
+    tls = tmp_path / 'tls'
+    install_cert.create('192.168.1.10', tls, tmp_path / 'ca.key')
+    paths = [tls / 'server.crt']
+    install_cert.renew(tls, tmp_path / 'ca.key')
+    paths.append(tls / 'server.crt')
+    for path in paths:
+        cert = _x509(path)
+        assert (cert.not_valid_after_utc - cert.not_valid_before_utc).days <= 398  # Chrome maximum lifetime
+        assert isinstance(cert.public_key(), rsa.RSAPublicKey) and cert.public_key().key_size >= 2048
+        assert isinstance(cert.signature_hash_algorithm, hashes.SHA256)
+        ext = cert.extensions
+        assert '192.168.1.10' in [str(a) for a in ext.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value.get_values_for_type(x509.IPAddress)]
+        assert ExtendedKeyUsageOID.SERVER_AUTH in ext.get_extension_for_oid(ExtensionOID.EXTENDED_KEY_USAGE).value
+        assert ext.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS).value.ca is False
+    ca = _x509(tls / 'ca.crt')
+    assert ca.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS).value.ca is True
+    assert ca.extensions.get_extension_for_oid(ExtensionOID.KEY_USAGE).value.key_cert_sign is True
+
+
+# ---------- Sao lưu 14 bản: chỉ xóa sau khi bản mới đã kiểm, giữ tối thiểu 3 bản đã kiểm ----------
+
+def _items(spec):
+    """spec newest first: list of (size, verified)."""
+    return [{'name': f'b{i:02d}', 'size': size, 'verified': verified, 'path': None, 'mtime': 100 - i}
+            for i, (size, verified) in enumerate(spec)]
+
+
+def test_plan_prune_keeps_count_and_never_the_newest():
+    items = _items([(1, True)] * 20)
+    deleted, over = backup_job.plan_prune(items, keep=14, budget_bytes=10 ** 9)
+    assert [d['name'] for d in deleted] == [f'b{i:02d}' for i in range(19, 13, -1)] and not over
+
+
+def test_plan_prune_budget_deletes_oldest_but_keeps_three_verified():
+    items = _items([(10, True)] * 6)
+    deleted, over = backup_job.plan_prune(items, keep=14, budget_bytes=25)
+    assert len(deleted) == 3 and over, 'stop at 3 verified even though still over budget'
+    assert [d['name'] for d in deleted] == ['b05', 'b04', 'b03']
+
+
+def test_plan_prune_unverified_legacy_go_first_verified_protected():
+    # newest verified, then 2 verified, then 5 unverified legacy (oldest)
+    items = _items([(10, True), (10, True), (10, True)] + [(10, False)] * 5)
+    deleted, over = backup_job.plan_prune(items, keep=14, budget_bytes=30)
+    assert {d['name'] for d in deleted} == {'b03', 'b04', 'b05', 'b06', 'b07'} and not over
+    # Only the new one is verified and budget is tiny: legacy may go, the new one stays.
+    deleted, over = backup_job.plan_prune(_items([(10, True), (10, False), (10, False)]), keep=14, budget_bytes=5)
+    assert [d['name'] for d in deleted] == ['b02', 'b01'] and over
+
+
+def test_warnings_for_over_budget_and_unreadable_certificate():
+    ok = {'last_success_utc': (NOW - timedelta(hours=1)).isoformat()}
+    warnings = backup_job.evaluate({**ok, 'over_budget': True}, None, NOW)
+    assert len(warnings) == 1 and 'ngân sách' in warnings[0] and '3 bản' in warnings[0]
+    warnings = backup_job.evaluate({**ok, 'cert_unreadable': True, 'cert_days_left': None}, None, NOW)
+    assert len(warnings) == 1 and 'Không đọc được chứng chỉ' in warnings[0]
+
+
+def test_backup_job_reports_missing_certificate(tmp_path, monkeypatch):
+    """Certificate missing must warn like an expiring one (state flag set by run())."""
+    assert backup_job.cert_days_left(tmp_path / 'khong-co.crt', NOW) is None
+    (tmp_path / 'hong.crt').write_text('not a certificate')
+    assert backup_job.cert_days_left(tmp_path / 'hong.crt', NOW) is None
+
+
+def test_external_drive_is_hidden_opt_in(monkeypatch):
+    monkeypatch.delenv('CLINIC_EXTERNAL_BACKUP', raising=False)
+    assert backup_job.external_enabled({'id': 'x'}) is False
+    monkeypatch.setenv('CLINIC_EXTERNAL_BACKUP', '1')
+    assert backup_job.external_enabled({'id': 'x'}) is True and backup_job.external_enabled(None) is False
+    cai_dat = (WIN / 'CaiDat.ps1').read_text(encoding='utf-8-sig')
+    question = cai_dat.index('Có ổ USB hoặc ổ cứng gắn ngoài')
+    assert cai_dat.rfind("MINHDUC_SAO_LUU_NGOAI -eq '1'", 0, question) != -1, 'question only behind the hidden option'
+
+
+
+# ---------- Gia hạn: từng giai đoạn và kiểm thử gây lỗi ----------
+
+def _tls(tmp_path):
+    from scripts import install_cert
+    tls, ca_key = tmp_path / 'tls', tmp_path / 'ca.key'
+    install_cert.create('192.168.1.10', tls, ca_key)
+    return install_cert, tls, ca_key, (tls / 'server.crt').read_bytes(), (tls / 'server.key').read_bytes()
+
+
+def test_prepare_writes_temp_pair_next_to_old_files_without_touching_live(tmp_path):
+    install_cert, tls, ca_key, crt, key = _tls(tmp_path)
+    result = install_cert.prepare(tls, ca_key, '20261109000000')
+    assert sorted(Path(f).name for f in result['files']) == ['server.crt.moi-20261109000000', 'server.key.moi-20261109000000']
+    assert all(Path(f).parent == tls for f in result['files'])
+    assert (tls / 'server.crt').read_bytes() == crt and (tls / 'server.key').read_bytes() == key
+    assert install_cert.verify_pair(tls, '20261109000000') == {'verified': True}
+
+
+def test_fault_key_not_readable_aborts_before_swap(tmp_path, monkeypatch):
+    """Lỗi 1: không đọc được khóa mới -> không thay gì, dọn tệp tạm."""
+    import ssl
+    install_cert, tls, ca_key, crt, key = _tls(tmp_path)
+    def denied(self, *args, **kwargs):
+        raise PermissionError(13, 'Permission denied (gia lap)')
+    monkeypatch.setattr(ssl.SSLContext, 'load_cert_chain', denied)
+    with pytest.raises(PermissionError):
+        install_cert.renew(tls, ca_key, stamp='20261109000001')
+    assert (tls / 'server.crt').read_bytes() == crt and (tls / 'server.key').read_bytes() == key
+    assert not list(tls.glob('*.moi-*')) and not list(tls.glob('*.cu-*'))
+    # The CLI stage also reports it as an error (exit 2), not a traceback.
+    install_cert.prepare(tls, ca_key, '20261109000002')
+    assert install_cert.main(['verify', '--tls-dir', str(tls), '--stamp', '20261109000002']) == 2
+
+
+def test_fault_midway_swap_restores_exact_old_pair(tmp_path, monkeypatch):
+    """Lỗi 2: hỏng giữa lúc thay (chứng chỉ mới + khóa cũ) -> khôi phục đúng từng byte."""
+    install_cert, tls, ca_key, crt, key = _tls(tmp_path)
+    stamp = '20261109000003'
+    install_cert.prepare(tls, ca_key, stamp)
+    monkeypatch.setenv('MINHDUC_TEST_LOI', 'loi-giua-thay')
+    with pytest.raises(OSError, match='giữa lúc thay'):
+        install_cert.commit(tls, stamp)
+    assert (tls / 'server.crt').read_bytes() != crt and (tls / 'server.key').read_bytes() == key  # inconsistent state
+    monkeypatch.delenv('MINHDUC_TEST_LOI')
+    assert install_cert.rollback(tls, stamp) == {'restored': ['server.crt']}
+    assert (tls / 'server.crt').read_bytes() == crt and (tls / 'server.key').read_bytes() == key
+    assert not list(tls.glob('*.moi-*'))
+
+
+def test_fault_rollback_failure_is_reported_and_retry_works(tmp_path, monkeypatch):
+    """Lỗi 3: khôi phục thất bại -> báo lỗi (không im lặng); chạy lại khôi phục được."""
+    install_cert, tls, ca_key, crt, key = _tls(tmp_path)
+    stamp = '20261109000004'
+    install_cert.prepare(tls, ca_key, stamp)
+    install_cert.commit(tls, stamp)
+    monkeypatch.setenv('MINHDUC_TEST_LOI', 'khoi-phuc-loi')
+    assert install_cert.main(['rollback', '--tls-dir', str(tls), '--stamp', stamp]) == 2
+    assert (tls / 'server.crt').read_bytes() != crt
+    monkeypatch.delenv('MINHDUC_TEST_LOI')
+    assert install_cert.main(['rollback', '--tls-dir', str(tls), '--stamp', stamp]) == 0
+    assert (tls / 'server.crt').read_bytes() == crt and (tls / 'server.key').read_bytes() == key
+
+
+def test_rollback_before_commit_only_cleans_up(tmp_path):
+    install_cert, tls, ca_key, crt, key = _tls(tmp_path)
+    install_cert.prepare(tls, ca_key, '20261109000005')
+    assert install_cert.rollback(tls, '20261109000005') == {'restored': []}
+    assert (tls / 'server.crt').read_bytes() == crt and not list(tls.glob('*.moi-*'))
+
+
+def test_gia_han_script_reports_restore_only_after_https_check():
+    ps = (WIN / 'GiaHanChungChi.ps1').read_text(encoding='utf-8-sig')
+    for needle in ("'prepare'", "'verify'", "'commit'", "'rollback'", "'served'", 'Test-AccountCanRead', 'MINHDUC_TEST_LOI'):
+        assert needle in ps, needle
+    restored_banner = ps.index('ĐÃ TRẢ CHỨNG CHỈ CŨ')
+    assert ps.rfind('$restoreOk', 0, restored_banner) != -1, 'banner must depend on the post-restore HTTPS check'
+    assert 'KHÔI PHỤC CHỨNG CHỈ CŨ THẤT BẠI' in ps
+    assert ps.index('$stamp =') < ps.index("'prepare'"), 'stamp exists before anything changes'
