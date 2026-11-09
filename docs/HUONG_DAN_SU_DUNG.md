@@ -6,19 +6,21 @@ Bản thử nghiệm. Chỉ nhập dữ liệu giả lập. Chưa dùng cho bệ
 
 - Mỗi người dùng tài khoản riêng. Không dùng chung mật khẩu.
 - Sau khi đăng nhập, phần mềm mở thẳng màn hình công việc của bạn.
-- Menu bên trái (trên điện thoại là hàng trên cùng) chỉ có việc của bạn. Số màu cam là số việc đang chờ. Số này cập nhật khi bạn bấm menu hoặc lưu; muốn xem việc mới thì bấm lại menu.
+- Menu bên trái (trên điện thoại là hàng trên cùng) chỉ có việc của bạn. Số màu cam là số việc đang chờ. Số này tự cập nhật mỗi phút khi trang đang mở trên màn hình. Khi hàng chờ của bạn có thêm việc, đầu trang hiện dòng báo; bấm **Tải lại hàng chờ** để xem. Phần mềm không tự vẽ lại trang để khỏi mất chữ bạn đang gõ.
+- Việc tự cập nhật số đếm không tính là thao tác: không bấm gì trong 20 phút thì vẫn tự đăng xuất.
 - Mỗi màn hình bắt đầu bằng **hàng chờ**. Bấm vào một dòng để mở. Làm lần lượt theo các bước có số 1, 2, 3.
 - Sau mỗi lần bấm lưu, màn hình tự tải lại rồi mới hiện thông báo ở góc dưới.
 - Nút **Đổi mật khẩu** và **Đăng xuất** ở góc trên bên phải.
 - Phiên tự đóng sau 20 phút không dùng.
 
-## Lễ tân — menu Tiếp đón
+## Lễ tân — menu Tiếp đón và Bảng giá
 
 1. Gõ tên, mã hoặc số điện thoại vào ô tìm, bấm **Tìm**.
 2. Thấy người bệnh thì bấm **Chọn**. Chưa có thì mở **Thêm bệnh nhân mới**, nhập đủ rồi bấm **Lưu bệnh nhân mới**. Người vừa lưu được chọn sẵn.
 3. Ở bước 2, chọn bác sĩ và dịch vụ khám, bấm **Tạo lượt khám**.
 4. Bảng **Lượt đang chờ** có nút tải phiếu tiếp đón PDF/Word.
 5. Đặt lịch hẹn ở mục **Lịch hẹn** cuối trang.
+6. Menu **Bảng giá** chỉ để xem giá dịch vụ, báo giá cho người bệnh. Gõ vài chữ để lọc. Lễ tân không xem bảng kê tiền của từng lượt; người kiêm thu ngân dùng tài khoản có cả hai vai trò.
 
 ## Bác sĩ — menu Khám bệnh
 
@@ -85,7 +87,9 @@ Có bốn thẻ:
   - Phụ lục đính chính: mặc định **bật**.
   - Thuốc kiểm soát đặc biệt: mặc định **bật**.
 
-Tắt chỉ ẩn chức năng khỏi màn hình. Quyền kiểm tra ở máy chủ không đổi, dữ liệu cũ giữ nguyên. Người khác thấy thay đổi khi bấm lại menu hoặc đăng nhập lại. Cài đặt lưu trong tệp `ui_settings.json` ở thư mục dữ liệu của máy chủ (`CLINIC_DATA_DIR`). Tệp này **không** nằm trong bản sao lưu CSDL; sau khi cài lại máy, vào Cài đặt kiểm tra lại.
+Tắt chỉ ẩn chức năng khỏi màn hình. Quyền kiểm tra ở máy chủ không đổi, dữ liệu cũ giữ nguyên. Người khác thấy thay đổi khi bấm lại menu hoặc đăng nhập lại.
+
+Cài đặt lưu trong tệp `ui_settings.json`, cạnh thư mục tệp đính kèm (thường là `CLINIC_DATA_DIR`). Tệp này nằm trong bản sao lưu và được khôi phục cùng dữ liệu. Tệp thiếu hoặc hỏng thì phần mềm dùng giá trị mặc định, ghi cảnh báo vào nhật ký máy chủ, và màn hình Cài đặt hiện dòng báo; bấm **Lưu cài đặt** để ghi lại tệp.
 
 ## Thuốc kiểm soát đặc biệt (khi đang bật)
 

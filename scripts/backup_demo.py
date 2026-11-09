@@ -46,6 +46,9 @@ def create(out:Path|None=None)->Path:
                 if file.is_file() and not file.is_symlink():
                     rel=file.relative_to(UPLOADS)
                     if '..' not in rel.parts:items['attachments/'+rel.as_posix()]=file.read_bytes()
+        # Cài đặt giao diện (bật/tắt chức năng phụ) nằm cạnh thư mục tệp đính kèm.
+        settings=Path(os.environ.get('CLINIC_UI_SETTINGS',str(UPLOADS.parent/'ui_settings.json')))
+        if settings.is_file():items['ui_settings.json']=settings.read_bytes()
         manifest={'created_at_utc':datetime.now(timezone.utc).isoformat(),
                   'application':'MinhDuc local demo','archive_sha256_by_path':{k:digest(v) for k,v in items.items()}}
         with zipfile.ZipFile(out,'x',compression=zipfile.ZIP_DEFLATED,compresslevel=8) as z:

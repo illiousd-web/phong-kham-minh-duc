@@ -6,7 +6,7 @@ function requestId(){if(globalThis.crypto?.randomUUID)return globalThis.crypto.r
 const roles={controlled_prescriber:'Bác sĩ thuốc kiểm soát',controlled_pharmacy:'Dược kiểm soát',controlled_reviewer:'Duyệt kiểm soát',admin:'Quản trị',manager:'Quản lý',reception:'Lễ tân',doctor:'Bác sĩ',technician:'Kỹ thuật viên',nurse:'Điều dưỡng',pharmacy:'Dược',cashier:'Thu ngân'};
 // Mỗi vai trò chỉ thấy menu công việc của mình; mỗi menu là một màn hình bắt đầu bằng hàng chờ.
 const menus={
- reception:[['reception','Tiếp đón']],
+ reception:[['reception','Tiếp đón'],['prices','Bảng giá']],
  doctor:[['doctor','Khám bệnh']],
  nurse:[['nurse','Điều dưỡng']],
  technician:[['lab','Cận lâm sàng']],
@@ -112,27 +112,30 @@ function viewInit(){if(!auth){renderLogin();return}const r=role();const m=pagesF
  $('navigation').innerHTML=switcher+(menus[r]||[]).map(([id,label])=>`<button class="navbutton" data-action="navigate" data-page="${esc(id)}" aria-current="${active===id?'page':'false'}"><span>${esc(label)}</span><span class="badge hidden" data-count="${esc(id)}"></span></button>`).join('');
  if($('role_switch'))$('role_switch').value=r;}
 async function loadUi(){try{ui=await api('/ui-settings');uiLoaded=true}catch(e){uiLoaded=false}}
-// Số việc đang chờ của vai trò, hiện trên menu. Chỉ gọi API mà vai trò đó vốn được phép đọc.
-async function queueCount(page){
- if(page==='reception')return (await api('/visits')).filter(v=>v.status==='waiting').length;
- if(page==='doctor'||page==='nurse')return (await api('/visits')).filter(OPEN).length;
- if(page==='lab')return (await api('/orders')).filter(o=>o.status==='ordered').length;
- if(page==='pharmacy')return (await api('/prescriptions')).filter(x=>x.status==='draft').length;
- if(page==='cashier')return (await api('/dues')).filter(d=>d.charged-d.paid>0).length;
- if(page==='manager')return (await pendingApprovals()).total;
- return null}
-let countEpoch=0;
-async function refreshCounts(){if(!auth)return;const epoch=++countEpoch;for(const el of document.querySelectorAll('[data-count]')){try{const n=await queueCount(el.dataset.count);if(epoch!==countEpoch)return;el.textContent=n==null?'':String(n);el.classList.toggle('hidden',!n);el.setAttribute('aria-label',n?n+' việc đang chờ':'')}catch(e){}}}
-// Không đếm chạy nền theo giờ: mỗi lệnh API gia hạn phiên, chạy nền sẽ làm mất tự đăng xuất sau 20 phút không dùng.
-// Số đếm cập nhật mỗi khi người dùng bấm menu hoặc lưu.
+// Số việc đang chờ trên menu. /api/queue-counts chỉ trả con số theo vai trò và KHÔNG gia hạn phiên,
+// nên hỏi định kỳ không làm mất tự đăng xuất sau 20 phút không thao tác.
+const lastCounts={};let countEpoch=0;
+async function refreshCounts(){if(!auth)return;const epoch=++countEpoch;let counts;
+ try{counts=await api('/queue-counts')}catch(e){return}
+ if(epoch!==countEpoch||!auth)return;
+ for(const el of document.querySelectorAll('[data-count]')){const page=el.dataset.count,n=counts[page];if(n==null)continue;
+  el.textContent=String(n);el.classList.toggle('hidden',!n);el.setAttribute('aria-label',n?n+' việc đang chờ':'');
+  // Hàng chờ của màn hình đang mở có thêm việc: báo ngay trên màn hình, không tự vẽ lại để khỏi mất chữ đang gõ.
+  const before=lastCounts[page];
+  if(page===active&&before!=null&&n>before&&$('workspace').getAttribute('aria-busy')==='false'&&!$('queue-news'))$('workspace').insertAdjacentHTML('afterbegin',`<div id="queue-news" class="queue-news" role="status"><span>Hàng chờ có thêm ${n-before} việc mới.</span><button type="button" class="btn smallbtn" data-action="navigate" data-page="${esc(page)}">Tải lại hàng chờ</button></div>`);
+  lastCounts[page]=n}}
+const COUNT_EVERY_MS=60000;let countTimer=null;
+function scheduleCounts(){clearInterval(countTimer);countTimer=setInterval(()=>{if(auth&&!document.hidden)refreshCounts()},COUNT_EVERY_MS)}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&auth)refreshCounts()});
+scheduleCounts();
 let renderEpoch=0;
-const SCREENS={reception:receptionScreen,doctor:doctorScreen,nurse:nurseScreen,lab:labScreen,pharmacy:pharmacyScreen,cashier:cashierScreen,manager:managerScreen,admin:adminScreen,settings:settingsScreen,password:passwordPage};
+const SCREENS={reception:receptionScreen,prices:pricesScreen,doctor:doctorScreen,nurse:nurseScreen,lab:labScreen,pharmacy:pharmacyScreen,cashier:cashierScreen,manager:managerScreen,admin:adminScreen,settings:settingsScreen,password:passwordPage};
 async function render(){if(!auth){renderLogin();return}viewInit();const page=active,epoch=++renderEpoch;$('workspace').setAttribute('aria-busy','true');$('workspace').dataset.page=page;$('workspace').innerHTML=card('Đang tải dữ liệu ...');try{
  if(!uiLoaded)await loadUi();
  const out=await SCREENS[page]();if(epoch!==renderEpoch)return;
  const html=typeof out==='string'?out:out.html;$('workspace').innerHTML=html;labelTables($('workspace'));if(out&&out.after)out.after();
  }catch(e){if(epoch!==renderEpoch)return;$('workspace').innerHTML=card(`<div class="empty">Không thể tải trang: ${esc(e.message)}</div>`)}finally{if(epoch===renderEpoch){$('workspace').setAttribute('aria-busy','false');refreshCounts()}}}
-function renderLogin(){auth=null;uiLoaded=false;$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');$('change-password').classList.add('hidden');$('workspace').setAttribute('aria-busy','false');
+function renderLogin(){auth=null;uiLoaded=false;for(const k in lastCounts)delete lastCounts[k];$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');$('change-password').classList.add('hidden');$('workspace').setAttribute('aria-busy','false');
  const users=[['letan','Lễ tân'],['bs_noi','Bác sĩ Nội'],['bs_san','Bác sĩ Sản'],['kythuat','Kỹ thuật viên'],['duoc','Nhân viên dược'],['thungan','Thu ngân'],['quanly','Quản lý'],['quantri','Quản trị viên'],['dieuduong','Điều dưỡng']];
  $('workspace').innerHTML=card(`<form data-form="login" class="fields">${serverMode==='lan'?field('Tài khoản nhân viên','username','text','',true):selectField('Tài khoản mô phỏng','username',users)}${field('Mật khẩu','password','password','',true)}<div class="field full"><button class="btn" type="submit">Đăng nhập</button><p class="hint">${serverMode==='lan'?'Dùng tài khoản riêng do quản trị cấp. Phiên kết thúc sau 20 phút không hoạt động hoặc tối đa 8 giờ.':'Nhập mật khẩu đã chọn khi khởi động bản demo cục bộ.'}</p></div></form>`,'Đăng nhập theo vai trò');}
 
@@ -154,6 +157,9 @@ async function receptionScreen(){
   card(queueHtml,`Lượt đang chờ (${waiting.length})`)+details('Lịch hẹn',apptForm),
   after(){if(chosen&&$('patient_id'))$('patient_id').value=String(chosen.id);const ap=document.querySelector('[data-form="appointment"] [name="patient_id"]');if(ap&&chosen)ap.value=String(chosen.id)}}}
 
+// Bảng giá dịch vụ chỉ đọc, để lễ tân báo giá cho người bệnh.
+async function pricesScreen(){const list=await api('/services');
+ return card(`<div class="searchbar"><input id="price-filter" placeholder="Gõ tên hoặc mã dịch vụ để lọc" aria-label="Lọc bảng giá"></div>`+t(list.map(x=>`<tr data-search="${esc(((x.code||'')+' '+x.name).toLowerCase())}"><td>${esc(x.code||'')}</td><td>${esc(x.name)}</td><td class="price">${money(x.price)}</td></tr>`),['Mã','Dịch vụ','Giá'])+'<p class="hint">Chỉ xem. Giá do quản lý cập nhật trong menu Quản lý › Danh mục.</p>',`Bảng giá dịch vụ (${list.length})`)}
 // ---------- Bác sĩ: hàng chờ → phiếu khám, chỉ định, đơn thuốc, hoàn tất ----------
 function rxItemRow(meds){return `<div class="rx-line fields">${selectField('Thuốc trong danh mục','medicine_id',meds.map(x=>[x.id,`${x.name} (${x.base_unit})`]))}${selectField('Đơn vị kê','unit_id',[['','Đơn vị cơ sở'],...(meds[0]?.units||[]).map(u=>[u.id,u.name+' = '+u.base_factor+' đơn vị cơ sở'])])}${field('Số lượng','quantity','number','1',true)}${field('Cách dùng','directions','text','Ví dụ: uống sau ăn')}<div class="wide"><button class="ghost smallbtn" type="button" data-action="remove-rx-row">Xóa dòng</button></div></div>`}
 function prescribable(meds){return meds.filter(x=>!x.controlled||(ui.controlled_drugs&&cap('controlled_prescriber')))}
@@ -316,7 +322,8 @@ async function adminScreen(){
  details('Đặt lại mật khẩu',`<form data-form="account-reset" class="fields">${selectField('Nhân viên','uid',users.map(u=>[u.id,u.full_name]))}${field('Mật khẩu mới (ít nhất 12 ký tự)','password','password','',true)}<div class="wide"><button class="btn">Đặt lại mật khẩu</button></div></form>`)}
 const SETTINGS=[['advance_payment','Ứng trước tiền','Thu ngân nhận tiền trước khi có chỉ định hoặc cấp thuốc.'],['addendum','Phụ lục đính chính','Bác sĩ bổ sung hồ sơ đã khóa, quản lý duyệt.'],['controlled_drugs','Thuốc kiểm soát đặc biệt','Kê, duyệt, nhập, cấp và sổ theo dõi thuốc kiểm soát.']];
 async function settingsScreen(){await loadUi();
- return card(`<form data-form="ui-settings" class="settings">${SETTINGS.map(([k,label,hint])=>`<label class="switch"><input type="checkbox" name="${k}" ${ui[k]?'checked':''}><span><b>${esc(label)}</b><small>${esc(hint)}</small></span></label>`).join('')}<button class="btn">Lưu cài đặt</button><p class="hint">Tắt chỉ ẩn chức năng khỏi màn hình của mọi người. Quyền trên máy chủ không đổi; dữ liệu cũ vẫn giữ nguyên.</p></form>`,'Chức năng phụ')}
+ const warn=ui.source&&ui.source!=='file'?`<div class="notice">${ui.source==='missing'?'Chưa có tệp cài đặt trên máy chủ':'Tệp cài đặt trên máy chủ bị hỏng'}: đang dùng giá trị mặc định. Kiểm tra rồi bấm Lưu cài đặt để ghi lại.</div>`:'';
+ return warn+card(`<form data-form="ui-settings" class="settings">${SETTINGS.map(([k,label,hint])=>`<label class="switch"><input type="checkbox" name="${k}" ${ui[k]?'checked':''}><span><b>${esc(label)}</b><small>${esc(hint)}</small></span></label>`).join('')}<button class="btn">Lưu cài đặt</button><p class="hint">Tắt chỉ ẩn chức năng khỏi màn hình của mọi người. Quyền trên máy chủ không đổi; dữ liệu cũ vẫn giữ nguyên.</p></form>`,'Chức năng phụ')}
 function passwordPage(){return card(`<form data-form="password" class="fields">${field('Mật khẩu hiện tại','current_password','password','',true)}${field('Mật khẩu mới (ít nhất 12 ký tự)','new_password','password','',true)}<div class="wide"><button class="btn">Đổi mật khẩu và đăng xuất các phiên</button></div></form>`,'Đổi mật khẩu cá nhân')}
 
 // ---------- Biểu mẫu, sinh hiệu ----------
@@ -412,6 +419,7 @@ document.addEventListener('change',async ev=>{const el=ev.target;
  }catch(e){notify(e.message,true)}});
 // Tự chèn dấu / khi gõ ngày; cập nhật cảnh báo sinh hiệu khi gõ.
 document.addEventListener('input',ev=>{const el=ev.target;
+ if(el.id==='price-filter'){const q=el.value.trim().toLowerCase();document.querySelectorAll('tr[data-search]').forEach(tr=>tr.classList.toggle('hidden',!!q&&!tr.dataset.search.includes(q)));return}
  if(el.classList?.contains('date-vn')&&ev.inputType!=='deleteContentBackward'){const d=el.value.replace(/[^\d]/g,'').slice(0,8);if(/^\d+$/.test(el.value.replace(/\//g,''))){el.value=d.length>4?`${d.slice(0,2)}/${d.slice(2,4)}/${d.slice(4)}`:d.length>2?`${d.slice(0,2)}/${d.slice(2)}`:d}}
  if(el.id?.startsWith('v_'))vitalsFlags();});
 $('logout').addEventListener('click',async()=>{try{await api('/logout',{method:'POST'})}catch{}sessionStorage.removeItem('md_token');auth=null;selectedRole=null;renderLogin()});

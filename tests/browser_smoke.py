@@ -9,7 +9,7 @@ from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 EVIDENCE=ROOT/'test_evidence';EVIDENCE.mkdir(exist_ok=True)
-env=os.environ.copy();env['DEMO_PASSWORD']=secrets.token_urlsafe(32);env['CLINIC_DB_PATH']=str(Path(tempfile.mkdtemp(prefix='md_chromium_'))/'demo.sqlite3');env['CLINIC_UPLOAD_DIR']=str(Path(tempfile.mkdtemp(prefix='md_upload_')))
+env=os.environ.copy();env['DEMO_PASSWORD']=secrets.token_urlsafe(32);env['CLINIC_DB_PATH']=str(Path(tempfile.mkdtemp(prefix='md_chromium_'))/'demo.sqlite3');env['CLINIC_UPLOAD_DIR']=str(Path(tempfile.mkdtemp(prefix='md_upload_'))/'attachments')
 os.environ.update({k:env[k] for k in ('CLINIC_DB_PATH','CLINIC_UPLOAD_DIR','DEMO_PASSWORD')})
 from fastapi.testclient import TestClient
 from app.main import app

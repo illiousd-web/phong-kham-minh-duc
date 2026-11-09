@@ -120,7 +120,7 @@ async def security_headers(request:Request,call_next):
     response=await call_next(request)
     if LAN:
         response.headers['Strict-Transport-Security']='max-age=31536000'
-        if response.status_code != 503 and request.url.path.startswith('/api/') and request.url.path not in ('/api/health','/api/login','/api/audit'):
+        if response.status_code != 503 and request.url.path.startswith('/api/') and request.url.path not in ('/api/health','/api/login','/api/audit','/api/queue-counts'):
             token = request.cookies.get('__Host-clinic', '')
             if token:
                 try:
@@ -981,7 +981,10 @@ install_workflows(app, db, principal, require, audit, visit_access, NOW)
 from .workflows_v050 import install_v050
 install_v050(app,db,principal,require,audit,visit_access,NOW)
 from .ui_settings import install_ui_settings
-install_ui_settings(app,db,principal,require,audit,DATA if LAN else DB.parent)
+install_ui_settings(app,db,principal,require,audit,FILES)
+from .ui_settings import settings_path, read_settings
+from .queue_counts import install_queue_counts
+install_queue_counts(app,principal.peek,lambda:read_settings(settings_path(FILES)))
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse

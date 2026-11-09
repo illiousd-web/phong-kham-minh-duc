@@ -64,14 +64,23 @@ def test_real_https_three_browser_roles_and_pdf():
                     assert page.evaluate("sessionStorage.getItem('md_token')") is None
                     assert '__Host-clinic=' not in page.evaluate('document.cookie')
                 # Mỗi vai trò vào thẳng màn hình công việc, chỉ thấy menu của mình, không còn menu mang số phiên bản.
-                expected={'reception':['reception'],'doctor':['doctor'],'cashier':['cashier'],'technician':['lab'],'pharmacy':['pharmacy'],'admin':['admin','settings']}
+                expected={'reception':['reception','prices'],'doctor':['doctor'],'cashier':['cashier'],'technician':['lab'],'pharmacy':['pharmacy'],'admin':['admin','settings']}
                 for role,page in pages.items():
                     settle(page)
                     nav=page.locator('#navigation [data-action="navigate"]')
                     assert [nav.nth(i).get_attribute('data-page') for i in range(nav.count())]==expected[role]
                     assert 'v0.5' not in page.locator('#navigation').inner_text() and 'Quy trình' not in page.locator('#navigation').inner_text()
                     expect(page.locator('#workspace')).to_have_attribute('data-page',expected[role][0])
+                # Bác sĩ đang mở màn hình khám, chưa bấm gì thêm.
+                d=go(pages['doctor'],'doctor')
                 r=pages['reception']
+                # Lễ tân xem bảng giá dịch vụ chỉ đọc để báo giá.
+                r=go(r,'prices')
+                expect(r.locator('#workspace tr[data-search]').filter(has_text='Khám giả lập')).to_contain_text('150.000')
+                assert r.locator('#workspace form').count()==0 and r.locator('#workspace button').count()==0
+                r.locator('#price-filter').fill('xét nghiệm https')
+                expect(r.locator('#workspace tr[data-search]:visible')).to_have_count(1)
+                r=go(r,'reception')
                 r.locator('#workspace summary').filter(has_text='Thêm bệnh nhân mới').click()
                 r.locator('[data-form="patient"] [name="full_name"]').fill('Bệnh nhân giả lập HTTPS ba máy')
                 r.locator('[data-form="patient"] [name="date_of_birth"]').fill('15/03/1985')
@@ -83,9 +92,13 @@ def test_real_https_three_browser_roles_and_pdf():
                 r.locator('[data-form="visit"] select[name="doctor_id"]').select_option(str(IDS['doctor']))
                 vid=str(submit(r,'visit','Đã tiếp nhận lượt khám').json()['id'])
                 expect(r.locator(f'[data-kind="intake"][data-id="{vid}"]').first).to_be_visible()
-                d=go(pages['doctor'],'doctor');pick(d,'visit',vid)
+                # Số đếm tự cập nhật không cần bấm: mô phỏng lần hỏi định kỳ (cùng đường chạy khi quay lại tab).
                 with db() as c:open_visits=c.execute("SELECT COUNT(*) FROM visits WHERE doctor_id=? AND status NOT IN ('completed','cancelled')",(IDS['doctor'],)).fetchone()[0]
+                d.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
                 expect(d.locator('#navigation [data-count="doctor"]')).to_have_text(str(open_visits))
+                expect(d.locator('#queue-news')).to_contain_text('Hàng chờ có thêm 1 việc mới')
+                d.locator('#queue-news button').click();settle(d)
+                pick(d,'visit',vid)
                 d.locator('[data-form="clinical"] [name="chief_complaint"]').fill('Ghi khám giả lập HTTPS')
                 d.locator('[data-form="clinical"] [name="diagnosis"]').fill('Chẩn đoán giả lập')
                 d.locator('#v_pulse').fill('88')

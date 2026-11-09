@@ -64,3 +64,5 @@
  .patient-head{padding:10px}
  .cards{gap:8px}
 }
+.queue-news{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#fff4e5;border:1px solid #f3c27a;color:#7a4c13;border-radius:10px;padding:10px 13px;margin:0 0 12px;font-weight:700}
+td.price{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}

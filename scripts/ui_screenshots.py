@@ -116,10 +116,13 @@ def main():
                     page.wait_for_load_state('networkidle')
                     page.locator('#toast').evaluate("e=>e.classList.add('hidden')")
                     page.screenshot(path=str(out / f'{slug}-{device}{args.suffix}.png'), full_page=True)
-                    if not args.before and user == 'quantri':
-                        page.locator('[data-action="navigate"][data-page="settings"]').click()
-                        page.locator('#workspace[data-page="settings"][aria-busy="false"]').wait_for()
-                        page.screenshot(path=str(out / f'cai-dat-{device}{args.suffix}.png'), full_page=True)
+                    extra = {'quantri': ('settings', 'cai-dat'), 'letan': ('prices', 'bang-gia')}
+                    if not args.before and user in extra:
+                        target, name = extra[user]
+                        page.locator(f'[data-action="navigate"][data-page="{target}"]').click()
+                        page.locator(f'#workspace[data-page="{target}"][aria-busy="false"]').wait_for()
+                        page.locator('#toast').evaluate("e=>e.classList.add('hidden')")
+                        page.screenshot(path=str(out / f'{name}-{device}{args.suffix}.png'), full_page=True)
                     ctx.close()
             browser.close()
     finally:

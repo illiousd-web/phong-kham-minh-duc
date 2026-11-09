@@ -46,6 +46,8 @@ Không restore đè database đang chạy. Tạo database đích rỗng riêng d
 .venv/bin/python -m scripts.with_env /etc/minhduc/restore.env scripts.backup_lan restore --key /etc/minhduc/backup.key --file /duong-dan/ban-sao.mdbackup --target-uploads /var/lib/minhduc-restored/attachments
 ```
 
+Bản sao lưu chứa cả `ui_settings.json` (bật/tắt chức năng phụ). Khi khôi phục, tệp được ghi cạnh thư mục `--target-uploads` (ví dụ `/var/lib/minhduc-restored/ui_settings.json`), đúng chỗ ứng dụng đọc sau khi đổi `CLINIC_UPLOAD_DIR` sang đích đó; đặt nơi khác bằng `--target-settings` rồi khai `CLINIC_UI_SETTINGS`. Lệnh từ chối ghi đè tệp cài đặt đã có. Bản sao lưu cũ chưa có tệp này: lệnh in cảnh báo, ứng dụng dùng mặc định; vào Cài đặt kiểm tra lại.
+
 `restore.env` chứa cấu hình LAN đầy đủ, URL nguồn hợp lệ và URL đích owner. Lệnh kiểm tag GCM, manifest, hash, thành viên archive; từ chối đường dẫn vượt thư mục, symlink, database/thư mục đích không rỗng. pg_restore chạy single transaction và exit-on-error. Sau restore thu hồi toàn bộ phiên và ghi sự kiện khôi phục. Nếu máy hết đĩa/lỗi filesystem sau bước DB đã commit, đích có thể chỉ hoàn tất một phần: không chuyển ứng dụng sang đích đó; tạo đích rỗng khác và chạy lại sau khi sửa nguyên nhân.
 
 Kiểm đếm hồ sơ, tài khoản/quyền, kho, số dư, file đính kèm và xuất 9 biểu mẫu trên dữ liệu giả lập. Dừng dịch vụ hiện tại trong cửa sổ bảo trì, sao lưu hiện trạng, cấp lại runtime grant ở database đích, đổi `CLINIC_DATABASE_URL` và `CLINIC_UPLOAD_DIR` sang đích đã xác minh rồi khởi động lại. Lưu cấu hình cũ để quay lại khi cần. Không chạy đồng thời hai hệ thống nhận ghi cho cùng nghiệp vụ. Đăng nhập mới sau restore.
