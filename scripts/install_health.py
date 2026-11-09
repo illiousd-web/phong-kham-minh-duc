@@ -19,7 +19,9 @@ import sys
 import urllib.request
 
 VN = timezone(timedelta(hours=7))
+CERT_WARNING_DAYS = 60  # cùng ngưỡng với lịch sao lưu (scripts.backup_job)
 GIB = 1024 ** 3
+MIN_VERIFIED = 3  # cùng ngưỡng với scripts.backup_job.MIN_VERIFIED
 
 
 def collect(env, state_file=None, ca_file=None, timeout=15):
@@ -70,7 +72,8 @@ def collect(env, state_file=None, ca_file=None, timeout=15):
         try:
             state = json.loads(Path(state_file).read_text(encoding='utf-8'))
             facts['backup_state'] = {k: state.get(k) for k in (
-                'last_success_utc', 'last_error', 'external_present', 'external_last_copy_utc', 'warnings')}
+                'last_success_utc', 'last_error', 'external_present', 'external_last_copy_utc', 'warnings',
+                'verified_count', 'over_budget', 'corrupt')}
         except (OSError, ValueError):
             pass
     return facts
@@ -104,11 +107,14 @@ def evaluate(facts, now=None):
         f'Phiên bản cấu trúc dữ liệu: {version}' if facts.get('db_ok') else f"Lỗi: {facts.get('db_error', 'không rõ')}")
     add('Trang đăng nhập mở được qua HTTPS (chứng chỉ hợp lệ)', facts.get('https_health') and facts.get('login_page'),
         f"Địa chỉ: {facts.get('origin', '?')}" + (f" — lỗi: {facts['https_error']}" if facts.get('https_error') else ''))
+    title = f'Chứng chỉ HTTPS còn hạn trên {CERT_WARNING_DAYS} ngày'
     if facts.get('cert_not_after'):
         days = (datetime.fromisoformat(facts['cert_not_after']) - now).days
-        add('Chứng chỉ HTTPS còn hạn trên 30 ngày', days > 30, f'Còn {days} ngày')
+        add(title, days >= CERT_WARNING_DAYS, f'Còn {days} ngày' + (
+            '' if days >= CERT_WARNING_DAYS else ' — bấm GIA_HAN_CHUNG_CHI.bat (máy trạm không phải cài lại)'))
     else:
-        add('Chứng chỉ HTTPS còn hạn trên 30 ngày', False, 'Không đọc được chứng chỉ')
+        add(title, False, 'Không đọc được chứng chỉ (thiếu hoặc hỏng) — bấm GIA_HAN_CHUNG_CHI.bat (tự phục hồi từ khóa CA, '
+            'máy trạm không phải cài lại); nếu báo mất ca.key thì gọi người hỗ trợ: phải cài lại CA cho mọi máy trạm')
     fw = facts.get('firewall') or {}
     add('Tường lửa chỉ mở cổng web cho mạng nội bộ', fw.get('exists') and fw.get('enabled') and fw.get('scoped'),
         f"Cổng {fw.get('port', '?')} cho {fw.get('remote', '?')}")
@@ -117,13 +123,34 @@ def evaluate(facts, now=None):
         f"Lần chạy tiếp theo: {task.get('next_run', '?')}; kết quả lần trước: {task.get('last_result', '?')}")
     state = facts.get('backup_state') or {}
     newest = state.get('last_success_utc') or facts.get('backup_newest_utc')
+    title = f'Sao lưu: bản mới nhất dưới 36 giờ, có từ {MIN_VERIFIED} bản đã kiểm, không vượt ngân sách'
     if newest:
         hours = _age_hours(newest, now)
-        add('Bản sao lưu gần nhất mới hơn 36 giờ', hours <= 36 and not state.get('last_error'),
-            f'Cách đây {hours:.0f} giờ; số bản trên máy: {facts.get("backup_count", 0)}'
-            + (f"; lỗi lần cuối: {state['last_error']}" if state.get('last_error') else ''))
+        verified = state.get('verified_count')
+        problems = []
+        if hours > 36:
+            problems.append(f'bản mới nhất đã {hours:.0f} giờ — kiểm tra lịch sao lưu 20:00, máy có bật lúc 20:00 không')
+        if state.get('last_error'):
+            problems.append(f"lần sao lưu cuối LỖI: {state['last_error']}")
+        if verified is None:
+            problems.append('chưa có thông tin số bản đã kiểm — để lịch sao lưu 20:00 chạy rồi kiểm tra lại')
+        elif verified < MIN_VERIFIED:
+            problems.append(f'mới có {verified} bản đã kiểm, cần ít nhất {MIN_VERIFIED}'
+                            + (' — máy mới cài: tự đạt sau các đêm sao lưu 20:00 tiếp theo, giữ máy bật lúc 20:00'
+                               if not state.get('corrupt') and not state.get('over_budget') else
+                               ' — báo người hỗ trợ'))
+        if state.get('corrupt'):
+            problems.append(f"{len(state['corrupt'])} bản HỎNG (không khớp SHA-256) — báo người hỗ trợ kiểm tra ổ đĩa")
+        if state.get('over_budget'):
+            problems.append('vượt ngân sách dung lượng, không xóa thêm được vì phải giữ bản đã kiểm — '
+                            'báo người hỗ trợ dọn ổ đĩa hoặc tăng CLINIC_BACKUP_TOTAL_MB')
+        detail = (f'Cách đây {hours:.0f} giờ; số bản trên máy: {facts.get("backup_count", 0)}'
+                  + (f' (đã kiểm: {verified})' if verified is not None else ''))
+        if problems:
+            detail += '. KHÔNG ĐẠT vì: ' + '; '.join(problems) + '.'
+        add(title, not problems, detail)
     else:
-        add('Bản sao lưu gần nhất mới hơn 36 giờ', False, 'Chưa có bản sao lưu nào')
+        add(title, False, 'Chưa có bản sao lưu nào — chạy lại CAI_DAT.bat hoặc báo người hỗ trợ')
     external = facts.get('external_declared')
     if external:
         copied = state.get('external_last_copy_utc')

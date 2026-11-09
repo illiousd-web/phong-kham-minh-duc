@@ -153,11 +153,11 @@ function Get-PrecheckAssessment {
     } else { Add-Item 'pagefile' 'OK' 'Tệp hoán đổi phù hợp.' @() }
     $ci = $Snapshot.code_integrity
     if ($ci.language_mode -ne 'FullLanguage') {
-        Add-Item 'appcontrol' 'STOP' 'Windows đang chạy PowerShell ở chế độ hạn chế (App Control đang chặn script).' @('Nếu là Smart App Control: mở Windows Security > App & browser control > Smart App Control settings > chọn Off.', 'Nếu máy do công ty/CNTT quản lý: nhờ quản trị CNTT thêm quy tắc cho phép thư mục C:\MinhDuc.')
+        Add-Item 'appcontrol' 'STOP' 'Windows đang chạy PowerShell ở chế độ hạn chế (App Control đang chặn script).' @('Không tự tắt Smart App Control hay App Control. Dừng cài và gọi người hỗ trợ (chụp màn hình này gửi kèm).')
     } elseif ($ci.sac_state -eq 1) {
-        Add-Item 'appcontrol' 'STOP' 'Smart App Control đang BẬT: sẽ chặn Python, thư viện và trình chạy dịch vụ chưa có chữ ký số.' @('Mở Windows Security > App & browser control > Smart App Control settings > chọn Off.', 'Giữ nguyên Microsoft Defender và Tường lửa; chỉ tắt riêng Smart App Control.', 'Hỏi người phụ trách trước nếu không chắc: trên một số bản Windows, bật lại Smart App Control cần cài lại Windows.')
+        Add-Item 'appcontrol' 'STOP' 'Smart App Control đang BẬT: sẽ chặn Python, thư viện và trình chạy dịch vụ chưa có chữ ký số.' @('Không tự tắt Smart App Control hay App Control. Dừng cài và gọi người hỗ trợ (chụp màn hình này gửi kèm).', 'Giữ nguyên Microsoft Defender và Tường lửa.')
     } elseif ($ci.sac_state -eq 2) {
-        Add-Item 'appcontrol' 'ASK_SAC' 'Smart App Control đang ở chế độ đánh giá; Windows có thể tự BẬT sau này và chặn phần mềm.' @('Nên tắt Smart App Control trước khi dùng thật (Windows Security > App & browser control > Smart App Control settings).')
+        Add-Item 'appcontrol' 'ASK_SAC' 'Smart App Control đang ở chế độ đánh giá; Windows có thể tự BẬT sau này và chặn phần mềm.' @('Không tự tắt Smart App Control. Báo người hỗ trợ trước khi dùng thật; nếu sau này Windows chặn phần mềm thì dừng và gọi người hỗ trợ.')
     } elseif ($ci.usermode -eq 2) {
         Add-Item 'appcontrol' 'STOP' 'Có chính sách App Control for Business chặn ứng dụng ở chế độ người dùng.' @('Nhờ quản trị CNTT cho phép C:\MinhDuc, Python 3.12 và PostgreSQL 17 rồi chạy lại.')
     } else {
@@ -322,6 +322,21 @@ function Set-SecureAcl {
     }
 }
 
+function Test-AccountCanRead {
+    # ĐẠT khi ACL của tệp cho tài khoản (theo SID) quyền đọc và không có quy tắc Deny đọc.
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Account)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $sid = (New-Object Security.Principal.NTAccount($Account)).Translate([Security.Principal.SecurityIdentifier]).Value
+    $read = [Security.AccessControl.FileSystemRights]::ReadData
+    $allow = $false; $deny = $false
+    foreach ($rule in (Get-Acl -LiteralPath $Path).Access) {
+        try { $ruleSid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { continue }
+        if ($ruleSid -ne $sid -or (($rule.FileSystemRights -band $read) -eq 0)) { continue }
+        if ([string]$rule.AccessControlType -eq 'Deny') { $deny = $true } else { $allow = $true }
+    }
+    return ($allow -and -not $deny)
+}
+
 function Test-SecureAcl {
     # ĐẠT khi Users / Everyone / Authenticated Users không có quyền đọc.
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -340,6 +355,16 @@ function Test-SecureAcl {
 # ---------------------------------------------------------------------------
 # Tệp cấu hình KEY=VALUE (chỉ đọc giá trị không bí mật khi cần)
 # ---------------------------------------------------------------------------
+function Set-EnvValue {
+    # Đặt một khóa KEY=VALUE (không bí mật) trong tệp cấu hình, ghi tại chỗ để giữ nguyên quyền tệp.
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Key, [Parameter(Mandatory = $true)][string]$Value)
+    $lines = @([IO.File]::ReadAllLines($Path, [Text.Encoding]::UTF8))
+    $found = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -like ($Key + '=*')) { $lines[$i] = $Key + '=' + $Value; $found = $true } }
+    if (-not $found) { $lines += ($Key + '=' + $Value) }
+    [IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+}
+
 function Read-EnvFile {
     param([Parameter(Mandatory = $true)][string]$Path)
     $values = @{}
@@ -467,7 +492,7 @@ function Get-WindowsFacts {
     }
     $facts['env_acl_ok'] = $aclOk
     $facts['env_acl_detail'] = ($details -join '; ')
-    $facts['external_declared'] = (Test-Path -LiteralPath $Paths.ExternalCfg)
+    $facts['external_declared'] = ((Test-Path -LiteralPath $Paths.ExternalCfg) -and (Read-EnvFile -Path $Paths.ClinicEnv)['CLINIC_EXTERNAL_BACKUP'] -eq '1')
     $facts['windows'] = ([string]$os.Caption + ' (bản ' + $os.BuildNumber + ')')
     $py = if (Test-Path -LiteralPath $Paths.BasePython) { (Invoke-Native -FilePath $Paths.BasePython -Arguments @('--version') -Quiet).Output -join '' } else { 'chưa cài' }
     $facts['python_version'] = ($py -replace 'Python ', '')

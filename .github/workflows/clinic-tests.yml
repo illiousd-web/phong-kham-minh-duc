@@ -49,6 +49,63 @@ jobs:
           name: synthetic-clinic-test-evidence
           path: test_evidence/
           retention-days: 7
+  browser-chromium-109:
+    # Workstations run Windows 7 SP1, whose last Chrome is 109. Run the existing
+    # real-HTTPS browser tests (JS errors fail the test) and the TLS check with
+    # Chromium 109 + Playwright 1.29.1 (the Playwright release built for it).
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
+        env:
+          POSTGRES_USER: clinic
+          POSTGRES_PASSWORD: ci-synthetic-only-not-a-deployment-secret
+          POSTGRES_DB: clinic_test_source
+        ports: ['127.0.0.1:5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U clinic -d clinic_test_source" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'   # greenlet 2.0.1 required by Playwright 1.29 has no 3.12 build
+      - name: Test dependencies with Playwright 1.29.1
+        run: |
+          grep -v -E '^(playwright|greenlet|pyee)==' requirements-test.lock > /tmp/req-c109.txt
+          pip install -r /tmp/req-c109.txt
+          pip install playwright==1.29.1
+      - name: Chromium 109 (Playwright build 109.0.5414.46, else pinned Chromium snapshot 109.0.5414.0)
+        run: |
+          pipx run --spec playwright==1.64.1 playwright install-deps chromium
+          if PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.playwright.dev/dbazure/download/playwright python -m playwright install chromium; then
+            CHROME="$(python -c 'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); print(p.chromium.executable_path); p.stop()')"
+          else
+            curl -fsSL -o /tmp/c109.zip https://commondatastorage.googleapis.com/chromium-browser-snapshots/Linux_x64/1070103/chrome-linux.zip
+            echo 'd1329dd82aa9196d4b5c2e1ec7429d5500db5bf14c750e53f73603df2e4229fd  /tmp/c109.zip' | sha256sum -c -
+            unzip -q /tmp/c109.zip -d /tmp/c109
+            CHROME=/tmp/c109/chrome-linux/chrome
+          fi
+          "$CHROME" --version --no-sandbox
+          echo "CHROMIUM_PATH=$CHROME" >> "$GITHUB_ENV"
+      - name: Install matching PostgreSQL client from the signed official repository
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17 fonts-dejavu-core
+      - name: Real HTTPS UI workflows and TLS on Chromium 109
+        env:
+          CLINIC_TEST_DATABASE_URL: postgresql://clinic:ci-synthetic-only-not-a-deployment-secret@127.0.0.1:5432/clinic_test_source
+          MINHDUC_EXPECT_CHROMIUM_MAJOR: '109'
+        run: python -m pytest lan_tests/test_browser_https.py lan_tests/test_v050_browser.py lan_tests/test_tls_chrome_compat.py -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chromium-109-evidence
+          path: test_evidence/
+          retention-days: 7
   audit:
     runs-on: ubuntu-24.04
     steps:
@@ -128,11 +185,15 @@ jobs:
           Remove-Item 'HKLM:\SOFTWARE\PostgreSQL' -Recurse -Force -ErrorAction SilentlyContinue
           Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Where-Object { $_.PSChildName -like 'PostgreSQL*' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           $global:LASTEXITCODE = 0
-      - name: CAI_DAT.bat (first run, unattended)
+      - name: CAI_DAT.bat (first run, unattended; only the backup row may fail with 1 of 3 verified backups)
         shell: cmd
         env:
           MINHDUC_ADMIN_NAME: Quan tri CI gia lap
-        run: call deploy\windows\CAI_DAT.bat -KhongHoi -ChapNhanIPDong -PageFile Giu
+        run: |
+          call deploy\windows\CAI_DAT.bat -KhongHoi -ChapNhanIPDong -PageFile Giu
+          if %errorlevel% equ 0 exit /b 0
+          if %errorlevel% neq 40 exit /b %errorlevel%
+          C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py fresh-install-report
       - name: Service, HTTPS login page, administrator login, synthetic write
         run: |
           $svc = Get-Service MinhDuc
@@ -172,6 +233,14 @@ jobs:
           Add-Content $env:GITHUB_ENV ("ENV_HASH=" + (Get-FileHash C:\ProgramData\MinhDuc\clinic.env).Hash)
           Add-Content $env:GITHUB_ENV ("KEY_HASH=" + (Get-FileHash C:\ProgramData\MinhDuc\quantri\backup.key).Hash)
           Add-Content $env:GITHUB_ENV ("CA_HASH=" + (Get-FileHash C:\ProgramData\MinhDuc\tls\ca.crt).Hash)
+      - name: Simulate a machine installed by the PR 7 installer (30 local backups) before CAP_NHAT
+        run: |
+          foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {
+            $t = [IO.File]::ReadAllText($f)
+            if (-not $t.Contains('CLINIC_BACKUP_KEEP=14')) { throw "Unexpected retention in $f" }
+            [IO.File]::WriteAllText($f, $t.Replace('CLINIC_BACKUP_KEEP=14', 'CLINIC_BACKUP_KEEP=30'), (New-Object Text.UTF8Encoding($false)))
+          }
+          Write-Output 'Retention set back to the old 30 local backups'
       - name: Build update zips (same code, and a deliberately broken one)
         run: |
           git archive --format=zip --prefix=phong-kham-minh-duc-main/ -o "$env:RUNNER_TEMP\minhduc-ok.zip" HEAD
@@ -185,6 +254,12 @@ jobs:
         run: call C:\MinhDuc\deploy\windows\CAP_NHAT.bat -KhongHoi -TepZip "%RUNNER_TEMP%\minhduc-ok.zip"
       - name: Verify update result
         run: |
+          foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {
+            $t = [IO.File]::ReadAllText($f)
+            if (-not ($t.Contains("`nCLINIC_BACKUP_KEEP=14`n") -and $t.Contains("`nCLINIC_OFFSITE_KEEP=30`n"))) { throw "Retention not migrated in $f" }
+          }
+          if ((Get-FileHash C:\ProgramData\MinhDuc\clinic.env).Hash -ne $env:ENV_HASH) { throw 'clinic.env differs beyond the retention policy (password changed?)' }
+          Write-Output 'PASS: CAP_NHAT tu chuyen sang giu 14 ban tren may chu, giu nguyen mat khau'
           $r = Get-Content C:\ProgramData\MinhDuc\capnhat\ket-qua-cap-nhat.json -Raw | ConvertFrom-Json
           if ($r.status -ne 'thanh_cong') { throw "Update status $($r.status): $($r.detail)" }
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after update' }
@@ -206,6 +281,14 @@ jobs:
           $now = & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py count | Select-Object -Last 1
           if ($now -ne $env:COUNT_BEFORE) { throw "Rollback did not restore database: $now vs $env:COUNT_BEFORE" }
           Write-Output 'PASS: CAP_NHAT loi -> tu quay ve ban cu (ma, thu vien, CSDL), dich vu chay lai'
+      - name: Simulate a machine installed by the PR 7 installer (30 local backups) before the second CAI_DAT
+        run: |
+          foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {
+            $t = [IO.File]::ReadAllText($f)
+            if (-not $t.Contains('CLINIC_BACKUP_KEEP=14')) { throw "Unexpected retention in $f" }
+            [IO.File]::WriteAllText($f, $t.Replace('CLINIC_BACKUP_KEEP=14', 'CLINIC_BACKUP_KEEP=30'), (New-Object Text.UTF8Encoding($false)))
+          }
+          Write-Output 'Retention set back to the old 30 local backups'
       - name: CAI_DAT.bat second run keeps data, passwords, keys and certificate
         shell: cmd
         run: call C:\MinhDuc\deploy\windows\CAI_DAT.bat -KhongHoi -ChapNhanIPDong -PageFile Giu
@@ -218,6 +301,112 @@ jobs:
           if ($now -ne $env:COUNT_BEFORE) { throw "Data changed: $now vs $env:COUNT_BEFORE" }
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after rerun' }
           Write-Output 'PASS: chay CAI_DAT lan hai khong mat du lieu, khong doi mat khau/khoa/chung chi'
+      - name: GIA_HAN_CHUNG_CHI.bat renews the server certificate with the existing CA
+        run: |
+          $py = 'C:\MinhDuc\.venv\Scripts\python.exe'
+          $origin = ((Get-Content C:\ProgramData\MinhDuc\clinic.env) -match '^CLINIC_ORIGIN=') -replace '^CLINIC_ORIGIN=',''
+          Push-Location C:\MinhDuc
+          $before = (& $py -m scripts.install_cert served --origin $origin --ca C:\ProgramData\MinhDuc\tls\ca.crt | ConvertFrom-Json).serial
+          Pop-Location
+          & cmd /c "call C:\MinhDuc\deploy\windows\GIA_HAN_CHUNG_CHI.bat -KhongHoi"
+          if ($LASTEXITCODE -ne 0) { throw "GIA_HAN_CHUNG_CHI exit $LASTEXITCODE" }
+          $r = Get-Content C:\ProgramData\MinhDuc\nhatky\ket-qua-gia-han.json -Raw | ConvertFrom-Json
+          if ($r.status -ne 'thanh_cong') { throw "Renewal status $($r.status): $($r.detail)" }
+          Push-Location C:\MinhDuc
+          $after = (& $py -m scripts.install_cert served --origin $origin --ca C:\ProgramData\MinhDuc\tls\ca.crt | ConvertFrom-Json).serial
+          Pop-Location
+          if (-not $after -or $after -eq $before) { throw "Served certificate did not change ($before -> $after)" }
+          if ((Get-FileHash C:\ProgramData\MinhDuc\tls\ca.crt).Hash -ne $env:CA_HASH) { throw 'CA changed: workstations would need reinstall' }
+          if (-not (Test-Path C:\ProgramData\MinhDuc\tls\server.crt.cu-*)) { throw 'Old certificate not kept' }
+          & $py .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after renewal' }
+          Write-Output "PASS: gia han chung chi ($before -> $after), CA giu nguyen, may tram van tin cay, dang nhap duoc"
+      - name: GIA_HAN_CHUNG_CHI fault injection (deny key read, failure mid-swap, failed restore)
+        run: |
+          $py = 'C:\MinhDuc\.venv\Scripts\python.exe'
+          $origin = ((Get-Content C:\ProgramData\MinhDuc\clinic.env) -match '^CLINIC_ORIGIN=') -replace '^CLINIC_ORIGIN=',''
+          function Served { Push-Location C:\MinhDuc; $s = (& $py -m scripts.install_cert served --origin $origin --ca C:\ProgramData\MinhDuc\tls\ca.crt | ConvertFrom-Json).serial; Pop-Location; return $s }
+          function GiaHan([string]$fault) {
+            if ($fault) { $env:MINHDUC_TEST_LOI = $fault } else { Remove-Item Env:\MINHDUC_TEST_LOI -ErrorAction SilentlyContinue }
+            & cmd /c "call C:\MinhDuc\deploy\windows\GIA_HAN_CHUNG_CHI.bat -KhongHoi" | Out-Host
+            $code = $LASTEXITCODE
+            Remove-Item Env:\MINHDUC_TEST_LOI -ErrorAction SilentlyContinue
+            $status = (Get-Content C:\ProgramData\MinhDuc\nhatky\ket-qua-gia-han.json -Raw | ConvertFrom-Json).status
+            return @($code, $status)
+          }
+          foreach ($fault in 'tu-choi-doc-khoa', 'loi-giua-thay') {
+            $before = Served
+            $code, $status = GiaHan $fault
+            $after = Served
+            if ($code -ne 50 -or $status -ne 'da_tra_chung_chi_cu') { throw "$fault -> exit $code status $status (expected 50 / da_tra_chung_chi_cu)" }
+            if ($after -ne $before) { throw "$fault -> served certificate changed ($before -> $after)" }
+            if (Get-ChildItem C:\ProgramData\MinhDuc\tls -Filter '*.moi-*') { throw "$fault -> temporary files left" }
+            Write-Output "PASS: $fault -> da tra chung chi cu, HTTPS van dung chung chi $after"
+          }
+          $code, $status = GiaHan 'khoi-phuc-loi'
+          if ($code -ne 51 -or $status -ne 'khoi_phuc_that_bai') { throw "khoi-phuc-loi -> exit $code status $status (expected 51 / khoi_phuc_that_bai)" }
+          Write-Output 'PASS: khoi-phuc-loi -> bao KHONG DAT (ma 51), khong bao sai la da tra chung chi cu'
+          $code, $status = GiaHan ''
+          if ($code -ne 0 -or $status -ne 'thanh_cong') { throw "recovery run -> exit $code status $status" }
+          if ((Get-FileHash C:\ProgramData\MinhDuc\tls\ca.crt).Hash -ne $env:CA_HASH) { throw 'CA changed' }
+          & $py .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after fault tests' }
+          Write-Output 'PASS: chay lai GIA_HAN sau loi khoi phuc -> thanh cong, CA giu nguyen, dang nhap duoc'
+      - name: GIA_HAN_CHUNG_CHI recovery mode (certificate missing, damaged; CA key missing)
+        run: |
+          $py = 'C:\MinhDuc\.venv\Scripts\python.exe'
+          $tls = 'C:\ProgramData\MinhDuc\tls'
+          $q = 'C:\ProgramData\MinhDuc\quantri'
+          $origin = ((Get-Content C:\ProgramData\MinhDuc\clinic.env) -match '^CLINIC_ORIGIN=') -replace '^CLINIC_ORIGIN=',''
+          function Served { Push-Location C:\MinhDuc; $s = (& $py -m scripts.install_cert served --origin $origin --ca "$tls\ca.crt" | ConvertFrom-Json).serial; Pop-Location; return $s }
+          function GiaHan {
+            & cmd /c "call C:\MinhDuc\deploy\windows\GIA_HAN_CHUNG_CHI.bat -KhongHoi" | Out-Host
+            $code = $LASTEXITCODE
+            $status = (Get-Content C:\ProgramData\MinhDuc\nhatky\ket-qua-gia-han.json -Raw | ConvertFrom-Json).status
+            return @($code, $status)
+          }
+          # 1. server.crt and server.key deleted: recovery issues a new pair from the existing ca.key.
+          $before = Served
+          Remove-Item "$tls\server.crt", "$tls\server.key" -Force
+          $code, $status = GiaHan
+          if ($code -ne 0 -or $status -ne 'thanh_cong') { throw "missing cert -> exit $code status $status" }
+          $after = Served
+          if (-not $after -or $after -eq $before) { throw "missing cert -> served $before -> $after" }
+          if ((Get-FileHash "$tls\ca.crt").Hash -ne $env:CA_HASH) { throw 'CA changed' }
+          & $py .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after recovery (missing)' }
+          Write-Output "PASS: thieu chung chi -> che do phuc hoi tu ca.key ($before -> $after), CA giu nguyen, dang nhap duoc"
+          # 2. Damaged certificate AND ca.key missing: stop (exit 5), nothing replaced.
+          Rename-Item "$q\ca.key" 'ca.key.ci-giu'
+          [IO.File]::WriteAllText("$tls\server.crt", 'hong')
+          $code, $status = GiaHan
+          if ($code -ne 5 -or $status -ne 'dung') { throw "lost ca.key -> exit $code status $status (expected 5 / dung)" }
+          if ([IO.File]::ReadAllText("$tls\server.crt") -ne 'hong') { throw 'damaged certificate was touched without ca.key' }
+          if (Get-ChildItem $tls -Filter '*.moi-*') { throw 'temporary files left' }
+          Write-Output 'PASS: hong chung chi + mat ca.key -> dung (ma 5), bao phai cai lai CA cho moi may tram, khong thay tep nao'
+          # 3. ca.key back: recovery from the damaged certificate without reading it.
+          Rename-Item "$q\ca.key.ci-giu" 'ca.key'
+          $code, $status = GiaHan
+          if ($code -ne 0 -or $status -ne 'thanh_cong') { throw "damaged cert -> exit $code status $status" }
+          $fixed = Served
+          if (-not $fixed -or $fixed -eq $after) { throw "damaged cert -> served $after -> $fixed" }
+          if (-not (Get-ChildItem $tls -Filter 'server.crt.cu-*' | Where-Object { [IO.File]::ReadAllText($_.FullName) -eq 'hong' })) { throw 'damaged file not kept' }
+          if ((Get-FileHash "$tls\ca.crt").Hash -ne $env:CA_HASH) { throw 'CA changed' }
+          & $py .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after recovery (damaged)' }
+          Write-Output "PASS: chung chi hong -> phuc hoi tu ca.key ($after -> $fixed), giu tep hong de doi chieu, dang nhap duoc"
+      - name: Accented postgres password via the existing-PostgreSQL path, real SCRAM login
+        run: |
+          $py = 'C:\MinhDuc\.venv\Scripts\python.exe'
+          # Built from code points: step scripts are written without BOM (PowerShell 5.1 would read them as ANSI).
+          $pw = 'M' + [char]0x1EAD + 't kh' + [char]0x1EA9 + 'u ' + [char]0x0110 + [char]0x1EE9 + 'c-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + [char]0x01A1 + [char]0x01B0 + '!'
+          Write-Output "::add-mask::$pw"
+          $env:NEW_PG_PW = $pw
+          & $py .github\scripts\windows_e2e.py pg-set-password; if ($LASTEXITCODE) { throw 'ALTER ROLE failed' }
+          # Simulate "PostgreSQL already installed, installer does not know the password".
+          Remove-Item C:\ProgramData\MinhDuc\quantri\postgres.env -Force
+          $env:MINHDUC_PG_SUPER_PASSWORD = $pw
+          & cmd /c "call C:\MinhDuc\deploy\windows\CAI_DAT.bat -KhongHoi -ChapNhanIPDong -PageFile Giu" | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "CAI_DAT with accented postgres password exit $LASTEXITCODE" }
+          Remove-Item Env:\MINHDUC_PG_SUPER_PASSWORD -ErrorAction SilentlyContinue
+          & $py .github\scripts\windows_e2e.py pg-accent-check; if ($LASTEXITCODE) { throw 'SCRAM login with accented password failed' }
+          & $py .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after third CAI_DAT' }
       - name: CAI_MAY_TRAM.bat from the read-only share folder (same VM acts as workstation)
         shell: cmd
         run: call C:\MinhDuc-ChiaSe\CAI_MAY_TRAM.bat -KhongHoi

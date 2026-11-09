@@ -138,7 +138,17 @@ def copy_offsite(source,directory):
     finally:pending.unlink(missing_ok=True)
 
 
-def backup(destination, key_path):
+def space_required(destination):
+    """Free bytes backup() demands before it starts (same formula as its require_space)."""
+    uploads=Path(os.getenv('CLINIC_UPLOAD_DIR',str(DATA/'attachments')))
+    with psycopg.connect(DATABASE_URL,connect_timeout=10) as c:
+        estimate=c.execute('SELECT pg_database_size(current_database())').fetchone()[0]+tree_bytes(uploads)
+    return LIMITS.min_free_bytes+2*estimate+64*1024*1024
+
+
+def backup(destination, key_path, prune=True, enforce_budget=True):
+    """prune/enforce_budget=False: caller (Windows scripts.backup_job) verifies the new
+    file first and only then applies retention and the size budget."""
     key=key_bytes(key_path)
     keep=int(os.getenv('CLINIC_BACKUP_KEEP','7'))
     if not 2<=keep<=30:raise ValueError('Retention must keep 2 to 30 backups')
@@ -155,7 +165,7 @@ def backup(destination, key_path):
             estimate=c.execute('SELECT pg_database_size(current_database())').fetchone()[0]+tree_bytes(uploads)
             require_space(destination,2*estimate+64*1024*1024)
             current=sum(p.stat().st_size for p in destination.glob('minhduc-*.mdbackup'))
-            if current+estimate>LIMITS.backup_total_bytes:
+            if enforce_budget and current+estimate>LIMITS.backup_total_bytes:
                 raise StorageLimitError('Kho backup đạt ngân sách dung lượng. Giữ bản tốt cũ; quản trị kiểm tra bản ngoài máy trước khi giải phóng chỗ.')
             pg_tool('pg_dump',['--format=custom','--no-owner','--no-acl','--file',str(root/'database.dump')],DATABASE_URL)
             files={'database.dump':checksum(root/'database.dump')}
@@ -172,7 +182,7 @@ def backup(destination, key_path):
             encrypt_archive([(root/'database.dump','database.dump'),
                              (uploads if uploads.exists() else root/'attachments','attachments'),
                              (root/'manifest.json','manifest.json')],pending,key)
-            if current+pending.stat().st_size>LIMITS.backup_total_bytes:raise StorageLimitError('Bản backup mới vượt ngân sách dung lượng')
+            if enforce_budget and current+pending.stat().st_size>LIMITS.backup_total_bytes:raise StorageLimitError('Bản backup mới vượt ngân sách dung lượng')
             target=destination/name
             os.replace(pending,target)
     # A failed offsite copy leaves the new local backup AND all old good copies.
@@ -182,7 +192,8 @@ def backup(destination, key_path):
         if not 2<=offsite_keep<=90:raise ValueError('Offsite retention must keep 2 to 90 backups')
         copy_offsite(target,offsite)
         for old in sorted(Path(offsite).glob('minhduc-*.mdbackup'),key=lambda p:p.stat().st_mtime,reverse=True)[offsite_keep:]:old.unlink()
-    for old in sorted(destination.glob('minhduc-*.mdbackup'),key=lambda p:p.stat().st_mtime,reverse=True)[keep:]:old.unlink()
+    if prune:
+        for old in sorted(destination.glob('minhduc-*.mdbackup'),key=lambda p:p.stat().st_mtime,reverse=True)[keep:]:old.unlink()
     return target
 
 
