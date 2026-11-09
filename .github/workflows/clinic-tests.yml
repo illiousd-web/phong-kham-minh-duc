@@ -223,9 +223,11 @@ jobs:
         run: call C:\MinhDuc-ChiaSe\CAI_MAY_TRAM.bat -KhongHoi
       - name: Verify workstation shortcut
         run: |
-          $link = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Phòng khám Minh Đức.lnk'
-          if (-not (Test-Path -LiteralPath $link)) { throw 'Shortcut missing' }
-          $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
+          # Step scripts are written without BOM: match the Vietnamese file name by pattern.
+          $file = Get-ChildItem -LiteralPath ([Environment]::GetFolderPath('CommonDesktopDirectory')) -Filter 'Ph*ng kh*m Minh *.lnk' | Select-Object -First 1
+          if (-not $file) { throw 'Shortcut missing' }
+          if ($file.Name -ne ('Ph' + [char]0x00F2 + 'ng kh' + [char]0x00E1 + 'm Minh ' + [char]0x0110 + [char]0x1EE9 + 'c.lnk')) { throw "Unexpected shortcut name" }
+          $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($file.FullName)
           if ($sc.Arguments -notmatch '^--app=https://') { throw "Unexpected shortcut arguments $($sc.Arguments)" }
           Write-Output ("PASS: bieu tuong Desktop -> " + $sc.TargetPath + " " + $sc.Arguments)
       - name: KIEM_TRA.bat report has no secrets
