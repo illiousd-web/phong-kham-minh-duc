@@ -145,6 +145,9 @@ def pdf_document(kind:str, d:dict)->bytes:
         line('Thời gian ghi nhận',show_day(d.get('created_at','')))
         line('Mã tham chiếu giao dịch',d.get('external_ref','Không có'))
         section('Lưu ý', 'Phiếu thu demo không thay thế hóa đơn điện tử hợp lệ.')
+    if kind=='clinical':
+        for a in d.get('addenda',[]):
+            section('Phụ lục đã duyệt #'+str(a['id']),a['reason']+'\n'+a['content']+'\n'+str(a['reviewed_at']))
     story.append(Spacer(1,12*mm))
     if kind=='result':
         sign=Table([[Paragraph('<b>NGƯỜI THỰC HIỆN</b><br/>(chưa ký số)<br/><br/><br/>'+p(d.get('result_by_name') or ''),subtitle),

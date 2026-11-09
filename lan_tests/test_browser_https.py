@@ -109,7 +109,7 @@ def test_real_https_three_browser_roles_and_pdf():
                 download.value.save_as(str(evidence/'result.pdf'))
                 d=go('doctor','rx');d.locator('[data-form="rx"] [name="visit_id"]').select_option(vid)
                 d.locator('[data-form="rx"] [name="quantity"]').fill('2')
-                d.locator('[data-form="rx"] button').click();d.get_by_text('Đã lưu đơn thuốc cấu trúc',exact=False).wait_for()
+                d.locator('[data-form="rx"] button.btn').click();d.get_by_text('Đã lưu đơn thuốc cấu trúc',exact=False).wait_for()
                 with d.expect_download() as download:d.locator('[data-kind="rx"][data-format="pdf"]').first.click()
                 download.value.save_as(str(evidence/'rx.pdf'))
                 cash.locator('[data-form="payment"] [name="visit_id"]').select_option(vid)

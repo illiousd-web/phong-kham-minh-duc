@@ -35,7 +35,7 @@ def read_limits():
     result=Limits(
         integer('CLINIC_WORKERS',1,1,2),integer('CLINIC_POOL_MIN',1,0,8),
         integer('CLINIC_POOL_MAX',4,1,8),integer('CLINIC_THREAD_LIMIT',8,4,32),
-        integer('CLINIC_CONCURRENCY',24,8,80),integer('CLINIC_EXPORT_SLOTS',1,1,2),
+        integer('CLINIC_CONCURRENCY',48,8,80),integer('CLINIC_EXPORT_SLOTS',1,1,2),
         integer('CLINIC_EXPORT_MAX_MB',10,1,10)*MIB,
         integer('CLINIC_UPLOAD_MAX_MB',5,1,5)*MIB,
         integer('CLINIC_UPLOAD_TOTAL_MB',2048,16,16384)*MIB,

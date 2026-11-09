@@ -241,6 +241,12 @@ def generate_docx(kind, ctx):
                ('Chuyên khoa','Theo bác sĩ phụ trách')]:
                 if x.text.startswith(label+':'):line(x,label,val)
         multiline(doc,'Lý do / mục đích tái khám','Theo kết luận bác sĩ, xem phiếu khám',2)
+    if kind=='visit':
+        for appendix in ctx.get('addenda',[]):
+            doc.add_heading('PHỤ LỤC ĐÃ DUYỆT #'+str(appendix['id']),level=2)
+            doc.add_paragraph('Lý do: '+appendix['reason'])
+            doc.add_paragraph(appendix['content'])
+            doc.add_paragraph('Người lập: '+str(appendix.get('author_name') or appendix['created_by'])+'; thời điểm duyệt: '+str(appendix['reviewed_at']))
     # Visible draft label on every generated document, including rx.
     footer=doc.sections[0].footer
     ptag=footer.add_paragraph(WATERMARK)
@@ -329,6 +335,11 @@ def generate_pdf(kind,ctx):
     if kind=='followup':
         add('Ngày khám gần nhất',fmt_date(v.get('created_at')));add('Ngày hẹn theo chỉ định',fmt_date(v.get('follow_up') or r.get('follow_up')) or 'Chưa ghi');add('Điện thoại',p.get('phone'))
         add('Lưu ý','Liên hệ cơ sở y tế khi có diễn biến bất thường; không chờ đến lịch hẹn.')
+    if kind=='visit':
+        for appendix in ctx.get('addenda',[]):
+            heading('PHỤ LỤC ĐÃ DUYỆT #'+str(appendix['id']))
+            add('Lý do',appendix['reason']);add('Nội dung',appendix['content'])
+            add('Người lập',appendix.get('author_name') or appendix['created_by']);add('Thời điểm duyệt',appendix['reviewed_at'])
     story.append(Spacer(1,20))
     if kind in ('lab','ultrasound','xray','ecg'):
         sign=Table([[Paragraph('<b>NGƯỜI THỰC HIỆN</b><br/>(chưa ký số)<br/><br/><br/>'+pdf_safe(o.get('result_by_name')),styles['VnBody']),

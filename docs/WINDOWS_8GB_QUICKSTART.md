@@ -1,3 +1,5 @@
+> **v0.5.0:** xem [nâng cấp từ v0.4.x](V050_UPGRADE.md) và [hướng dẫn A–D](V050_USAGE.md). Migration hiện tại là schema 3; chạy bằng owner rồi cấp lại quyền runtime.
+
 # Minh Đức LAN trên máy i3 / RAM 8 GB — hướng dẫn ngắn
 
 Dành cho máy đã xác nhận: **Intel Core i3-10105, RAM 8 GB, SSD 256 GB, Windows 11 Pro 64-bit**. Dùng nguyên máy hiện có. Không cần đổi RAM, SSD hoặc mua máy chủ để chạy thử. Chưa được nhập bệnh nhân thật.

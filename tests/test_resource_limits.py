@@ -13,6 +13,7 @@ def test_validated_resource_defaults_and_invalid_combinations(monkeypatch):
         if name.startswith(('CLINIC_WORKERS','CLINIC_POOL_','CLINIC_THREAD_','CLINIC_CONCURRENCY','CLINIC_EXPORT_')):monkeypatch.delenv(name)
     limits=resources.read_limits()
     assert (limits.workers,limits.pool_min,limits.pool_max,limits.export_slots)==(1,1,4,1)
+    assert limits.concurrency==48 and limits.threads==8
     for name,value in [('CLINIC_WORKERS','0'),('CLINIC_POOL_MAX','-1'),('CLINIC_THREAD_LIMIT','bad'),('CLINIC_EXPORT_SLOTS','5')]:
         with monkeypatch.context() as patch:
             patch.setenv(name,value)

@@ -59,7 +59,7 @@ def test_nurse_assignment_and_close_lock_lan(clients,visit):
         assert 'diagnosis' not in r.json()
         assert n.put(f'/api/visits/{visit}/vitals',json={'vitals':'Mạch 80 l/p','version':0}).status_code==200
         assert d.put(f'/api/visits/{visit}/clinical',json={'version':1,'diagnosis':'Kết luận giả lập'}).status_code==200
-        assert d.post(f'/api/visits/{visit}/complete').status_code==200
+        assert d.post(f'/api/visits/{visit}/complete',json={'version':d.get(f'/api/visits/{visit}').json()['version']}).status_code==200
         assert n.put(f'/api/visits/{visit}/vitals',json={'vitals':'Mạch 82 l/p','version':3}).status_code==409
         assert d.put(f'/api/visits/{visit}/clinical',json={'version':3,'diagnosis':'Sửa sau khóa'}).status_code==409
         assert d.post('/api/prescriptions',json={'visit_id':visit,'drug_lines':'Đơn thử'}).status_code==409

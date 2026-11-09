@@ -5,14 +5,14 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 from .auth import verify
 
-Role = Literal['admin','manager','reception','doctor','technician','nurse','pharmacy','cashier']
+Role = Literal['admin','manager','reception','doctor','technician','nurse','pharmacy','cashier','controlled_prescriber','controlled_pharmacy','controlled_reviewer']
 
 
 class AccountInput(BaseModel):
     username: str = Field(pattern=r'^[a-z][a-z0-9_.-]{1,39}$')
     full_name: str = Field(min_length=2, max_length=180)
     password: str = Field(min_length=12, max_length=250)
-    roles: list[Role] = Field(min_length=1, max_length=8)
+    roles: list[Role] = Field(min_length=1, max_length=11)
 
 
 class PasswordInput(BaseModel):
@@ -26,7 +26,7 @@ class ResetInput(BaseModel):
 
 class AccountUpdate(BaseModel):
     active: bool
-    roles: list[Role] = Field(min_length=1, max_length=8)
+    roles: list[Role] = Field(min_length=1, max_length=11)
 
 
 def create_account(c, data, pw_hash):

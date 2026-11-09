@@ -8,7 +8,7 @@ from docx import Document
 
 def test_local_health_and_logo():
     r=client.get('/api/health')
-    assert r.status_code==200 and r.json()['version']=='0.4.2'
+    assert r.status_code==200 and r.json()['version']=='0.5.0'
     logo=client.get('/assets/logo_minh_duc.png')
     assert logo.status_code==200 and logo.content.startswith(b'\x89PNG')
     ui=client.get('/assets/app.js')

@@ -10,7 +10,7 @@ import re
 
 STATUS = {
     # visits
-    'waiting': 'Chờ khám', 'in_progress': 'Đang khám', 'done': 'Đã khám xong', 'cancelled': 'Đã hủy',
+    'waiting_results':'Chờ kết quả','requested':'Chờ bác sĩ duyệt','completed':'Hoàn tất chuyên môn','dispensed':'Đã cấp thuốc','returned':'Đã trả toàn bộ thuốc','waiting': 'Chờ khám', 'in_progress': 'Đang khám', 'done': 'Đã khám xong', 'cancelled': 'Đã hủy',
     # appointments
     'booked': 'Đã đặt lịch', 'arrived': 'Đã đến khám',
     # orders

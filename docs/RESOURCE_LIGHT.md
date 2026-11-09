@@ -10,7 +10,7 @@ Base `main`: `0058564` (LAN v0.4 đã merge). Mục tiêu cố định: i3-10105
 | Pool mỗi worker | min1/max16 | min1/max4 |
 | Tổng kết nối app tối đa | 32 | 4 |
 | Luồng xử lý đồng bộ mỗi worker | mặc định AnyIO40 | 8 |
-| Concurrent request giới hạn | 80/worker | 24/worker |
+| Concurrent request giới hạn | 80/worker | 48/worker (v0.5) |
 | Xuất biểu mẫu song song | Không có giới hạn riêng | 1/worker, trả 503/Retry-After khi bận |
 
 Các biến trong `deploy/windows/clinic-8gb.env.example` được kiểm số nguyên/phạm vi và quan hệ: worker1–2, poolmax1–8, min<=max<=thread limit, tổng pool<=12. Mặc định dùng 1/4; chỉ người quản trị đổi sau đo lại. Pool trả bớt kết nối nhàn rỗi sau 60 giây và chỉ dùng một thread quản lý nền. Lifespan đóng pool khi tắt. Việc ghi nhật ký HTTP bổ sung chuyển khỏi event loop sang threadpool, không bỏ audit hoặc cơ chế transaction.
@@ -72,3 +72,7 @@ python -m scripts.benchmark_lan --baseline-ref 0058564 --iterations 30 --output 
 ```
 
 Bằng chứng và giới hạn đo nằm trong [báo cáo Issue #3](ISSUE3_VALIDATION.md). Không dùng số Linux để suy ra máy Windows i3 đã đạt. Nghiệm thu ở phòng khám cần Preflight thực tế, ba máy hiện có, ca mô phỏng giờ cao điểm, Task Manager/Resource Monitor theo dõi commit/RAM/CPU/disk, thử mất mạng và restore riêng. Không tắt bảo mật khi đo.
+
+## v0.5: sáu trình duyệt và kết nối nhàn rỗi
+
+Giữ 1 worker, pool4 và 8 luồng, giới hạn Uvicorn hữu hạn 48 kết nối/yêu cầu, keep-alive nhàn rỗi 2 giây. Uvicorn tính cả kết nối nhàn rỗi và kết nối dự phòng của Chrome vào hạn mức: 24 gây 503 ngay khi tải JavaScript của sáu phiên, dù không có tác vụ nặng. Kiểm thử đã tái hiện lỗi, vì vậy nâng riêng hạn mức kết nối lên 48, giảm keep-alive từ 5 xuống 2 giây; không tăng pool/worker/luồng/xuất biểu mẫu, không tắt hạn mức hay bảo mật. Kiểm thử v0.5 yêu cầu mọi tài nguyên của sáu phiên HTTPS tải thành công. Xem số đo Linux giả lập trong `benchmarks/v050-linux-synthetic.json`; chưa phải số đo Windows phòng khám.

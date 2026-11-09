@@ -39,11 +39,12 @@ with sync_playwright() as p:
   logo64=base64.b64encode((ROOT/'app/static/logo_minh_duc.png').read_bytes()).decode('ascii')
   html=html.replace('/assets/logo_minh_duc.png','data:image/png;base64,'+logo64)
   html=re.sub(r'<link rel="stylesheet" href="/assets/styles.css">','',html)
-  html=re.sub(r'<script src="/assets/app.js" defer></script>','',html)
+  html=re.sub(r'<script src="/assets/(?:app|workflows-v050)\.js" defer></script>','',html)
   page.set_content(html)
   page.add_style_tag(content=(ROOT/'app/static/styles.css').read_text(encoding='utf8'))
   page.evaluate("""() => {let storage={};Object.defineProperty(window,'sessionStorage',{configurable:true,value:{getItem:k=>storage[k]||null,setItem:(k,v)=>storage[k]=String(v),removeItem:k=>delete storage[k]}});window.fetch=async (path,opts={})=>{let o=await window.server_bridge(path,{method:opts.method||'GET',headers:opts.headers||{},body:typeof opts.body==='string'?opts.body:null});let raw=atob(o.base64), bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);return new Response(bytes,{status:o.status,headers:o.headers});};}""")
   page.add_script_tag(content=(ROOT/'app/static/app.js').read_text(encoding='utf8'))
+  page.add_script_tag(content=(ROOT/'app/static/workflows-v050.js').read_text(encoding='utf8'))
   page.get_by_text('Đăng nhập theo vai trò').wait_for(timeout=8000)
   assert page.get_by_text('Đăng nhập theo vai trò').is_visible()
   def login(who):
@@ -56,7 +57,7 @@ with sync_playwright() as p:
    page.get_by_text('Đăng nhập theo vai trò').wait_for(timeout=8000)
   def go(where):
    page.locator(f'[data-action="navigate"][data-page="{where}"]').click()
-   page.wait_for_timeout(250)
+   page.wait_for_function("document.getElementById('workspace').getAttribute('aria-busy')!=='true'")
   login('letan');go('reception')
   page.locator('[data-form="patient"] [name="full_name"]').fill('Bệnh nhân mô phỏng UI Minh Đức')
   page.locator('[data-form="patient"] [name="date_of_birth"]').fill('05/11/1992')
@@ -76,7 +77,7 @@ with sync_playwright() as p:
   logout();login('bs_noi');go('clinical')
   page.locator('[name="chief_complaint"]').fill('Triệu chứng kiểm thử giao diện')
   page.locator('[name="diagnosis"]').fill('Chẩn đoán mô phỏng')
-  page.locator('[name="follow_up"]').fill('2026-12-08')
+  page.locator('[name="follow_up"]').fill('08/12/2026')
   page.locator('[data-form="clinical"] button.btn').click()
   page.get_by_text('Đã lưu phiếu khám').wait_for(timeout=8000)
   with page.expect_download(timeout=10000) as dl:
