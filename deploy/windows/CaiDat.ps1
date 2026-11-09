@@ -275,7 +275,8 @@ function Step-ChungChi {
     Set-SecureAcl -Path $P.Share -Directory -Readers @('*S-1-1-0')
     try {
         if (-not (Get-SmbShare -Name $Names.Share -ErrorAction SilentlyContinue)) {
-            New-SmbShare -Name $Names.Share -Path $P.Share -ReadAccess '*S-1-1-0' -Description 'Minh Duc: ca.crt va bo cai may tram (chi doc)' | Out-Null
+            $everyone = (New-Object Security.Principal.SecurityIdentifier('S-1-1-0')).Translate([Security.Principal.NTAccount]).Value
+            New-SmbShare -Name $Names.Share -Path $P.Share -ReadAccess $everyone -Description 'Minh Duc: ca.crt va bo cai may tram (chi doc)' | Out-Null
         }
         Write-Dat ('Thư mục chia sẻ chỉ đọc: \\' + $env:COMPUTERNAME + '\' + $Names.Share + '  (cũng là ' + $P.Share + ')')
     } catch { Write-Luu ('Không tạo được chia sẻ mạng; chép thư mục ' + $P.Share + ' sang USB để cài máy trạm.') }

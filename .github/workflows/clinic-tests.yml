@@ -122,6 +122,8 @@ jobs:
             Write-Output ("Removing preinstalled " + $_.FullName)
             Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
           }
+          Remove-Item 'HKLM:\SOFTWARE\PostgreSQL' -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Where-Object { $_.PSChildName -like 'PostgreSQL*' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           $global:LASTEXITCODE = 0
       - name: CAI_DAT.bat (first run, unattended)
         shell: cmd
