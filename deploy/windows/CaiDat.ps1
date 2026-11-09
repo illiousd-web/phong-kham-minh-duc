@@ -39,7 +39,7 @@ function Test-Admin {
 
 # ---------------------------------------------------------------------------
 function Step-KiemTraMay {
-    Write-Buoc "Bước 1/$Tong: Kiểm tra máy"
+    Write-Buoc "Bước 1/${Tong}: Kiểm tra máy"
     $snap = Get-PrecheckSnapshot
     $items = Get-PrecheckAssessment -Snapshot $snap
     $stop = @()
@@ -81,7 +81,7 @@ function Step-ThuMucDuLieu {
 
 # ---------------------------------------------------------------------------
 function Step-CaiPython {
-    Write-Buoc "Bước 2/$Tong: Cài Python $($Pins.Python.Version)"
+    Write-Buoc "Bước 2/${Tong}: Cài Python $($Pins.Python.Version)"
     if (Test-Path -LiteralPath $P.BasePython) {
         $v = ((Invoke-Native -FilePath $P.BasePython -Arguments @('--version') -Quiet).Output -join '').Trim()
         if ($v -match '^Python 3\.12\.\d+$') { Write-Dat ("Đã có $v, bỏ qua."); return }
@@ -98,7 +98,7 @@ function Step-CaiPython {
 }
 
 function Step-CaiPostgres {
-    Write-Buoc "Bước 3/$Tong: Cài PostgreSQL $($Pins.Postgres.Version)"
+    Write-Buoc "Bước 3/${Tong}: Cài PostgreSQL $($Pins.Postgres.Version)"
     $pgExe = Join-Path $P.PgBin 'postgres.exe'
     $svc = Get-Service -Name $Names.PgService -ErrorAction SilentlyContinue
     if ((Test-Path -LiteralPath $pgExe) -and $svc) {
@@ -144,7 +144,7 @@ function Step-CaiPostgres {
 
 # ---------------------------------------------------------------------------
 function Step-ChepMa {
-    Write-Buoc "Bước 4/$Tong: Chép mã vào $($P.Code), tạo môi trường Python và cài thư viện"
+    Write-Buoc "Bước 4/${Tong}: Chép mã vào $($P.Code), tạo môi trường Python và cài thư viện"
     if ($SourceRoot.TrimEnd('\') -ne $P.Code.TrimEnd('\')) {
         New-Item -ItemType Directory -Force -Path $P.Code | Out-Null
         $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($SourceRoot, $P.Code, '/MIR',
@@ -171,7 +171,7 @@ function Step-ChepMa {
 # ---------------------------------------------------------------------------
 function Step-CauHinhVaCSDL {
     param($Snap)
-    Write-Buoc "Bước 5/$Tong: Tạo cơ sở dữ liệu và tệp cấu hình bảo mật"
+    Write-Buoc "Bước 5/${Tong}: Tạo cơ sở dữ liệu và tệp cấu hình bảo mật"
     $ip = $Snap.ip
     $r = Invoke-Python -Paths $P -Base -Quiet -Arguments @((Join-Path $P.Code 'scripts\install_env.py'), 'write', '--clinic-env', $P.ClinicEnv,
         '--owner-env', $P.OwnerEnv, '--ip', $ip.address, '--prefix', [string]$ip.prefix, '--data-dir', $P.Data, '--pg-bin', $P.PgBin)
@@ -197,7 +197,7 @@ function Step-CauHinhVaCSDL {
 }
 
 function Step-CauHinhPostgres {
-    Write-Buoc "Bước 6/$Tong: Áp cấu hình PostgreSQL cho máy 8 GB, chỉ nghe 127.0.0.1"
+    Write-Buoc "Bước 6/${Tong}: Áp cấu hình PostgreSQL cho máy 8 GB, chỉ nghe 127.0.0.1"
     $conf = Join-Path $P.PgData 'postgresql.conf'
     $hba = Join-Path $P.PgData 'pg_hba.conf'
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -236,7 +236,7 @@ function Step-CauHinhPostgres {
 }
 
 function Step-Migration {
-    Write-Buoc "Bước 7/$Tong: Cập nhật cấu trúc dữ liệu (migration) và cấp quyền"
+    Write-Buoc "Bước 7/${Tong}: Cập nhật cấu trúc dữ liệu (migration) và cấp quyền"
     $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.with_env', $P.OwnerEnv, 'scripts.manage', 'migrate')
     if (-not $r.Ok) { Stop-CaiDat 'Migration thất bại.' ($r.Output | Select-Object -Last 6) 18 }
     $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, '--owner-env', $P.OwnerEnv, 'grant')
@@ -246,7 +246,7 @@ function Step-Migration {
 
 function Step-ChungChi {
     param($Snap)
-    Write-Buoc "Bước 8/$Tong: Chứng chỉ HTTPS theo IP $($Snap.ip.address)"
+    Write-Buoc "Bước 8/${Tong}: Chứng chỉ HTTPS theo IP $($Snap.ip.address)"
     $cert = Join-Path $P.Tls 'server.crt'
     $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 1) -Arguments @('-m', 'scripts.install_cert', 'check', '--cert', $cert, '--ip', $Snap.ip.address)
     $state = ConvertFrom-PythonJson $r
@@ -284,7 +284,7 @@ function Step-ChungChi {
 }
 
 function Step-DichVu {
-    Write-Buoc "Bước 9/$Tong: Đăng ký dịch vụ Windows tự khởi động, tự chạy lại khi lỗi"
+    Write-Buoc "Bước 9/${Tong}: Đăng ký dịch vụ Windows tự khởi động, tự chạy lại khi lỗi"
     New-Item -ItemType Directory -Force -Path $P.ServiceDir, (Join-Path $P.Logs 'service') | Out-Null
     $exe = Join-Path $P.ServiceDir ($Names.Service + '.exe')
     $pinned = Get-PinnedFile -Pin $Pins.WinSW -CacheDir $P.Downloads -LocalDirs @((Join-Path $PSScriptRoot 'taive'))
@@ -322,7 +322,7 @@ function Step-DichVu {
 
 function Step-TuongLua {
     param($Snap)
-    Write-Buoc "Bước 10/$Tong: Tường lửa chỉ mở cổng $($Names.Port) cho mạng $($script:Cidr)"
+    Write-Buoc "Bước 10/${Tong}: Tường lửa chỉ mở cổng $($Names.Port) cho mạng $($script:Cidr)"
     $netProfile = Get-NetConnectionProfile -InterfaceIndex $Snap.ip.interface_index -ErrorAction SilentlyContinue
     if ($netProfile -and [string]$netProfile.NetworkCategory -eq 'Public') {
         if (Read-CoKhong 'Mạng này đang là "Công cộng". Chuyển sang "Riêng tư" (mạng phòng khám)?' -KhongHoi:$KhongHoi -MacDinh $true) {
@@ -342,7 +342,7 @@ function Step-TuongLua {
 }
 
 function Step-SaoLuu {
-    Write-Buoc "Bước 11/$Tong: Lịch sao lưu 20:00 hằng ngày, giữ 30 bản"
+    Write-Buoc "Bước 11/${Tong}: Lịch sao lưu 20:00 hằng ngày, giữ 30 bản"
     if (-not (Test-Path -LiteralPath $P.BackupKey)) {
         $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_lan', 'keygen', '--key', $P.BackupKey)
         if (-not $r.Ok) { Stop-CaiDat 'Không tạo được khóa sao lưu.' $r.Output 26 }
@@ -393,7 +393,7 @@ function Step-SaoLuu {
 }
 
 function Step-QuanTri {
-    Write-Buoc "Bước 12/$Tong: Tài khoản quản trị đầu tiên"
+    Write-Buoc "Bước 12/${Tong}: Tài khoản quản trị đầu tiên"
     $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, 'admin-count')
     if ($r.Ok -and (ConvertFrom-PythonJson $r).admins -gt 0) { Write-Dat 'Đã có tài khoản quản trị, bỏ qua.'; return }
     if ($KhongHoi) {
@@ -462,7 +462,7 @@ try {
     Step-SaoLuu
     Step-QuanTri
     Step-BieuTuong
-    Write-Buoc "Bước 13/$Tong: Kiểm tra sức khỏe"
+    Write-Buoc "Bước 13/${Tong}: Kiểm tra sức khỏe"
     $report = Join-Path $P.Journal ('kiem-tra-sau-cai-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.txt')
     $healthy = Invoke-HealthReport -Paths $P -Output $report -Title 'KẾT QUẢ KIỂM TRA SAU CÀI ĐẶT'
     Write-Host ''

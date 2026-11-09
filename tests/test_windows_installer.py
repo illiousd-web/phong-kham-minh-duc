@@ -305,3 +305,12 @@ def test_certificate_created_checked_and_kept(tmp_path):
     # Re-creating keeps the previous files for manual rollback.
     install_cert.create('192.168.1.10', tls, ca_key)
     assert list(tls.glob('ca.crt.cu-*')) and list(ca_key.parent.glob('ca.key.cu-*'))
+
+
+def test_powershell_no_drive_qualified_variable_in_strings():
+    """"$Tong: ..." is parsed as a drive-qualified variable and breaks the whole script."""
+    pattern = re.compile(r'\$(?!script:|env:|global:|using:|private:|local:)[A-Za-z_]\w*:(?!:)')
+    for path in _windows_files('*.ps1', '*.psm1'):
+        for number, line in enumerate(path.read_text(encoding='utf-8-sig').splitlines(), 1):
+            if not line.lstrip().startswith('#'):
+                assert not pattern.search(line), f'{path.name}:{number}: dùng ${{ten}}: thay vì $ten:'
