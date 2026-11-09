@@ -502,7 +502,8 @@ try {
     else { Write-Host 'HOÀN TẤT CÀI ĐẶT nhưng có mục KHÔNG ĐẠT (xem danh sách trên).' -ForegroundColor Yellow; $exitCode = 40 }
     Write-Host ('Địa chỉ phần mềm: ' + $script:Origin)
     Write-Host ('Cài máy trạm: chép thư mục ' + $P.Share + ' (hoặc mở \\' + $env:COMPUTERNAME + '\' + $Names.Share + ') rồi bấm đúp CAI_MAY_TRAM.bat.')
-    Write-Host ('VIỆC BẮT BUỘC: chép tệp khóa ' + $P.BackupKey + ' sang một USB KHÁC (không phải ổ sao lưu), cất nơi an toàn. Mất khóa = không mở được bản sao lưu.') -ForegroundColor Yellow
+    Write-Host ('VIỆC BẮT BUỘC: chép tệp khóa ' + $P.BackupKey + ' sang một USB riêng, cất tách khỏi máy chủ. Mất khóa = không mở được bản sao lưu.') -ForegroundColor Yellow
+    Write-Host 'LƯU Ý: bản sao lưu chỉ nằm trên máy chủ này. Máy chủ hỏng hoặc bị mất thì mất toàn bộ dữ liệu.' -ForegroundColor Yellow
     if ($CanKhoiDongLai) { Write-Host 'Cần KHỞI ĐỘNG LẠI máy để áp dụng tệp hoán đổi mới.' -ForegroundColor Yellow }
 } catch {
     $code = $_.Exception.Data['MinhDucExit']
