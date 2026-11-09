@@ -138,7 +138,9 @@ def rollback_database(super_url, owner_url, app_role, backup_file, key_file, upl
     _, owner, _, db_name = parts(owner_url)
     uploads = Path(uploads).resolve()
     live_settings = settings_path(uploads)
-    stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+    # Giờ + hậu tố ngẫu nhiên: hai lần quay lui trong cùng một giây không trùng tên CSDL/thư mục giữ lại.
+    import secrets
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S') + '_' + secrets.token_hex(2)
     kept = f'{db_name}_loi_{stamp}'
     staged = uploads.with_name(uploads.name + f'.khoiphuc-{stamp}')
     staged_settings = live_settings.with_name(f'.ui_settings.khoiphuc-{stamp}.json')
