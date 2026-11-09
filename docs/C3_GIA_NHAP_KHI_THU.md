@@ -9,15 +9,17 @@ Tệp tổng hợp được đối chiếu có 288 dịch vụ, đủ mã, khôn
 - Giá trống bật cờ `service_catalog.price_at_collection`. Giá 0 không bật cờ. Giá nhập tay lần đầu là số nguyên lớn hơn 0, tối đa 2 tỷ đồng và bắt buộc có nội dung cụ thể.
 - Khoản phải thu và chỉ định lưu giá tại thời điểm phát sinh; `NULL` biểu thị chưa có giá, tách biệt với 0. Giá nhập tay lưu riêng, không ghi đè khoản gốc. Đổi bảng giá hoặc đổi cách tính giá của dịch vụ chỉ tác động khoản mới, kể cả khi chỉ định cũ còn nháp.
 - Bác sĩ và điều dưỡng được phân công lập chỉ định; điều dưỡng vẫn không đọc bệnh án đầy đủ hoặc công nợ. Chỉ thu ngân/quản lý nhập giá. Quản trị đơn thuần, lễ tân, bác sĩ, kỹ thuật viên không được nhập giá.
-- Còn khoản chưa có giá thì trạng thái thanh toán là CHƯA CÓ GIÁ, số còn phải thu cuối là `null`; số tiền đã biết được báo riêng. Thu tạm là giao dịch có `prepayment=true`; không coi đó là thu đủ hay hết nợ. Hàng chờ vẫn tính lượt này.
-- API in phiếu thu mặc định từ chối khi còn khoản chưa có giá. Chỉ yêu cầu `provisional=true` mới in **PHIẾU THU TẠM**. Không duyệt hoàn tiền trả thừa khi chưa xác định đủ giá.
+- Còn khoản chưa có giá thì trạng thái thanh toán là CHƯA CÓ GIÁ, số còn phải thu cuối là `null`; số tiền đã biết được báo riêng. Hàng chờ vẫn tính lượt này.
+- Loại giao dịch lưu lúc thu ở cột `payments.kind`: `provisional` (THU TẠM, khi lượt còn khoản chưa có giá), `regular` (thu thường), `advance` (chỉ khi dùng chức năng Nhận tiền ứng trước, giữ `is_advance=1`). Thu tạm không dùng cờ ứng trước và chạy được khi công tắc Ứng trước đang tắt. Trần thu tạm: tổng thu tạm cộng dồn của lượt vượt 5.000.000 đ hoặc vượt 3 lần tổng khoản đã có giá thì API cần `confirm_over_limit=true`.
+- API in phiếu thu luôn in theo loại đã lưu (PHIẾU THU TẠM / PHIẾU THU / PHIẾU THU TIỀN ỨNG TRƯỚC); không nhận tham số đổi loại. Không duyệt hoàn tiền trả thừa khi chưa xác định đủ giá.
+- `/api/dues` trả mọi lượt còn nợ, còn khoản chưa có giá, cần hoàn tiền, cộng lượt trong ngày (giờ Việt Nam); không cắt theo số lượt. Báo cáo ngày tách thu thường / thu tạm / ứng trước.
 - Sửa giá nhập tay phải lập đề nghị. Chỉ quản lý khác người đề nghị được duyệt; không dùng API sửa giá trực tiếp để bỏ qua bước này. Nhật ký và báo cáo ngày giữ cả lần nhập đầu và từng lần sửa đã duyệt. Báo cáo dùng ngày Việt Nam, không cắt ở 100 dòng.
 
 ## Nâng cấp và quay lui
 
 Migration phiên bản 4 chạy trong bước migrate hiện có của bộ cập nhật. Không chạy DDL khi máy chủ LAN khởi động. Cần áp dụng lại quyền ứng dụng bằng bước grant hiện có sau migration.
 
-Thay đổi gồm cờ giá nhập khi thu; cho phép NULL ở số tiền khoản phải thu và hai bản chụp giá chỉ định; bổ sung nhóm Thủ thuật; bảng giá nhập tay và đề nghị sửa; cập nhật view tính công nợ. Các giá trị cũ giữ nguyên. PostgreSQL dùng một giao dịch của tài khoản chủ CSDL với khóa advisory. SQLite thử nghiệm dùng một giao dịch dựng lại các bảng cần đổi và kiểm toàn bộ khóa ngoại trước khi commit.
+Thay đổi gồm cờ giá nhập khi thu; cột loại phiếu thu `payments.kind` (dữ liệu cũ: `is_advance=1` thành `advance`, còn lại `regular`); chỉ mục `charges(visit_id)`; cho phép NULL ở số tiền khoản phải thu và hai bản chụp giá chỉ định; bổ sung nhóm Thủ thuật; bảng giá nhập tay và đề nghị sửa; cập nhật view tính công nợ. Các giá trị cũ giữ nguyên. PostgreSQL dùng một giao dịch của tài khoản chủ CSDL với khóa advisory. SQLite thử nghiệm dùng một giao dịch dựng lại các bảng cần đổi và kiểm toàn bộ khóa ngoại trước khi commit.
 
 Trước cập nhật phải có bản sao lưu đã kiểm theo quy trình hiện có. Nếu cần quay lui migration bằng tài khoản chủ CSDL trong môi trường LAN đã cấu hình:
 
@@ -25,6 +27,6 @@ Trước cập nhật phải có bản sao lưu đã kiểm theo quy trình hi�
 python -m scripts.manage rollback-manual-prices
 ```
 
-Lệnh chỉ quay lui khi **chưa có dữ liệu của chức năng mới**. Có cờ giá nhập khi thu, khoản/chỉ định chưa có giá, nhóm mới hoặc lịch sử giá nhập tay thì lệnh dừng, giữ nguyên dữ liệu; không đổi NULL thành 0 hoặc xóa lịch sử để quay lui. Khi đó dùng bản sao lưu trước nâng cấp theo quy trình khôi phục hiện có và đối soát phần phát sinh sau bản sao lưu trước khi thực hiện. Sau quay lui chỉ chạy mã ứng dụng cũ tương ứng. Chạy lại migrate sẽ nâng lên phiên bản 4.
+Lệnh chỉ quay lui khi **chưa có dữ liệu của chức năng mới**. Có cờ giá nhập khi thu, khoản/chỉ định chưa có giá, nhóm mới, lịch sử giá nhập tay hoặc phiếu thu tạm thì lệnh dừng, giữ nguyên dữ liệu; không đổi NULL thành 0 hoặc xóa lịch sử để quay lui. Khi đó dùng bản sao lưu trước nâng cấp theo quy trình khôi phục hiện có và đối soát phần phát sinh sau bản sao lưu trước khi thực hiện. Sau quay lui chỉ chạy mã ứng dụng cũ tương ứng. Chạy lại migrate sẽ nâng lên phiên bản 4.
 
 Các bài kiểm migration SQLite/PostgreSQL kiểm chạy lên, chạy lặp lại, quay lui, lỗi giữa chừng, giữ dữ liệu cũ và từ chối quay lui có thể mất dữ liệu. Các bài API/trình duyệt C3 kiểm chỉ định, chưa có giá, thu tạm, nhập giá, thu đủ, đề nghị sửa, duyệt, quyền, báo cáo ngày và bố cục 390px. Job Chromium 109 chạy cùng luồng trình duyệt này.

@@ -3,8 +3,9 @@
 - Chỉ trả về con số, không trả tên hay mã người bệnh.
 - Chỉ trả số của các màn hình ứng với vai trò của người gọi.
 - Đếm bằng chính các API danh sách mà màn hình đó dùng (cùng phạm vi phân quyền,
-  cùng giới hạn danh sách), nên số trên menu khớp với hàng chờ hiển thị.
-  Công nợ gồm 100 lượt gần nhất và mọi lượt còn khoản chưa có giá, kể cả lượt cũ hơn.
+  cùng điều kiện lọc), nên số trên menu khớp với hàng chờ hiển thị.
+  Công nợ: mọi lượt còn nợ hoặc còn khoản chưa có giá, không giới hạn số lượt.
+  Đề nghị sửa giá: COUNT trực tiếp, không tải danh sách.
 - Xác thực bằng principal.peek: KHÔNG gia hạn phiên. Hỏi định kỳ mỗi 60 giây
   không làm mất tự đăng xuất sau 20 phút không thao tác.
 """
@@ -16,11 +17,11 @@ OPEN = lambda v: v['status'] not in ('completed', 'cancelled')
 def install_queue_counts(app, peek, load_ui):
     cache = {}
 
-    def get(path, u):
+    def get(path, u, **kw):
         if path not in cache:
             cache[path] = next(r.endpoint for r in app.routes
                                if getattr(r, 'path', None) == path and 'GET' in getattr(r, 'methods', ()))
-        return cache[path](u=u)
+        return cache[path](u=u, **kw)
 
     @app.get('/api/queue-counts')
     def queue_counts(u=Depends(peek)):
@@ -46,7 +47,8 @@ def install_queue_counts(app, peek, load_ui):
             total = sum(x['status'] == 'pending' for x in get('/api/adjustments', u))
             total += sum(x['status'] == 'pending' for x in get('/api/orders/cancellation-requests', u))
             total += sum(x['status'] == 'pending' for x in get('/api/medication-returns', u))
-            total += sum(x['status'] == 'pending' for x in get('/api/manual-price-requests', u))
+            # Đề nghị sửa giá: COUNT trực tiếp, không tải danh sách.
+            total += get('/api/manual-price-requests/count', u, status='pending')['count']
             if ui['addendum']:
                 total += len(get('/api/visits/addenda/pending', u))
             if ui['controlled_drugs'] and 'controlled_reviewer' in roles:

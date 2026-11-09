@@ -2,7 +2,9 @@
 from datetime import datetime, timedelta, timezone
 import json
 
-from fastapi import Depends, HTTPException
+from typing import Literal
+
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from .domain import invoice
@@ -10,22 +12,36 @@ from .domain import invoice
 VN = timezone(timedelta(hours=7))
 
 
+def normalize(value):
+    """Gộp mọi khoảng trắng (cả dấu cách, tab, xuống dòng) thành một dấu cách, bỏ đầu/cuối."""
+    return ' '.join(str(value).split())
+
+
 class ManualPrice(BaseModel):
     amount: int = Field(strict=True, gt=0, le=2_000_000_000)
-    description: str = Field(min_length=1, max_length=240)
+    description: str = Field(max_length=240)
     request_key: str = Field(min_length=8, max_length=120)
 
+    # Chuẩn hóa khoảng trắng TRƯỚC rồi mới kiểm độ dài: nội dung toàn dấu cách bị từ chối.
     @field_validator('description')
     @classmethod
     def content_required(cls, value):
-        value = ' '.join(value.split())
+        value = normalize(value)
         if not value:
             raise ValueError('Bắt buộc ghi nội dung dịch vụ cụ thể')
         return value
 
 
 class ManualPriceChange(ManualPrice):
-    reason: str = Field(min_length=8, max_length=500)
+    reason: str = Field(max_length=500)
+
+    @field_validator('reason')
+    @classmethod
+    def reason_required(cls, value):
+        value = normalize(value)
+        if len(value) < 8:
+            raise ValueError('Lý do sửa giá cần ít nhất 8 ký tự (không tính khoảng trắng thừa)')
+        return value
 
 
 class Review(BaseModel):
@@ -93,18 +109,35 @@ def install_manual_prices(app, db, principal, require, audit, now):
                               'description': data.description}, ensure_ascii=False))
             return {'id': rid, 'status': 'pending'}
 
+    def scope(u, status):
+        """Điều kiện lọc chung cho danh sách và số đếm: thu ngân chỉ thấy đề nghị của mình."""
+        where, args = [], []
+        if 'manager' not in u['roles']:
+            where.append('r.proposed_by=?')
+            args.append(u['id'])
+        if status:
+            where.append('r.status=?')
+            args.append(status)
+        return (' WHERE ' + ' AND '.join(where)) if where else '', args
+
     @app.get('/api/manual-price-requests')
-    def requests(u=Depends(principal)):
+    def requests(status: Literal['pending', 'approved', 'rejected'] | None = None,
+                 limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0), u=Depends(principal)):
+        """Phân trang: mới nhất trước, tối đa 200 dòng mỗi trang."""
         require(u, 'cashier', 'manager')
+        where, args = scope(u, status)
         with db() as c:
             sql = '''SELECT r.*,ch.visit_id,ch.label,p.full_name AS patient_name,u.full_name AS proposed_name
                 FROM manual_price_requests r JOIN charges ch ON ch.id=r.charge_id JOIN visits v ON v.id=ch.visit_id
-                JOIN patients p ON p.id=v.patient_id JOIN users u ON u.id=r.proposed_by'''
-            args = ()
-            if 'manager' not in u['roles']:
-                sql += ' WHERE r.proposed_by=?'
-                args = (u['id'],)
-            return [dict(r) for r in c.execute(sql + ' ORDER BY r.id DESC', args)]
+                JOIN patients p ON p.id=v.patient_id JOIN users u ON u.id=r.proposed_by''' + where
+            return [dict(r) for r in c.execute(sql + ' ORDER BY r.id DESC LIMIT ? OFFSET ?', (*args, limit, offset))]
+
+    @app.get('/api/manual-price-requests/count')
+    def request_count(status: Literal['pending', 'approved', 'rejected'] | None = None, u=Depends(principal)):
+        require(u, 'cashier', 'manager')
+        where, args = scope(u, status)
+        with db() as c:
+            return {'count': c.execute('SELECT COUNT(*) FROM manual_price_requests r' + where, args).fetchone()[0]}
 
     @app.post('/api/manual-price-requests/{rid}/review')
     def review(rid: int, data: Review, u=Depends(principal)):
@@ -157,6 +190,10 @@ def install_manual_prices(app, db, principal, require, audit, now):
             unpriced = [dict(r) for r in c.execute('''SELECT ch.id AS charge_id,ch.visit_id,ch.label,p.full_name AS patient_name
                 FROM effective_charges ch JOIN visits v ON v.id=ch.visit_id JOIN patients p ON p.id=v.patient_id
                 WHERE ch.amount IS NULL AND ch.created_at>=? AND ch.created_at<? ORDER BY ch.id''', (begin, end))]
-        return {'day': start.strftime('%d/%m/%Y'), 'entries': sorted(entries + changes, key=lambda r: (r['occurred_at'], r['charge_id'])),
+            # Thu trong ngày tách theo loại đã lưu lúc thu.
+            payments = {k: {'count': 0, 'total': 0} for k in ('regular', 'provisional', 'advance')}
+            for r in c.execute('SELECT kind,COUNT(*) AS n,COALESCE(SUM(amount),0) AS total FROM payments WHERE created_at>=? AND created_at<? GROUP BY kind', (begin, end)):
+                payments[r['kind']] = {'count': r['n'], 'total': r['total']}
+        return {'day': start.strftime('%d/%m/%Y'), 'payments': payments, 'entries': sorted(entries + changes, key=lambda r: (r['occurred_at'], r['charge_id'])),
                 'total_entered': sum(r['amount'] for r in entries), 'adjustment_delta': sum(r['amount'] - r['previous_amount'] for r in changes),
                 'unpriced': unpriced}

@@ -24,13 +24,18 @@ def legacy_pg():
             c.execute((ROOT / 'tests/fixtures/v042_schema_pg.sql').read_text())
             old_data(c, True)
             migrate_v050(PGConnection(c), postgres=True)
+            # Một khoản ứng trước cũ (is_advance=1) để kiểm dữ liệu cũ giữ nguyên ý nghĩa sau v4.
+            c.execute('''INSERT INTO payments(visit_id,amount,method,created_by,created_at,idempotency_key,is_advance)
+                         SELECT visit_id,10000,method,created_by,created_at,'legacy-advance',1 FROM payments ORDER BY id LIMIT 1''')
         yield url
     finally:
         drop_db(name)
 
 
 def snapshots(c):
-    return {t: [dict(r) for r in c.execute('SELECT * FROM ' + t + ' ORDER BY 1')] for t in (
+    """Mọi cột CŨ; cột payments.kind mới của v4 được kiểm riêng."""
+    return {t: [{k: v for k, v in dict(r).items() if not (t == 'payments' and k == 'kind')}
+                for r in c.execute('SELECT * FROM ' + t + ' ORDER BY 1')] for t in (
         'charges', 'orders', 'order_authorizations', 'payments', 'charge_sources', 'patients', 'visits', 'audit_log')}
 
 
@@ -42,16 +47,22 @@ def test_pg_migration_up_down_idempotent_preserves_all_old_values(legacy_pg):
         assert snapshots(c) == before
         assert [r[0] for r in c.execute('SELECT amount FROM effective_charges ORDER BY id')] == [150000, 25000]
         assert c.execute('SELECT count(*) FROM service_catalog WHERE price_at_collection<>0').fetchone()[0] == 0
+        # Dữ liệu cũ: is_advance=1 -> ứng trước; còn lại -> thu thường. Chưa có thu tạm.
+        kinds = {(r['is_advance'], r['kind']) for r in c.execute('SELECT is_advance,kind FROM payments')}
+        assert kinds == {(0, 'regular'), (1, 'advance')}
+        assert c.execute("SELECT 1 FROM pg_indexes WHERE indexname='idx_charges_visit'").fetchone()
         migrate_manual_prices(PGConnection(c), postgres=True, down=True)
         migrate_manual_prices(PGConnection(c), postgres=True, down=True)
         assert snapshots(c) == before
         assert not c.execute('SELECT 1 FROM schema_migrations WHERE version=4').fetchone()
         assert not c.execute("SELECT 1 FROM information_schema.columns WHERE table_name='service_catalog' AND column_name='price_at_collection'").fetchone()
+        assert not c.execute("SELECT 1 FROM information_schema.columns WHERE table_name='payments' AND column_name='kind'").fetchone()
+        assert not c.execute("SELECT 1 FROM pg_indexes WHERE indexname='idx_charges_visit'").fetchone()
         migrate_manual_prices(PGConnection(c), postgres=True)
         assert snapshots(c) == before
 
 
-@pytest.mark.parametrize('data', ['flag', 'null', 'history', 'category'])
+@pytest.mark.parametrize('data', ['flag', 'null', 'history', 'category', 'provisional'])
 def test_pg_rollback_refuses_data_and_preserves_every_row(legacy_pg, data):
     with psycopg.connect(legacy_pg, row_factory=record_factory) as c:
         migrate_manual_prices(PGConnection(c), postgres=True)
@@ -61,6 +72,8 @@ def test_pg_rollback_refuses_data_and_preserves_every_row(legacy_pg, data):
             c.execute('UPDATE charges SET amount=NULL WHERE id=1')
         elif data == 'history':
             c.execute("INSERT INTO manual_charge_prices VALUES(1,100000,'Nội dung giả lập',1,'2026-11-09','fake-history')")
+        elif data == 'provisional':
+            c.execute("UPDATE payments SET kind='provisional' WHERE id=(SELECT min(id) FROM payments)")
         else:
             c.execute("UPDATE service_categories SET category='procedure' WHERE service_id=2")
         before = snapshots(c)

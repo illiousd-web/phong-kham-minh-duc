@@ -50,9 +50,21 @@ def price(actors, cid, amount=120000, description='Thủ thuật giả lập c�
         'amount': amount, 'description': description, 'request_key': key or secrets.token_hex(12)})
 
 
-def payment(actors, vid, amount, provisional=False):
+def payment(actors, vid, amount, advance=False, confirm=False):
+    """advance=True chỉ dùng cho chức năng Nhận tiền ứng trước; thu tạm do máy chủ tự xác định."""
     return client.post('/api/payments', headers=actors['thungan'], json={
-        'visit_id': vid, 'amount': amount, 'method': 'cash', 'prepayment': provisional, 'idempotency_key': secrets.token_hex(12)})
+        'visit_id': vid, 'amount': amount, 'method': 'cash', 'prepayment': advance,
+        'confirm_over_limit': confirm, 'idempotency_key': secrets.token_hex(12)})
+
+
+def receipt_title(actors, pid, query=''):
+    r = client.get(f'/api/print/receipt/{pid}{query}', headers=actors['thungan'])
+    assert r.status_code == 200, r.text
+    with pymupdf.open(stream=r.content, filetype='pdf') as pdf:
+        text = ''.join(p.get_text() for p in pdf)
+    for title in ('PHIẾU THU TIỀN ỨNG TRƯỚC', 'PHIẾU THU TẠM', 'PHIẾU THU'):
+        if title in text:
+            return title
 
 
 def test_import_blank_is_manual_zero_stays_zero_and_second_import_unchanged(actors):
@@ -102,21 +114,20 @@ def test_unpriced_collection_receipt_and_complete_payment(actors):
     assert ch['amount'] is None and ch['price_at_collection']
     state = billing(actors, vid)
     assert state['payment_status'] == 'unpriced' and state['billing']['due'] is None
-    assert payment(actors, vid, 150000).status_code == 409
-    paid = payment(actors, vid, 50000, provisional=True)
+    # Còn khoản chưa có giá: máy chủ tự lưu là THU TẠM (không qua cờ ứng trước).
+    paid = payment(actors, vid, 50000)
     assert paid.status_code == 201, paid.text
-    assert client.get(f"/api/print/receipt/{paid.json()['id']}", headers=actors['thungan']).status_code == 409
-    temporary = client.get(f"/api/print/receipt/{paid.json()['id']}?provisional=true", headers=actors['thungan'])
-    assert temporary.status_code == 200
-    with pymupdf.open(stream=temporary.content, filetype='pdf') as pdf:
-        assert 'PHIẾU THU TẠM' in ''.join(p.get_text() for p in pdf)
+    assert paid.json()['kind'] == 'provisional'
+    assert receipt_title(actors, paid.json()['id']) == 'PHIẾU THU TẠM'
     assert price(actors, ch['id']).status_code == 200
     doctor_order = next(o for o in client.get('/api/orders', headers=actors['bs_noi']).json() if o['id'] == oid)
     assert doctor_order['proposed_price'] is None and doctor_order['unpriced'] == 0
     state = billing(actors, vid)
     assert state['billing']['due'] == 220000 and state['payment_status'] == 'due'
-    assert payment(actors, vid, 220000).status_code == 201
+    final = payment(actors, vid, 220000)
+    assert final.status_code == 201 and final.json()['kind'] == 'regular'
     assert billing(actors, vid)['payment_status'] == 'settled'
+    assert receipt_title(actors, final.json()['id']) == 'PHIẾU THU'
     assert line(actors, vid, oid)['amount'] == 120000
 
 
@@ -134,8 +145,11 @@ def test_unpriced_only_visit_remains_in_cashier_queue_even_if_known_balance_zero
     dues = client.get('/api/dues', headers=actors['thungan']).json()
     assert next(d for d in dues if d['visit_id'] == vid)['unpriced_count'] == 1
     assert client.get('/api/queue-counts', headers=actors['thungan']).json()['cashier'] == sum(d['charged'] > d['paid'] or d['unpriced_count'] > 0 for d in dues)
-    assert payment(actors, vid, 50000).status_code == 409
-    assert payment(actors, vid, 50000, True).status_code == 201
+    # Chưa có khoản nào có giá: 3 × 0 = 0 nên thu tạm nào cũng vượt trần, phải xác nhận.
+    refused = payment(actors, vid, 50000)
+    assert refused.status_code == 409 and 'vượt trần' in refused.json()['detail']
+    confirmed = payment(actors, vid, 50000, confirm=True)
+    assert confirmed.status_code == 201 and confirmed.json()['kind'] == 'provisional'
     assert billing(actors, vid)['payment_status'] == 'unpriced'
 
 

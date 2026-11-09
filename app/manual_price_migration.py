@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 NULLABLE = {'charges': 'amount', 'orders': 'proposed_price', 'order_authorizations': 'unit_price'}
 CATEGORIES = {'service_categories': "'consultation','lab','ultrasound','xray','ecg'"}
 FLAG = 'price_at_collection'
+# Loại giao dịch lưu lúc thu: thu thường / thu tạm (còn khoản chưa có giá) / ứng trước.
+# Dữ liệu cũ: is_advance=1 là ứng trước, còn lại là thu thường (trước v4 chưa có thu tạm).
+PAYMENT_KIND = "kind TEXT NOT NULL DEFAULT 'regular' CHECK(kind IN ('regular','provisional','advance'))"
 VIEW = """CREATE VIEW effective_charges AS SELECT ch.id,ch.visit_id,ch.label,ch.created_at,
 CASE WHEN EXISTS(SELECT 1 FROM charge_voids v WHERE v.charge_id=ch.id) THEN 0
 ELSE COALESCE((SELECT p.amount FROM charge_pricing p WHERE p.charge_id=ch.id),
@@ -29,6 +32,8 @@ def down_guard(c):
     for table, column in NULLABLE.items():
         if c.execute(f'SELECT 1 FROM {table} WHERE {column} IS NULL LIMIT 1').fetchone():
             raise ValueError('Không thể quay lui: còn khoản/chỉ định chưa có giá; không được chuyển thành 0 hoặc xóa dữ liệu')
+    if c.execute("SELECT 1 FROM payments WHERE kind='provisional' LIMIT 1").fetchone():
+        raise ValueError('Không thể quay lui: đã có phiếu thu tạm; bản cũ không phân biệt được thu tạm với thu thường')
     for table in ('manual_charge_prices', 'manual_price_requests'):
         if c.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone():
             raise ValueError('Không thể quay lui: đã có lịch sử giá nhập tay; hãy khôi phục bản sao lưu trước nâng cấp')
@@ -53,9 +58,13 @@ def migrate_manual_prices(c, *, postgres=False, down=False):
         for table, column in NULLABLE.items():
             c.execute(f'ALTER TABLE {table} ALTER COLUMN {column} SET NOT NULL')
         c.execute('ALTER TABLE service_catalog DROP COLUMN price_at_collection')
+        c.execute('ALTER TABLE payments DROP COLUMN kind')
+        c.execute('DROP INDEX IF EXISTS idx_charges_visit')
         c.execute('DELETE FROM schema_migrations WHERE version=4')
         return
     c.execute('ALTER TABLE service_catalog ADD COLUMN price_at_collection INTEGER NOT NULL DEFAULT 0 CHECK(price_at_collection IN (0,1))')
+    c.execute('ALTER TABLE payments ADD COLUMN ' + PAYMENT_KIND)
+    c.execute("UPDATE payments SET kind='advance' WHERE is_advance=1")
     for table, original in CATEGORIES.items():
         allowed = original + ",'procedure'"
         c.execute(f'ALTER TABLE {table} DROP CONSTRAINT {table}_category_check')
@@ -108,9 +117,13 @@ def migrate_sqlite_manual_prices(path, *, down=False):
             c.execute('DROP TABLE manual_price_requests')
             c.execute('DROP TABLE manual_charge_prices')
             c.execute('ALTER TABLE service_catalog DROP COLUMN price_at_collection')
+            c.execute('ALTER TABLE payments DROP COLUMN kind')
+            c.execute('DROP INDEX IF EXISTS idx_charges_visit')
             c.execute('DELETE FROM schema_migrations WHERE version=4')
         else:
             c.execute('ALTER TABLE service_catalog ADD COLUMN price_at_collection INTEGER NOT NULL DEFAULT 0 CHECK(price_at_collection IN (0,1))')
+            c.execute('ALTER TABLE payments ADD COLUMN ' + PAYMENT_KIND)
+            c.execute("UPDATE payments SET kind='advance' WHERE is_advance=1")
             for sql in (ROOT / 'migrations/004_manual_prices.sql').read_text(encoding='utf-8').split(';'):
                 if sql.strip():
                     c.execute(sql)

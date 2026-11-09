@@ -5,6 +5,7 @@ import json
 import math
 import re
 import zipfile
+from xml.etree import ElementTree
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -30,6 +31,40 @@ def key(value):
     return clean(value).casefold()
 
 
+MAIN_NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+
+
+def only_data_sheet(content):
+    """Chọn trang dữ liệu và trả bản tệp (trong bộ nhớ) chỉ khai báo trang đó.
+
+    openpyxl nạp tệp sẽ mở phần đầu của MỌI trang được khai báo trong workbook.xml.
+    Bỏ khai báo các trang khác để chúng không bị đọc; phần XML của chúng nằm yên trong
+    gói, không ai mở. Chỉ chấp nhận tệp một trang, hoặc tệp tổng hợp đúng hai trang
+    BANG_GIA (dữ liệu) và CAN_XEM_LAI (ghi chú, bỏ qua).
+    """
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        xml = archive.read('xl/workbook.xml')
+        if b'<!DOCTYPE' in xml or b'<!ENTITY' in xml:
+            raise HTTPException(422, 'Tệp Excel có khai báo XML không được phép')
+        names = [s.get('name') for s in ElementTree.fromstring(xml).iter(MAIN_NS + 'sheet')]
+        if len(names) == 1:
+            return content
+        if set(names) != {'BANG_GIA', 'CAN_XEM_LAI'} or len(names) != 2:
+            raise HTTPException(422, 'Dùng tệp mẫu một trang tính; tệp tổng hợp chỉ được có BANG_GIA và CAN_XEM_LAI')
+        text = xml.decode('utf-8')
+        text, removed = re.subn(r'<(?:\w+:)?sheet\b[^>]*\bname="CAN_XEM_LAI"[^>]*/>', '', text)
+        if removed != 1:
+            raise HTTPException(422, 'Không xác định được trang BANG_GIA trong tệp')
+        # Tên định nghĩa và trang đang mở có thể trỏ tới trang đã bỏ: bỏ/đặt lại, không ảnh hưởng dữ liệu.
+        text = re.sub(r'<(?:\w+:)?definedNames\b.*?</(?:\w+:)?definedNames>', '', text, flags=re.S)
+        text = re.sub(r'\bactiveTab="\d+"', 'activeTab="0"', text)
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as target:
+            for item in archive.infolist():
+                target.writestr(item.filename, text.encode('utf-8') if item.filename == 'xl/workbook.xml' else archive.read(item.filename))
+        return out.getvalue()
+
+
 def read_rows(content):
     """No macro loading, external links or formula evaluation, including cached formulas."""
     try:
@@ -42,16 +77,12 @@ def read_rows(content):
             if (b'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml' not in types
                     or any('vbaproject' in x.filename.casefold() for x in entries)):
                 raise HTTPException(415, 'Chỉ nhận tệp .xlsx, không nhận tệp có macro')
-        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=False, keep_links=False)
+        # Chỉ trang dữ liệu (BANG_GIA hoặc trang duy nhất) được nạp và kiểm; trang khác không đọc.
+        workbook = load_workbook(io.BytesIO(only_data_sheet(content)), read_only=True, data_only=False, keep_links=False)
         try:
-            if len(workbook.sheetnames) == 1:
-                sheet = workbook.active
-            elif set(workbook.sheetnames) == {'BANG_GIA', 'CAN_XEM_LAI'}:
-                # The supplied clinic workbook has one data sheet and a named
-                # review-notes sheet. Never select an arbitrary active sheet.
-                sheet = workbook['BANG_GIA']
-            else:
+            if len(workbook.sheetnames) != 1:
                 raise HTTPException(422, 'Dùng tệp mẫu một trang tính; tệp tổng hợp chỉ được có BANG_GIA và CAN_XEM_LAI')
+            sheet = workbook[workbook.sheetnames[0]]
             # Do not trust the worksheet dimension advertised by an uploaded file.
             sheet.reset_dimensions()
             rows = []
@@ -194,17 +225,24 @@ def install_price_import(app, db, principal, require, audit):
                             suffix += 1
                             code = base + '_' + str(suffix)
                         c.execute('UPDATE service_catalog SET code=? WHERE id=?', (code, sid))
+                    else:
+                        code = row['code']
                     c.execute('INSERT INTO service_categories(service_id,category) VALUES(?,?)', (sid, row['category']))
+                    # Nhật ký từng dịch vụ thêm mới: mã thật (kể cả mã tự sinh), tên, nhóm, giá, dòng, lần nhập.
+                    audit(c, u, 'service_added_from_import', 'service', sid, json.dumps(
+                        {'import_id': expected, 'row': row['row'], 'code': code, 'name': row['name'], 'group': row['group'],
+                         'category': row['category'], 'price': row['price'], 'price_at_collection': row['price_at_collection']},
+                        ensure_ascii=False))
                     added += 1
                 elif row['status'] == 'ĐỔI GIÁ':
                     c.execute('UPDATE service_catalog SET price=?,price_at_collection=? WHERE id=?',
                               (row['price'] if row['price'] is not None else 0, int(row['price_at_collection']), row['service_id']))
                     audit(c, u, 'service_price_imported', 'service', row['service_id'], json.dumps(
-                        {'row': row['row'], 'code': row['code'], 'name': row['name'],
+                        {'import_id': expected, 'row': row['row'], 'code': row['code'], 'name': row['name'],
                          'old_price': row['old_price'], 'new_price': row['price'], 'price_at_collection': row['price_at_collection']}, ensure_ascii=False))
                     changed += 1
             audit(c, u, 'service_prices_imported', 'service_import', None, json.dumps(
-                {'rows': len(rows), 'added': added, 'changed': changed, 'unchanged': len(rows)-added-changed,
+                {'import_id': expected, 'rows': len(rows), 'added': added, 'changed': changed, 'unchanged': len(rows)-added-changed,
                  'preview_id': expected}, ensure_ascii=False))
             return {'rows': len(rows), 'added': added, 'changed': changed, 'unchanged': len(rows)-added-changed}
 

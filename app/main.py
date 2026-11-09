@@ -634,20 +634,40 @@ def get_rx(u=Depends(principal)):
                 WHERE pi.prescription_id=? ORDER BY pi.id''',(rx['id'],))]
         return rows
 
+# Hàng chờ thu ngân: KHÔNG cắt theo "100 lượt mới nhất". Trả mọi lượt còn nợ, còn khoản
+# chưa có giá, cần hoàn tiền (đã thu > phải thu), cộng mọi lượt tạo trong ngày hôm nay (giờ VN).
+# Tính tổng một lần bằng GROUP BY (không truy vấn con theo từng lượt) để đủ nhanh với vài chục nghìn lượt.
+DUES_SQL='''WITH ch AS (SELECT visit_id,COALESCE(SUM(amount),0) AS total,
+          SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS unpriced FROM effective_charges GROUP BY visit_id),
+     adj AS (SELECT visit_id,SUM(CASE WHEN kind='discount' THEN amount ELSE 0 END) AS discount,
+          SUM(CASE WHEN kind='refund' THEN amount ELSE 0 END) AS refund
+          FROM effective_adjustments WHERE status='approved' GROUP BY visit_id),
+     pay AS (SELECT visit_id,SUM(amount) AS total FROM payments GROUP BY visit_id),
+     t AS (SELECT v.id,v.patient_id,v.created_at,COALESCE(ch.total,0)-COALESCE(adj.discount,0) AS charged,
+          COALESCE(pay.total,0)-COALESCE(adj.refund,0) AS paid,COALESCE(ch.unpriced,0) AS unpriced_count
+          FROM visits v LEFT JOIN ch ON ch.visit_id=v.id LEFT JOIN adj ON adj.visit_id=v.id LEFT JOIN pay ON pay.visit_id=v.id)
+SELECT t.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,t.charged,t.paid,t.unpriced_count
+FROM t JOIN patients p ON p.id=t.patient_id
+WHERE t.charged<>t.paid OR t.unpriced_count>0 OR t.created_at>=?
+ORDER BY t.id DESC'''
+
+
+def today_start_utc():
+    """0 giờ hôm nay theo giờ Việt Nam, dạng chuỗi UTC như cột created_at."""
+    vn=timezone(timedelta(hours=7))
+    return datetime.now(vn).replace(hour=0,minute=0,second=0,microsecond=0).astimezone(timezone.utc).isoformat(timespec='seconds')
+
+
+def dues_rows(c,since=None):
+    return [dict(x) for x in c.execute(DUES_SQL,(since or today_start_utc(),))]
+
+
 @app.get('/api/dues')
 def dues(u=Depends(principal)):
     # Lễ tân không xem công nợ từng lượt; người kiêm thu ngân đọc qua vai trò cashier.
     require(u,'cashier','manager')
     with db() as c:
-        sql='''SELECT v.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,
-         COALESCE((SELECT SUM(ch.amount) FROM effective_charges ch WHERE ch.visit_id=v.id AND NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id)),0)-COALESCE((SELECT SUM(amount) FROM effective_adjustments WHERE visit_id=v.id AND kind='discount' AND status='approved'),0) AS charged,
-         COALESCE((SELECT SUM(amount) FROM payments WHERE visit_id=v.id),0)-COALESCE((SELECT SUM(amount) FROM effective_adjustments WHERE visit_id=v.id AND kind='refund' AND status='approved'),0) AS paid,
-         (SELECT COUNT(*) FROM effective_charges ch WHERE ch.visit_id=v.id AND ch.amount IS NULL) AS unpriced_count
-         FROM visits v JOIN patients p ON p.id=v.patient_id
-         WHERE v.id IN (SELECT id FROM visits ORDER BY id DESC LIMIT 100)
-            OR EXISTS(SELECT 1 FROM effective_charges ch WHERE ch.visit_id=v.id AND ch.amount IS NULL)
-         ORDER BY v.id DESC'''
-        return [dict(x) for x in c.execute(sql)]
+        return dues_rows(c)
 
 class PaymentInput(BaseModel):
     visit_id:int
@@ -655,7 +675,19 @@ class PaymentInput(BaseModel):
     method:Literal['cash','transfer']
     idempotency_key:str=Field(min_length=8,max_length=120)
     external_ref:str|None=Field(default=None,max_length=120)
-    prepayment:bool=False
+    prepayment:bool=False  # Chỉ chức năng "Nhận tiền ứng trước" gửi True.
+    confirm_over_limit:bool=False  # Xác nhận trong trang khi thu tạm vượt trần.
+
+# Trần thu tạm (cộng dồn mọi phiếu thu tạm của lượt, kể cả phiếu đang thu).
+PROVISIONAL_CAP=5_000_000
+PROVISIONAL_MULTIPLE=3
+
+def provisional_limit(c,vid,amount):
+    """(tổng thu tạm sau phiếu này, tổng các khoản đã có giá, có vượt trần không)."""
+    before=c.execute("SELECT COALESCE(SUM(amount),0) FROM payments WHERE visit_id=? AND kind='provisional'",(vid,)).fetchone()[0]
+    priced=c.execute('SELECT COALESCE(SUM(amount),0) FROM effective_charges WHERE visit_id=? AND amount IS NOT NULL',(vid,)).fetchone()[0]
+    total=before+amount
+    return total,priced,total>PROVISIONAL_CAP or total>PROVISIONAL_MULTIPLE*priced
 
 @app.post('/api/payments',status_code=201)
 def create_payment(data:PaymentInput,u=Depends(principal)):
@@ -667,16 +699,22 @@ def create_payment(data:PaymentInput,u=Depends(principal)):
             return {'id':old['id'],'status':'already_recorded'}
         if not c.execute('SELECT 1 FROM visits WHERE id=?',(data.visit_id,)).fetchone():raise HTTPException(404,'Không có lượt khám')
         if c.execute('SELECT status FROM visits WHERE id=?',(data.visit_id,)).fetchone()[0]=='cancelled':raise HTTPException(409,'Không nhận tiền mới cho lượt đã hủy')
-        if invoice(c,data.visit_id)['unpriced_count'] and not data.prepayment:
-            raise HTTPException(409,'Lượt còn khoản CHƯA CÓ GIÁ; chỉ được thu tạm, chưa được thu đủ')
+        # Loại giao dịch do máy chủ quyết định lúc thu và lưu lại; in phiếu luôn theo loại đã lưu.
+        if data.prepayment:kind='advance'
+        elif invoice(c,data.visit_id)['unpriced_count']:kind='provisional'
+        else:kind='regular'
+        if kind=='provisional':
+            total,priced,over=provisional_limit(c,data.visit_id,data.amount)
+            if over and not data.confirm_over_limit:
+                raise HTTPException(409,f'Thu tạm cộng dồn {total:,} đ vượt trần (5.000.000 đ hoặc 3 lần {priced:,} đ đã có giá). Đánh dấu ô xác nhận rồi thu lại'.replace(',', '.'))
         charged=c.execute("SELECT (SELECT COALESCE(SUM(ch.amount),0) FROM effective_charges ch WHERE ch.visit_id=? AND NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id))-(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE visit_id=? AND kind='discount' AND status='approved')",(data.visit_id,data.visit_id)).fetchone()[0]
         paid=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM payments WHERE visit_id=?)-(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE visit_id=? AND kind='refund' AND status='approved')",(data.visit_id,data.visit_id)).fetchone()[0]
-        if not data.prepayment and data.amount>charged-paid:raise HTTPException(409,'Số tiền vượt khoản còn phải thu')
-        c.execute('INSERT INTO payments(visit_id,amount,method,created_by,created_at,external_ref,idempotency_key,is_advance) VALUES(?,?,?,?,?,?,?,?)',
-                  (data.visit_id,data.amount,data.method,u['id'],NOW(),data.external_ref,data.idempotency_key,int(data.prepayment)))
+        if kind=='regular' and data.amount>charged-paid:raise HTTPException(409,'Số tiền vượt khoản còn phải thu')
+        c.execute('INSERT INTO payments(visit_id,amount,method,created_by,created_at,external_ref,idempotency_key,is_advance,kind) VALUES(?,?,?,?,?,?,?,?,?)',
+                  (data.visit_id,data.amount,data.method,u['id'],NOW(),data.external_ref,data.idempotency_key,int(kind=='advance'),kind))
         payid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
-        audit(c,u,'payment_recorded_demo','payment',payid)
-        return {'id':payid,'status':'recorded'}
+        audit(c,u,'payment_recorded_demo','payment',payid,kind+('; vượt trần thu tạm đã xác nhận' if kind=='provisional' and data.confirm_over_limit else ''))
+        return {'id':payid,'status':'recorded','kind':kind}
 
 @app.get('/api/stock')
 def stock(u=Depends(principal)):
@@ -768,7 +806,7 @@ def _invoice_state(c, vid:int):
 def list_payments(u=Depends(principal)):
     require(u,'cashier','manager')
     with db() as c:
-        return [dict(x) for x in c.execute('''SELECT m.id,m.visit_id,m.amount,m.method,m.created_at,m.external_ref,
+        return [dict(x) for x in c.execute('''SELECT m.id,m.visit_id,m.amount,m.method,m.created_at,m.external_ref,m.kind,
              (SELECT COUNT(*) FROM effective_charges ch WHERE ch.visit_id=m.visit_id AND ch.amount IS NULL) AS unpriced_count,
              p.code AS patient_code,p.full_name AS patient_name,users.full_name AS cashier_name
              FROM payments m JOIN visits v ON v.id=m.visit_id JOIN patients p ON p.id=v.patient_id
@@ -873,7 +911,7 @@ def stock_issue(data:StockIssue,u=Depends(principal)):
 
 @app.get('/api/print/{kind}/{item_id}')
 @export_slot
-def print_form(kind:str,item_id:int,provisional:bool=False,u=Depends(principal)):
+def print_form(kind:str,item_id:int,u=Depends(principal)):
     if kind not in ('intake','clinical','order','result','rx','follow_up','receipt'):
         raise HTTPException(404,'Biểu mẫu không tồn tại')
     with db(True) as c:
@@ -917,10 +955,9 @@ def print_form(kind:str,item_id:int,provisional:bool=False,u=Depends(principal))
                          JOIN users ON users.id=pay.created_by WHERE pay.id=?''',(item_id,)).fetchone()
             if not pay:raise HTTPException(404,'Không có khoản thu')
             require(u,'cashier','manager')
-            if invoice(c,pay['visit_id'])['unpriced_count'] and not provisional:
-                raise HTTPException(409,'Lượt còn khoản CHƯA CÓ GIÁ; chưa được in phiếu thu cuối. Chỉ in phiếu thu tạm')
             data=dict(pay);data['code']=f'MD-PT-{item_id:06d}'
-            data['provisional']=provisional
+            # Tiêu đề theo loại đã lưu lúc thu; người gọi không đổi được (không nhận tham số loại).
+            data['receipt_kind']=pay['kind']
         if kind=='clinical':data['addenda']=[dict(x) for x in c.execute("SELECT * FROM visit_addenda WHERE visit_id=? AND status='approved' ORDER BY id",(item_id,))]
         pdf=pdf_document(kind,data)
         audit(c,u,'form_pdf_generated_demo',kind,item_id)

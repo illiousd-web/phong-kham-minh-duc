@@ -38,11 +38,15 @@ def test_c3_pg_api_guards_queue_report_and_audit(clients, visit):
     payload = {'amount': 125000, 'description': 'Tiêm giả lập ghi rõ nội dung', 'request_key': secrets.token_hex(12)}
     for role in ('reception', 'doctor', 'technician', 'pharmacy', 'admin'):
         assert clients[role].post(f"/api/charges/{ch['id']}/manual-price", json=payload).status_code == 403
-    assert cash.post('/api/payments', json={'visit_id': visit, 'amount': 150000, 'method': 'cash', 'idempotency_key': secrets.token_hex(12)}).status_code == 409
-    provisional = cash.post('/api/payments', json={'visit_id': visit, 'amount': 25000, 'method': 'cash', 'prepayment': True, 'idempotency_key': secrets.token_hex(12)})
-    assert provisional.status_code == 201
-    assert cash.get(f"/api/print/receipt/{provisional.json()['id']}").status_code == 409
-    assert cash.get(f"/api/print/receipt/{provisional.json()['id']}?provisional=true").status_code == 200
+    # Thu tạm vượt 3 lần tổng khoản đã có giá (150.000 đ) mà chưa xác nhận: từ chối.
+    assert cash.post('/api/payments', json={'visit_id': visit, 'amount': 2_000_000, 'method': 'cash', 'idempotency_key': secrets.token_hex(12)}).status_code == 409
+    provisional = cash.post('/api/payments', json={'visit_id': visit, 'amount': 25000, 'method': 'cash', 'idempotency_key': secrets.token_hex(12)})
+    assert provisional.status_code == 201 and provisional.json()['kind'] == 'provisional'
+    for query in ('', '?provisional=false', '?provisional=0'):
+        printed = cash.get(f"/api/print/receipt/{provisional.json()['id']}{query}")
+        assert printed.status_code == 200
+        with pymupdf.open(stream=printed.content, filetype='pdf') as pdf:
+            assert 'PHIẾU THU TẠM' in ''.join(page.get_text() for page in pdf)
     assert cash.post(f"/api/charges/{ch['id']}/manual-price", json=payload).status_code == 200
     assert cash.post(f"/api/charges/{ch['id']}/manual-price", json={**payload, 'amount': 126000}).status_code == 409
     dues = cash.get('/api/dues').json()
@@ -90,7 +94,11 @@ def test_c3_manual_price_browser(https_server, clients, visit, width, ordering_r
         cash.locator('#cash_choose').select_option(str(visit)); settle(cash)
         expect(cash.locator('[data-form="payment"] button')).to_have_text('Thu tạm một phần')
         expect(cash.locator('#workspace')).to_contain_text('CHƯA CÓ GIÁ')
+        # Vượt trần thu tạm (3 lần khoản đã có giá) thì hiện ô xác nhận ngay trong trang.
+        cash.locator('[data-form="payment"] [name="amount"]').fill('2000000')
+        expect(cash.locator('[data-form="payment"] [data-cap-confirm]')).to_be_visible()
         cash.locator('[data-form="payment"] [name="amount"]').fill('25000')
+        expect(cash.locator('[data-form="payment"] [data-cap-confirm]')).to_be_hidden()
         temporary_id = submit(cash, 'payment', 'Đã thu tạm').json()['id']
         with cash.expect_download() as download:
             cash.locator(f'[data-action="export-receipt"][data-id="{temporary_id}"]').first.click()
@@ -103,6 +111,11 @@ def test_c3_manual_price_browser(https_server, clients, visit, width, ordering_r
         cash.locator('[data-form="manual-price"] [name="amount"]').fill('123000')
         cash.locator('[data-form="manual-price"] [name="description"]').fill('Tiêm giả lập C3 cụ thể ' + name)
         submit(cash, 'manual-price', 'Đã nhập giá')
+        # In lại phiếu thu tạm sau khi đã nhập đủ giá: vẫn là PHIẾU THU TẠM (theo loại đã lưu).
+        with cash.expect_download() as download:
+            cash.locator(f'[data-action="export-receipt"][data-id="{temporary_id}"]').first.click()
+        with pymupdf.open(stream=Path(download.value.path()).read_bytes(), filetype='pdf') as doc:
+            assert 'PHIẾU THU TẠM' in ''.join(p.get_text() for p in doc)
         expect(cash.locator('[data-form="payment"] [name="amount"]')).to_have_value('248000')
         submit(cash, 'payment', 'Đã thu tiền')
         state = clients['cashier'].get(f'/api/visits/{visit}/settlement').json()

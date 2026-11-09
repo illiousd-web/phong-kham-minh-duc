@@ -12,3 +12,4 @@ CREATE TABLE IF NOT EXISTS manual_price_requests (
 CREATE INDEX IF NOT EXISTS idx_manual_price_requests_charge ON manual_price_requests(charge_id,id);
 CREATE INDEX IF NOT EXISTS idx_manual_price_requests_pending ON manual_price_requests(status,id);
 CREATE INDEX IF NOT EXISTS idx_manual_charge_prices_day ON manual_charge_prices(priced_at);
+CREATE INDEX IF NOT EXISTS idx_charges_visit ON charges(visit_id);

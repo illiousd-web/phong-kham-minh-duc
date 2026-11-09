@@ -76,7 +76,8 @@ def pdf_document(kind:str, d:dict)->bytes:
     titles={'intake':'PHIẾU TIẾP ĐÓN BỆNH NHÂN','clinical':'PHIẾU KHÁM BỆNH NGOẠI TRÚ',
             'order':'PHIẾU CHỈ ĐỊNH CẬN LÂM SÀNG','result':'PHIẾU KẾT QUẢ CẬN LÂM SÀNG',
             'rx':'ĐƠN THUỐC NGOẠI TRÚ','follow_up':'GIẤY HẸN TÁI KHÁM','receipt':'PHIẾU THU'}
-    story.append(Paragraph('PHIẾU THU TẠM' if kind=='receipt' and d.get('provisional') else titles[kind],title))
+    receipt_titles={'provisional':'PHIẾU THU TẠM','advance':'PHIẾU THU TIỀN ỨNG TRƯỚC'}
+    story.append(Paragraph(receipt_titles.get(d.get('receipt_kind'),titles[kind]) if kind=='receipt' else titles[kind],title))
     story.append(Paragraph(f'Mã tham chiếu: {p(doc_id)} · Ngày in: {datetime.now().strftime("%d/%m/%Y %H:%M")}',subtitle))
     story.append(Spacer(1,3*mm))
     story.append(Paragraph('BẢN THỬ NGHIỆM — DỮ LIỆU MÔ PHỎNG — KHÔNG CÓ GIÁ TRỊ Y KHOA / KẾ TOÁN',note))
