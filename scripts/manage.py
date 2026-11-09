@@ -14,6 +14,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('migrate')
+    sub.add_parser('rollback-manual-prices', help='Quay lui migration giá nhập tay nếu chưa có dữ liệu của chức năng này')
     user = sub.add_parser('create-admin')
     user.add_argument('--username', required=True)
     user.add_argument('--name', required=True)
@@ -25,6 +26,12 @@ def main():
     if args.command == 'migrate':
         migrate()
         print('Schema migration complete; no demo data created.')
+        return
+    if args.command == 'rollback-manual-prices':
+        from app.manual_price_migration import migrate_manual_prices
+        with db(True) as c:
+            migrate_manual_prices(c, postgres=True, down=True)
+        print('Đã quay lui migration giá nhập tay; dữ liệu cũ giữ nguyên.')
         return
     if args.password_env:
         password = os.environ.pop(args.password_env, '')

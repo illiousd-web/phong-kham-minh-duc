@@ -54,7 +54,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=3").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=4").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -64,6 +64,9 @@ def init_db():
     with db(True) as c:
         from .migrations import migrate_v050
         migrate_v050(c)
+    from .manual_price_migration import migrate_sqlite_manual_prices
+    migrate_sqlite_manual_prices(DB)
+    with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
             salt=secrets.token_hex(16)
@@ -326,7 +329,7 @@ def create_visit(data:VisitInput,u=Depends(principal)):
         c.execute('INSERT INTO visits(patient_id,doctor_id,created_by,appointment_id,created_at) VALUES(?,?,?,?,?)',
                   (data.patient_id,data.doctor_id,u['id'],data.appointment_id,NOW()))
         vid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
-        c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',(vid,service['name'],service['price'],NOW()))
+        c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',(vid,service['name'],None if service['price_at_collection'] else service['price'],NOW()))
         if data.appointment_id:c.execute("UPDATE appointments SET status='arrived' WHERE id=?",(data.appointment_id,))
         revision(c,vid,u,NOW,'create','Tiếp nhận lượt khám giả lập')
         audit(c,u,'visit_created','visit',vid)
@@ -407,7 +410,7 @@ def update_clinical(visit_id:int,data:ClinicalInput,u=Depends(principal)):
 
 class OrderInput(BaseModel):
     visit_id:int
-    category:Literal['lab','ultrasound','xray','ecg']
+    category:Literal['consultation','lab','ultrasound','xray','ecg','procedure']
     name:str=Field(default='',max_length=180)
     service_id:int|None=None
     request_key:str|None=Field(default=None,min_length=8,max_length=120)
@@ -415,7 +418,7 @@ class OrderInput(BaseModel):
 
 @app.post('/api/orders',status_code=201)
 def add_order(data:OrderInput,u=Depends(principal)):
-    require(u,'doctor')
+    require(u,'doctor','nurse')
     with db(True) as c:
         if LAN and not data.request_key:
             raise HTTPException(422,'Chỉ định LAN phải có mã yêu cầu chống ghi trùng')
@@ -426,16 +429,19 @@ def add_order(data:OrderInput,u=Depends(principal)):
             if existing:
                 if existing['visit_id']!=data.visit_id or existing['service_id']!=data.service_id or existing['category']!=data.category or existing['requested_by']!=u['id']:
                     raise HTTPException(409,'Mã yêu cầu đã dùng cho nội dung khác')
-                return {'id':existing['order_id'],'charge_amount':existing['amount'] or 0,'status':'already_recorded'}
-        v=visit_access(c,u,data.visit_id,clinical=True)
+                return {'id':existing['order_id'],'charge_amount':existing['amount'],'status':'already_recorded'}
+        if 'nurse' in u['roles'] and c.execute('SELECT 1 FROM visit_nurses WHERE visit_id=? AND nurse_id=? AND active=1',(data.visit_id,u['id'])).fetchone():
+            v=visit_access(c,u,data.visit_id,clinical=False)
+        else:
+            v=visit_access(c,u,data.visit_id,clinical=True)
         ensure_open(v)
         service=None
         if data.service_id is not None:
-            service=c.execute('''SELECT sc.id,sc.name,sc.price,cat.category FROM service_catalog sc
+            service=c.execute('''SELECT sc.id,sc.name,sc.price,sc.price_at_collection,cat.category FROM service_catalog sc
                 JOIN service_categories cat ON cat.service_id=sc.id WHERE sc.id=?''',(data.service_id,)).fetchone()
-            if not service or service['category']!=data.category or service['price']<=0 or not c.execute('SELECT active FROM service_catalog WHERE id=?',(data.service_id,)).fetchone()[0]:
+            if not service or service['category']!=data.category or service['price']<0 or (service['category']=='consultation' and not service['price_at_collection']) or not c.execute('SELECT active FROM service_catalog WHERE id=?',(data.service_id,)).fetchone()[0]:
                 raise HTTPException(422,'Dịch vụ cận lâm sàng chưa có loại/giá hợp lệ')
-        elif LAN:
+        elif LAN or 'doctor' not in u['roles']:
             raise HTTPException(422,'Chỉ định LAN phải chọn dịch vụ từ bảng giá; không lập chỉ định miễn phí ngoài quy trình')
         elif len(data.name.strip())<3:
             raise HTTPException(422,'Cần nhập tên chỉ định thử nghiệm')
@@ -445,22 +451,29 @@ def add_order(data:OrderInput,u=Depends(principal)):
         oid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
         if service:
             c.execute('UPDATE orders SET service_id=?,proposed_price=?,status=? WHERE id=?',
-                      (service['id'],service['price'],'requested',oid))
+                      (service['id'],None if service['price_at_collection'] else service['price'],'requested',oid))
             if data.request_key:
                 c.execute('INSERT INTO order_requests(request_key,order_id,visit_id,service_id,category,requested_by) VALUES(?,?,?,?,?,?)',
                           (data.request_key,oid,data.visit_id,data.service_id,data.category,u['id']))
-        audit(c,u,'order_created','order',oid,'Nháp' if data.defer_approval else 'Bác sĩ xác nhận')
+        audit(c,u,'order_created','order',oid,'Nháp' if data.defer_approval else 'Người được phân công xác nhận')
         if service and not data.defer_approval:return authorize_order(c,oid,u,audit,NOW)
         status_refresh(c,data.visit_id)
         return {'id':oid,'charge_amount':0,'status':'requested' if service else 'ordered'}
 
 @app.get('/api/orders')
 def list_orders(u=Depends(principal)):
-    require(u,'doctor','technician')
+    require(u,'doctor','nurse','technician')
     with db() as c:
-        sql='SELECT o.id,o.visit_id,o.category,o.name,o.status,o.service_id,o.proposed_price,o.result_text,o.file_name,o.created_at,p.code AS patient_code,p.full_name AS patient_name FROM orders o JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id'
+        sql='''SELECT o.id,o.visit_id,o.category,o.name,o.status,o.service_id,o.proposed_price,o.result_text,o.file_name,o.created_at,
+            CASE WHEN o.status='requested' AND o.proposed_price IS NULL THEN 1
+            WHEN EXISTS(SELECT 1 FROM effective_charges ch JOIN charge_sources cs ON cs.charge_id=ch.id
+                WHERE cs.source_type='order' AND cs.source_id=o.id AND ch.amount IS NULL) THEN 1 ELSE 0 END AS unpriced,
+            p.code AS patient_code,p.full_name AS patient_name FROM orders o JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id'''
         args=[]
-        if 'doctor' in u['roles'] and 'technician' not in u['roles']:
+        if 'nurse' in u['roles'] and 'doctor' not in u['roles'] and 'technician' not in u['roles']:
+            sql=sql.replace('o.result_text,o.file_name,','NULL AS result_text,NULL AS file_name,')
+            sql+=' WHERE EXISTS(SELECT 1 FROM visit_nurses n WHERE n.visit_id=v.id AND n.nurse_id=? AND n.active=1)';args=[u['id']]
+        elif 'doctor' in u['roles'] and 'technician' not in u['roles']:
             sql+=' WHERE v.doctor_id=?';args=[u['id']]
         return [dict(x) for x in c.execute(sql+' ORDER BY o.id DESC LIMIT 100',args)]
 
@@ -628,8 +641,12 @@ def dues(u=Depends(principal)):
     with db() as c:
         sql='''SELECT v.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,
          COALESCE((SELECT SUM(ch.amount) FROM effective_charges ch WHERE ch.visit_id=v.id AND NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id)),0)-COALESCE((SELECT SUM(amount) FROM effective_adjustments WHERE visit_id=v.id AND kind='discount' AND status='approved'),0) AS charged,
-         COALESCE((SELECT SUM(amount) FROM payments WHERE visit_id=v.id),0)-COALESCE((SELECT SUM(amount) FROM effective_adjustments WHERE visit_id=v.id AND kind='refund' AND status='approved'),0) AS paid
-         FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'''
+         COALESCE((SELECT SUM(amount) FROM payments WHERE visit_id=v.id),0)-COALESCE((SELECT SUM(amount) FROM effective_adjustments WHERE visit_id=v.id AND kind='refund' AND status='approved'),0) AS paid,
+         (SELECT COUNT(*) FROM effective_charges ch WHERE ch.visit_id=v.id AND ch.amount IS NULL) AS unpriced_count
+         FROM visits v JOIN patients p ON p.id=v.patient_id
+         WHERE v.id IN (SELECT id FROM visits ORDER BY id DESC LIMIT 100)
+            OR EXISTS(SELECT 1 FROM effective_charges ch WHERE ch.visit_id=v.id AND ch.amount IS NULL)
+         ORDER BY v.id DESC'''
         return [dict(x) for x in c.execute(sql)]
 
 class PaymentInput(BaseModel):
@@ -650,6 +667,8 @@ def create_payment(data:PaymentInput,u=Depends(principal)):
             return {'id':old['id'],'status':'already_recorded'}
         if not c.execute('SELECT 1 FROM visits WHERE id=?',(data.visit_id,)).fetchone():raise HTTPException(404,'Không có lượt khám')
         if c.execute('SELECT status FROM visits WHERE id=?',(data.visit_id,)).fetchone()[0]=='cancelled':raise HTTPException(409,'Không nhận tiền mới cho lượt đã hủy')
+        if invoice(c,data.visit_id)['unpriced_count'] and not data.prepayment:
+            raise HTTPException(409,'Lượt còn khoản CHƯA CÓ GIÁ; chỉ được thu tạm, chưa được thu đủ')
         charged=c.execute("SELECT (SELECT COALESCE(SUM(ch.amount),0) FROM effective_charges ch WHERE ch.visit_id=? AND NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id))-(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE visit_id=? AND kind='discount' AND status='approved')",(data.visit_id,data.visit_id)).fetchone()[0]
         paid=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM payments WHERE visit_id=?)-(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE visit_id=? AND kind='refund' AND status='approved')",(data.visit_id,data.visit_id)).fetchone()[0]
         if not data.prepayment and data.amount>charged-paid:raise HTTPException(409,'Số tiền vượt khoản còn phải thu')
@@ -716,7 +735,9 @@ def overview(u=Depends(principal)):
         if 'manager' in u['roles']:
             charged=c.execute("SELECT (SELECT COALESCE(SUM(ch.amount),0) FROM effective_charges ch WHERE NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id))-(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE kind='discount' AND status='approved')").fetchone()[0]
             paid=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM payments)-(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE kind='refund' AND status='approved')").fetchone()[0]
-            out.update(charged=charged,paid=paid,outstanding=charged-paid,
+            unpriced=c.execute('SELECT COUNT(*) FROM effective_charges WHERE amount IS NULL').fetchone()[0]
+            out.update(charged=charged,paid=paid,outstanding=None if unpriced else charged-paid,
+                       known_outstanding=charged-paid,unpriced_count=unpriced,
                        stock_warning=c.execute("SELECT COUNT(*) FROM stock_lots WHERE quarantined=1 OR expiry_date<=date('now','+90 days')").fetchone()[0])
         return out
 
@@ -740,13 +761,15 @@ def _invoice_state(c, vid:int):
     discounts=c.execute("SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE visit_id=? AND kind='discount' AND status='approved'",(vid,)).fetchone()[0]
     incoming=c.execute('SELECT COALESCE(SUM(amount),0) FROM payments WHERE visit_id=?',(vid,)).fetchone()[0]
     refunds=c.execute("SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE visit_id=? AND kind='refund' AND status='approved'",(vid,)).fetchone()[0]
-    return {'charged':charged-discounts,'paid':incoming-refunds,'discounts':discounts,'refunds':refunds,'raw_charges':charged}
+    return {'charged':charged-discounts,'paid':incoming-refunds,'discounts':discounts,'refunds':refunds,'raw_charges':charged,
+            'unpriced_count':invoice(c,vid)['unpriced_count']}
 
 @app.get('/api/payments')
 def list_payments(u=Depends(principal)):
     require(u,'cashier','manager')
     with db() as c:
         return [dict(x) for x in c.execute('''SELECT m.id,m.visit_id,m.amount,m.method,m.created_at,m.external_ref,
+             (SELECT COUNT(*) FROM effective_charges ch WHERE ch.visit_id=m.visit_id AND ch.amount IS NULL) AS unpriced_count,
              p.code AS patient_code,p.full_name AS patient_name,users.full_name AS cashier_name
              FROM payments m JOIN visits v ON v.id=m.visit_id JOIN patients p ON p.id=v.patient_id
              JOIN users ON users.id=m.created_by ORDER BY m.id DESC LIMIT 100''')]
@@ -769,6 +792,7 @@ def propose_adjustment(data:AdjustmentInput,u=Depends(principal)):
             if data.payment_id is not None:raise HTTPException(422,'Giảm giá không gắn một phiếu thu')
             if st['charged']-data.amount<0:raise HTTPException(409,'Giảm giá vượt tổng phí còn được giảm')
         else:
+            if st['unpriced_count']:raise HTTPException(409,'Chưa xác định đủ giá, chưa thể đối soát tiền trả thừa để hoàn')
             if data.payment_id is None:raise HTTPException(422,'Cần chọn phiếu thu được đề nghị hoàn')
             pay=c.execute('SELECT * FROM payments WHERE id=? AND visit_id=?',(data.payment_id,data.visit_id)).fetchone()
             if not pay:raise HTTPException(422,'Phiếu thu không khớp lượt khám')
@@ -808,6 +832,7 @@ def review_adjustment(adj_id:int,data:AdjustmentReview,u=Depends(principal)):
             if a['kind']=='discount' and st['charged']-a['amount']<0:
                 raise HTTPException(409,'Số giảm giá vượt tổng phí còn được giảm')
             if a['kind']=='refund':
+                if st['unpriced_count']:raise HTTPException(409,'Lượt còn khoản CHƯA CÓ GIÁ; chưa được duyệt hoàn phần trả thừa')
                 pay=c.execute('SELECT amount FROM payments WHERE id=? AND visit_id=?',(a['payment_id'],a['visit_id'])).fetchone()
                 already=c.execute("SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE payment_id=? AND kind='refund' AND status='approved'",(a['payment_id'],)).fetchone()[0]
                 if not pay or a['amount']>pay['amount']-already or a['amount']>st['paid']:
@@ -848,7 +873,7 @@ def stock_issue(data:StockIssue,u=Depends(principal)):
 
 @app.get('/api/print/{kind}/{item_id}')
 @export_slot
-def print_form(kind:str,item_id:int,u=Depends(principal)):
+def print_form(kind:str,item_id:int,provisional:bool=False,u=Depends(principal)):
     if kind not in ('intake','clinical','order','result','rx','follow_up','receipt'):
         raise HTTPException(404,'Biểu mẫu không tồn tại')
     with db(True) as c:
@@ -892,7 +917,10 @@ def print_form(kind:str,item_id:int,u=Depends(principal)):
                          JOIN users ON users.id=pay.created_by WHERE pay.id=?''',(item_id,)).fetchone()
             if not pay:raise HTTPException(404,'Không có khoản thu')
             require(u,'cashier','manager')
+            if invoice(c,pay['visit_id'])['unpriced_count'] and not provisional:
+                raise HTTPException(409,'Lượt còn khoản CHƯA CÓ GIÁ; chưa được in phiếu thu cuối. Chỉ in phiếu thu tạm')
             data=dict(pay);data['code']=f'MD-PT-{item_id:06d}'
+            data['provisional']=provisional
         if kind=='clinical':data['addenda']=[dict(x) for x in c.execute("SELECT * FROM visit_addenda WHERE visit_id=? AND status='approved' ORDER BY id",(item_id,))]
         pdf=pdf_document(kind,data)
         audit(c,u,'form_pdf_generated_demo',kind,item_id)
@@ -980,6 +1008,8 @@ from .catalog import install_catalog
 install_catalog(app, db, principal, require, audit)
 from .price_import import install_price_import
 install_price_import(app, db, principal, require, audit)
+from .manual_prices import install_manual_prices
+install_manual_prices(app, db, principal, require, audit, NOW)
 install_workflows(app, db, principal, require, audit, visit_access, NOW)
 from .workflows_v050 import install_v050
 install_v050(app,db,principal,require,audit,visit_access,NOW)

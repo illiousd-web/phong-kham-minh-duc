@@ -61,6 +61,8 @@ def seed(url):
     with psycopg.connect(url,row_factory=record_factory) as c:
         c.execute((ROOT/'schema.postgresql.sql').read_text())
         migrate_v050(PGConnection(c),postgres=True)
+        from app.manual_price_migration import migrate_manual_prices
+        migrate_manual_prices(PGConnection(c),postgres=True)
         for i,(role,password) in enumerate(passwords.items(),1):
             salt=secrets.token_hex(16)
             c.execute('INSERT INTO users(id,username,full_name,salt,password_hash) VALUES(%s,%s,%s,%s,%s)',(i,'fake_'+role,'Nhân viên giả lập '+role,salt,pw_hash(password,salt)))

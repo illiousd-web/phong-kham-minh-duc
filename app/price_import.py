@@ -16,8 +16,10 @@ from .database import ROOT
 MAX_BYTES = 2 * 1024 * 1024
 MAX_ROWS = 2000
 GROUPS = {'Khám': 'consultation', 'Xét nghiệm': 'lab', 'Siêu âm': 'ultrasound',
-          'X-quang': 'xray', 'Điện tim': 'ecg'}
+          'X-quang': 'xray', 'Điện tim': 'ecg', 'Thủ thuật': 'procedure'}
 HEADERS = ('Mã dịch vụ (không bắt buộc)', 'Tên dịch vụ', 'Nhóm', 'Giá (đồng, số nguyên ≥ 0)')
+HEADER_ALIASES = {'Mã dịch vụ': HEADERS[0], 'Giá (đồng)': HEADERS[3]}
+REFERENCE_COLUMNS = {'Phân nhóm (tham khảo)', 'Dòng trong tệp gốc'}
 
 
 def clean(value):
@@ -42,21 +44,26 @@ def read_rows(content):
                 raise HTTPException(415, 'Chỉ nhận tệp .xlsx, không nhận tệp có macro')
         workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=False, keep_links=False)
         try:
-            if len(workbook.sheetnames) != 1:
-                raise HTTPException(422, 'Tệp phải có đúng một trang tính')
-            sheet = workbook.active
+            if len(workbook.sheetnames) == 1:
+                sheet = workbook.active
+            elif set(workbook.sheetnames) == {'BANG_GIA', 'CAN_XEM_LAI'}:
+                # The supplied clinic workbook has one data sheet and a named
+                # review-notes sheet. Never select an arbitrary active sheet.
+                sheet = workbook['BANG_GIA']
+            else:
+                raise HTTPException(422, 'Dùng tệp mẫu một trang tính; tệp tổng hợp chỉ được có BANG_GIA và CAN_XEM_LAI')
             # Do not trust the worksheet dimension advertised by an uploaded file.
             sheet.reset_dimensions()
             rows = []
             columns = None
-            for number, cells in enumerate(sheet.iter_rows(max_col=5), 1):
+            for number, cells in enumerate(sheet.iter_rows(max_col=7), 1):
                 if number > MAX_ROWS + 2:
                     raise HTTPException(422, 'Tệp vượt giới hạn 2.000 dòng dữ liệu (không tính hướng dẫn và tiêu đề)')
                 values = [c.value for c in cells]
                 if columns is None:
                     if not any(v is not None for v in values):
                         continue
-                    labels = [clean(v) for v in values]
+                    labels = [HEADER_ALIASES.get(clean(v), clean(v)) for v in values]
                     while labels and not labels[-1]:
                         labels.pop()
                     if 'Tên dịch vụ' not in labels and number == 1 and len([v for v in values if v is not None]) == 1:
@@ -64,8 +71,8 @@ def read_rows(content):
                     missing = [h for h in HEADERS if h not in labels]
                     if missing:
                         raise HTTPException(422, 'Thiếu cột: ' + ', '.join(missing))
-                    if len(set(labels)) != len(labels) or len(labels) != 4:
-                        raise HTTPException(422, 'Tệp cần đúng bốn cột, không trùng tiêu đề')
+                    if len(set(labels)) != len(labels) or set(labels) - set(HEADERS) - REFERENCE_COLUMNS:
+                        raise HTTPException(422, 'Tệp cần đủ bốn cột của mẫu, không trùng tiêu đề; chỉ thêm cột tham khảo đã có trong tệp tổng hợp')
                     columns = [labels.index(h) for h in HEADERS]
                     continue
                 if not any(v is not None and v != '' for v in values):
@@ -76,22 +83,26 @@ def read_rows(content):
                 if any(c is not None and c.data_type in ('f', 'e') for c in chosen):
                     errors.append('Không dùng công thức hoặc ô lỗi; hãy dán giá trị')
                 code, name, group = clean(code), clean(name), clean(group)
+                group = next((label for label in GROUPS if key(label) == key(group)), group)
                 if code and not re.fullmatch(r'[A-Za-z0-9_-]{2,40}', code):
                     errors.append('Mã dịch vụ cần 2–40 chữ không dấu, số, dấu gạch ngang hoặc gạch dưới')
                 if not 2 <= len(name) <= 180:
                     errors.append('Tên dịch vụ không được trống, cần từ 2 đến 180 ký tự')
                 if group not in GROUPS:
                     errors.append('Nhóm không hợp lệ; chọn: ' + ', '.join(GROUPS))
-                if (type(price) not in (int, float) or price < 0 or price > 2_000_000_000
+                manual = price is None or (isinstance(price, str) and not price.strip())
+                if manual:
+                    price = None
+                elif (type(price) not in (int, float) or price < 0 or price > 2_000_000_000
                         or not math.isfinite(price) or int(price) != price):
                     errors.append('Giá phải là số nguyên từ 0 đến 2.000.000.000 đồng')
                     price = None
                 else:
                     price = int(price)
-                if any(v is not None and v != '' for v in values[4:]):
-                    errors.append('Dữ liệu nằm ngoài bốn cột của mẫu')
+                if any(v is not None and v != '' for v in values[len(labels):]):
+                    errors.append('Dữ liệu nằm ngoài các cột có tiêu đề')
                 rows.append({'row': number, 'code': code, 'name': name, 'group': group,
-                             'category': GROUPS.get(group), 'price': price, 'errors': errors})
+                             'category': GROUPS.get(group), 'price': price, 'price_at_collection': manual, 'errors': errors})
                 if len(rows) > MAX_ROWS:
                     raise HTTPException(422, 'Tệp vượt giới hạn 2.000 dòng dữ liệu')
             if not columns or not rows:
@@ -125,19 +136,24 @@ def preview(c, rows):
                     seen[value]['errors'].append(reason)
                 else:
                     seen[value] = row
-        candidates = by_code.get(key(row['code']), []) if row['code'] else []
+        candidates = by_code.get(key(row['code']), []) if row['code'] else [s for s in by_name.get(key(row['name']), []) if s['category'] == row['category']]
         service = candidates[0] if len(candidates) == 1 else None
         if len(candidates) > 1:
-            row['errors'].append('Mã khớp nhiều dịch vụ trong hệ thống; cần kiểm tra lại danh mục')
+            row['errors'].append('Có nhiều dịch vụ khớp trong hệ thống; cần kiểm tra lại danh mục')
         row['service_id'] = service['id'] if service else None
+        row['matched_code'] = service['code'] if service else None
         row['old_price'] = service['price'] if service else None
+        row['old_price_at_collection'] = bool(service['price_at_collection']) if service else False
+        if row['old_price_at_collection']:
+            row['old_price'] = None
         if service:
             matched.add(service['id'])
             if key(row['name']) != key(service['name']) or row['category'] != service['category']:
                 row['errors'].append('Mã đã có nhưng Tên dịch vụ hoặc Nhóm khác danh mục; kiểm tra lại mã')
         elif key(row['name']) in by_name:
             row['errors'].append('Tên dịch vụ đã có; hãy điền đúng Mã dịch vụ hiện có')
-        row['status'] = 'THÊM MỚI' if not service else ('KHÔNG ĐỔI' if row['price'] == service['price'] else 'ĐỔI GIÁ')
+        same_price = service and row['price_at_collection'] == bool(service['price_at_collection']) and (row['price_at_collection'] or row['price'] == service['price'])
+        row['status'] = 'THÊM MỚI' if not service else ('KHÔNG ĐỔI' if same_price else 'ĐỔI GIÁ')
     # A duplicate discovered later must also mark the first row as invalid.
     for row in rows:
         if row['errors']:
@@ -166,8 +182,8 @@ def install_price_import(app, db, principal, require, audit):
             added = changed = 0
             for row in rows:
                 if row['status'] == 'THÊM MỚI':
-                    c.execute('INSERT INTO service_catalog(name,price,code,active) VALUES(?,?,?,1)',
-                              (row['name'], row['price'], row['code'] or None))
+                    c.execute('INSERT INTO service_catalog(name,price,code,active,price_at_collection) VALUES(?,?,?,1,?)',
+                              (row['name'], row['price'] if row['price'] is not None else 0, row['code'] or None, int(row['price_at_collection'])))
                     sid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
                     if not row['code']:
                         # Follow existing DV<id> convention; also avoid imported codes.
@@ -181,10 +197,11 @@ def install_price_import(app, db, principal, require, audit):
                     c.execute('INSERT INTO service_categories(service_id,category) VALUES(?,?)', (sid, row['category']))
                     added += 1
                 elif row['status'] == 'ĐỔI GIÁ':
-                    c.execute('UPDATE service_catalog SET price=? WHERE id=?', (row['price'], row['service_id']))
+                    c.execute('UPDATE service_catalog SET price=?,price_at_collection=? WHERE id=?',
+                              (row['price'] if row['price'] is not None else 0, int(row['price_at_collection']), row['service_id']))
                     audit(c, u, 'service_price_imported', 'service', row['service_id'], json.dumps(
                         {'row': row['row'], 'code': row['code'], 'name': row['name'],
-                         'old_price': row['old_price'], 'new_price': row['price']}, ensure_ascii=False))
+                         'old_price': row['old_price'], 'new_price': row['price'], 'price_at_collection': row['price_at_collection']}, ensure_ascii=False))
                     changed += 1
             audit(c, u, 'service_prices_imported', 'service_import', None, json.dumps(
                 {'rows': len(rows), 'added': added, 'changed': changed, 'unchanged': len(rows)-added-changed,

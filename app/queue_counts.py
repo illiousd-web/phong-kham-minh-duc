@@ -3,7 +3,8 @@
 - Chỉ trả về con số, không trả tên hay mã người bệnh.
 - Chỉ trả số của các màn hình ứng với vai trò của người gọi.
 - Đếm bằng chính các API danh sách mà màn hình đó dùng (cùng phạm vi phân quyền,
-  cùng giới hạn 100 dòng), nên số trên menu khớp với hàng chờ hiển thị.
+  cùng giới hạn danh sách), nên số trên menu khớp với hàng chờ hiển thị.
+  Công nợ gồm 100 lượt gần nhất và mọi lượt còn khoản chưa có giá, kể cả lượt cũ hơn.
 - Xác thực bằng principal.peek: KHÔNG gia hạn phiên. Hỏi định kỳ mỗi 60 giây
   không làm mất tự đăng xuất sau 20 phút không thao tác.
 """
@@ -40,11 +41,12 @@ def install_queue_counts(app, peek, load_ui):
         if 'pharmacy' in roles:
             out['pharmacy'] = sum(x['status'] == 'draft' for x in get('/api/prescriptions', u))
         if 'cashier' in roles:
-            out['cashier'] = sum(d['charged'] - d['paid'] > 0 for d in get('/api/dues', u))
+            out['cashier'] = sum(d['charged'] - d['paid'] > 0 or d['unpriced_count'] > 0 for d in get('/api/dues', u))
         if 'manager' in roles:
             total = sum(x['status'] == 'pending' for x in get('/api/adjustments', u))
             total += sum(x['status'] == 'pending' for x in get('/api/orders/cancellation-requests', u))
             total += sum(x['status'] == 'pending' for x in get('/api/medication-returns', u))
+            total += sum(x['status'] == 'pending' for x in get('/api/manual-price-requests', u))
             if ui['addendum']:
                 total += len(get('/api/visits/addenda/pending', u))
             if ui['controlled_drugs'] and 'controlled_reviewer' in roles:

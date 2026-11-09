@@ -93,7 +93,7 @@ def test_preview_confirm_reimport_and_missing_services(manager):
     (('ERR01', 'Dịch vụ lỗi', 'Khám', '50000'), 'Giá phải'),
     (('ERR01', 'Dịch vụ lỗi', 'Khám', 1.5), 'Giá phải'),
     (('ERR01', 'Dịch vụ lỗi', 'Khám', True), 'Giá phải'),
-    (('ERR01', 'Dịch vụ lỗi', 'Thủ thuật', 1), 'Nhóm không hợp lệ'),
+    (('ERR01', 'Dịch vụ lỗi', 'Nhóm sai', 1), 'Nhóm không hợp lệ'),
     (('ERR01', '', 'Khám', 1), 'Tên dịch vụ không được trống'),
     (('ERR01', 'Dịch vụ lỗi', 'Khám', '=1+2'), 'Không dùng công thức'),
 ])

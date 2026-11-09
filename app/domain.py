@@ -16,7 +16,10 @@ def invoice(c,vid):
     refunds=c.execute("SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE visit_id=? AND kind='refund' AND status='approved'",(vid,)).fetchone()[0]
     if gross<discount:raise HTTPException(409,'Giảm phí đã duyệt vượt phí còn lại; phải hoàn tác giảm phí có lý do trước')
     charged=gross-discount;paid=incoming-refunds
-    return {'gross':gross,'discount':discount,'charged':charged,'paid':paid,'due':max(0,charged-paid),'refund_due':max(0,paid-charged)}
+    unpriced=c.execute('SELECT COUNT(*) FROM effective_charges WHERE visit_id=? AND amount IS NULL',(vid,)).fetchone()[0]
+    return {'gross':gross,'discount':discount,'charged':charged,'paid':paid,
+            'unpriced_count':unpriced,'known_due':max(0,charged-paid),
+            'due':None if unpriced else max(0,charged-paid),'refund_due':0 if unpriced else max(0,paid-charged)}
 
 
 def revision(c,vid,u,now,kind,reason):
@@ -36,13 +39,15 @@ def authorize_order(c,oid,u,audit,now):
     o=c.execute('SELECT * FROM orders WHERE id=?',(oid,)).fetchone()
     if not o:raise HTTPException(404,'Không có chỉ định')
     v=c.execute('SELECT * FROM visits WHERE id=?',(o['visit_id'],)).fetchone()
-    if v['doctor_id']!=u['id'] or 'doctor' not in u['roles']:raise HTTPException(403,'Chỉ bác sĩ được giao duyệt chỉ định')
+    assigned_doctor='doctor' in u['roles'] and v['doctor_id']==u['id']
+    assigned_nurse='nurse' in u['roles'] and c.execute('SELECT 1 FROM visit_nurses WHERE visit_id=? AND nurse_id=? AND active=1',(v['id'],u['id'])).fetchone()
+    if not (assigned_doctor or assigned_nurse):raise HTTPException(403,'Chỉ bác sĩ hoặc điều dưỡng được phân công lập/duyệt chỉ định')
     old=c.execute('SELECT * FROM order_authorizations WHERE order_id=?',(oid,)).fetchone()
     if old:return {'id':oid,'charge_amount':old['unit_price'],'status':'already_authorized'}
     ensure_open(v)
     if o['status'] not in ('requested','ordered'):raise HTTPException(409,'Chỉ định không còn chờ duyệt')
     s=c.execute('SELECT * FROM service_catalog WHERE id=?',(o['service_id'],)).fetchone()
-    if not s or not s['active'] or o['proposed_price']<=0:raise HTTPException(409,'Dịch vụ chưa có giá/không còn hiệu lực')
+    if not s or not s['active'] or (o['proposed_price'] is not None and o['proposed_price']<0):raise HTTPException(409,'Dịch vụ không còn hiệu lực hoặc giá không hợp lệ')
     price=o['proposed_price']  # Giá chụp khi lập chỉ định, kể cả nháp trước khi nhập bảng giá.
     c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',(o['visit_id'],o['name'],price,now()))
     cid=c.execute('SELECT last_insert_rowid()').fetchone()[0]

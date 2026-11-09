@@ -47,24 +47,29 @@ class AddendumInput(BaseModel):
 def install_workflows(app, db, principal, require, audit, visit_access, now):
     @app.get('/api/cls-services')
     def cls_services(u=Depends(principal)):
-        require(u, 'doctor', 'admin', 'manager')
+        require(u, 'doctor', 'nurse', 'admin', 'manager')
         with db() as c:
-            return [dict(x) for x in c.execute('''SELECT sc.id, sc.name, sc.price, cat.category
+            return [dict(x) for x in c.execute('''SELECT sc.id, sc.name, sc.price,sc.price_at_collection, cat.category
                 FROM service_catalog sc JOIN service_categories cat ON cat.service_id=sc.id
-                WHERE cat.category IN ('lab','ultrasound','xray','ecg') AND sc.price>0 AND sc.active=1
+                WHERE (cat.category IN ('lab','ultrasound','xray','ecg','procedure') OR sc.price_at_collection=1) AND sc.active=1
                 ORDER BY cat.category,sc.name''')]
 
     @app.get('/api/charges/{visit_id}')
     def visit_charges(visit_id: int, u=Depends(principal)):
-        require(u, 'cashier', 'reception', 'manager', 'admin')
+        require(u, 'cashier', 'manager', 'admin')
         with db() as c:
             if not c.execute('SELECT id FROM visits WHERE id=?', (visit_id,)).fetchone():
                 raise HTTPException(404, 'Không có lượt khám')
-            return [dict(x) for x in c.execute('''SELECT ch.id,ch.label,ch.amount,ch.created_at,
+            rows = [dict(x) for x in c.execute('''SELECT ch.id,ch.label,ch.amount,ch.created_at,ch.original_amount,
                 cs.source_type,cs.source_id,cv.reason AS void_reason
                 FROM effective_charges ch LEFT JOIN charge_sources cs ON cs.charge_id=ch.id
                 LEFT JOIN charge_voids cv ON cv.charge_id=ch.id
                 WHERE ch.visit_id=? ORDER BY ch.id''', (visit_id,))]
+            from .manual_prices import manual_description
+            for r in rows:
+                r['price_at_collection'] = r['original_amount'] is None
+                r['description'] = manual_description(c, r['id']) if r['price_at_collection'] else None
+            return rows
 
     @app.post('/api/orders/{order_id}/request-cancel',status_code=201)
     def order_cancel_request(order_id: int, data: CancelRequest, u=Depends(principal)):

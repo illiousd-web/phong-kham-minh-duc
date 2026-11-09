@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DB = Path(os.getenv('CLINIC_DB_PATH', str(ROOT / 'data' / 'minh_duc_demo.sqlite3'))).resolve()
 LOCK_ID = 764209431
 ID_TABLES=set(re.findall(r'CREATE TABLE IF NOT EXISTS (\w+)\s*\(\s*id\b',
-    (ROOT/'schema.postgresql.sql').read_text(encoding='utf-8')+(ROOT/'migrations/003_v050.sql').read_text(encoding='utf-8'),re.I))
+    (ROOT/'schema.postgresql.sql').read_text(encoding='utf-8')+(ROOT/'migrations/003_v050.sql').read_text(encoding='utf-8')+(ROOT/'migrations/004_manual_prices.sql').read_text(encoding='utf-8'),re.I))
 _pool = None
 
 
@@ -120,3 +120,5 @@ def migrate():
         con.execute((ROOT / 'schema.postgresql.sql').read_text(encoding='utf-8'))
         from .migrations import migrate_v050
         migrate_v050(PGConnection(con),postgres=True)
+        from .manual_price_migration import migrate_manual_prices
+        migrate_manual_prices(PGConnection(con),postgres=True)
