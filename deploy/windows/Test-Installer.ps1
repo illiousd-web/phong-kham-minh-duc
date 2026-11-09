@@ -21,7 +21,8 @@ function Levels($snap) { $h = @{}; foreach ($i in (Get-PrecheckAssessment -Snaps
 $l = Levels (New-Snap)
 Assert-True (@($l.Values | Where-Object { $_ -ne 'OK' }).Count -eq 0) 'Máy chuẩn phải ĐẠT mọi mục'
 $s = New-Snap; $s.os.architecture = '32-bit'; Assert-True ((Levels $s).os -eq 'STOP') '32-bit phải dừng'
-$s = New-Snap; $s.os.caption = 'Microsoft Windows Server 2022'; Assert-True ((Levels $s).os -eq 'STOP') 'Không phải Win10/11 phải dừng'
+$s = New-Snap; $s.os.caption = 'Microsoft Windows Server 2022 Datacenter'; $s.os.build = 20348; Assert-True ((Levels $s).os -eq 'WARN') 'Windows Server chỉ cảnh báo'
+$s = New-Snap; $s.os.caption = 'Microsoft Windows 8.1 Pro'; $s.os.build = 9600; Assert-True ((Levels $s).os -eq 'STOP') 'Windows cũ phải dừng'
 $s = New-Snap; $s.ram_gib = 4; Assert-True ((Levels $s).ram -eq 'STOP') 'RAM 4 GB phải dừng'
 $s = New-Snap; $s.ram_gib = 7.8; Assert-True ((Levels $s).ram -eq 'OK') 'RAM 8 GB (hiển thị 7.8) phải đạt'
 $s = New-Snap; $s.free_c_gib = 19.9; Assert-True ((Levels $s).disk -eq 'STOP') 'C dưới 20 GB phải dừng'

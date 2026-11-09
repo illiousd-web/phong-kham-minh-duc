@@ -105,6 +105,8 @@ function Get-PrecheckAssessment {
     $os = $Snapshot.os
     if ($os.architecture -notmatch '64') {
         Add-Item 'os' 'STOP' 'Cần Windows 64-bit.' @('Cài Windows 10 hoặc 11 bản 64-bit.')
+    } elseif ($os.caption -match 'Windows Server' -and [int]$os.build -ge 17763) {
+        Add-Item 'os' 'WARN' ($os.caption + ', bản ' + $os.build + ': chạy được nhưng không phải cấu hình đã chốt (Windows 10/11).') @()
     } elseif ($os.caption -notmatch 'Windows (10|11)' -or [int]$os.build -lt 19041) {
         Add-Item 'os' 'STOP' ('Chỉ hỗ trợ Windows 10/11 64-bit (đang là ' + $os.caption + ', bản ' + $os.build + ').') @('Cập nhật Windows hoặc dùng máy khác.')
     } else {
