@@ -245,6 +245,9 @@ def test_nightly_job_backup_verify_external_copy_and_rollback(creds, tmp_path):
         c.execute("INSERT INTO service_catalog(name,price) VALUES('Dữ liệu sau cập nhật lỗi',1)")
         c.execute('CREATE TABLE update_probe(id int)')
     (tmp_path / 'attachments' / 'tep-moi.pdf').write_bytes(b'%PDF new')
+    # Máy đã có cài đặt giao diện (quản trị đã bật/tắt): tệp nằm cạnh thư mục đính kèm.
+    (tmp_path / 'caidat').mkdir(exist_ok=True)
+    (tmp_path / 'caidat' / 'ui_settings.json').write_text('{"advance_payment": true, "addendum": true, "controlled_drugs": true}', encoding='utf-8')
     clinic, owner, sup = tmp_path / 'clinic.env', tmp_path / 'owner.env', tmp_path / 'postgres.env'
     lan = {k: v for k, v in env.items() if k.startswith('CLINIC_')}
     install_env.write_env(clinic, lan, ['test'])
@@ -267,6 +270,75 @@ def test_nightly_job_backup_verify_external_copy_and_rollback(creds, tmp_path):
         assert install_db.admin_count(app_url(creds)) == 1
     assert sorted(p.name for p in (tmp_path / 'attachments').iterdir()) == ['ket-qua-gia-lap.pdf']
     assert (Path(report['kept_attachments']) / 'tep-moi.pdf').exists()
+    # Máy đã có cài đặt: bản sao lưu chụp cài đặt lúc sao lưu (mặc định), tệp đang dùng được giữ lại để đối chiếu.
+    assert report['settings'] == 'restored' and Path(report['kept_settings']).exists()
+    assert json.loads(Path(report['kept_settings']).read_text(encoding='utf-8'))['advance_payment'] is True
+
+
+BACKUP_ONE = """import sys
+from pathlib import Path
+import scripts.backup_lan as lan
+print(lan.backup(Path(sys.argv[1]), Path(sys.argv[2])))
+"""
+
+
+def _snapshot(creds, uploads, settings):
+    """Trạng thái đang chạy: CSDL đăng nhập được bằng vai trò ứng dụng, tệp đính kèm, cài đặt."""
+    with psycopg.connect(app_url(creds)) as c:
+        names = sorted(r[0] for r in c.execute('SELECT name FROM service_catalog'))
+    return names, sorted(p.name for p in uploads.iterdir()), settings.read_text(encoding='utf-8')
+
+
+@pytest.mark.parametrize('step', ['preflight', 'rename', 'create', 'restore', 'attachments', 'settings', 'grant'])
+def test_rollback_failure_at_each_step_keeps_running_system(creds, tmp_path, monkeypatch, step):
+    """Lỗi giả ở từng bước quay lui: CSDL cũ, tệp đính kèm và cài đặt cũ vẫn dùng được như trước."""
+    env = _job_env(tmp_path, creds)
+    uploads, settings = tmp_path / 'attachments', tmp_path / 'caidat' / 'ui_settings.json'
+    uploads.mkdir()
+    settings.parent.mkdir()
+    (uploads / 'truoc.pdf').write_bytes(b'%PDF before')
+    settings.write_text('{"advance_payment": true, "addendum": true, "controlled_drugs": true}', encoding='utf-8')
+    key = tmp_path / 'backup.key'
+    key.write_bytes(secrets.token_bytes(32))
+    backup_file = Path(_python(BACKUP_ONE, env, tmp_path / 'backups', key)[-1])
+    # Cập nhật lỗi đã làm đổi dữ liệu, tệp và cài đặt.
+    marker = 'Sau cập nhật lỗi ' + step
+    with psycopg.connect(owner_url(creds)) as c:
+        c.execute('INSERT INTO service_catalog(name,price) VALUES(%s,1)', (marker,))
+    (uploads / 'sau.pdf').write_bytes(b'%PDF after')
+    settings.write_text('{"advance_payment": false, "addendum": false, "controlled_drugs": true}', encoding='utf-8')
+    before = _snapshot(creds, uploads, settings)
+    with psycopg.connect(SOURCE, autocommit=True) as c:
+        databases = sorted(r[0] for r in c.execute('SELECT datname FROM pg_database'))
+    if step == 'preflight':
+        broken = tmp_path / 'hong.mdbackup'
+        data = bytearray(backup_file.read_bytes()); data[-20] ^= 1; broken.write_bytes(data)
+        target = broken
+    else:
+        target = backup_file
+        def fail(name):
+            if name == step:
+                raise RuntimeError('lỗi giả ở bước ' + name)
+        monkeypatch.setattr(install_db, '_step', fail)
+    monkeypatch.setenv('CLINIC_UPLOAD_DIR', str(uploads))
+    super_url = urlunsplit(urlsplit(SOURCE)._replace(path='/postgres'))
+    with pytest.raises(Exception):
+        install_db.rollback_database(super_url, owner_url(creds), APP, target, key, uploads)
+    after = _snapshot(creds, uploads, settings)
+    assert after == before and marker in after[0]
+    with psycopg.connect(SOURCE, autocommit=True) as c:
+        assert sorted(r[0] for r in c.execute('SELECT datname FROM pg_database')) == databases
+    leftovers = [p.name for folder in (tmp_path, settings.parent) for p in folder.iterdir()
+                 if 'khoiphuc' in p.name or '.loi-' in p.name or p.name.startswith('ui_settings.loi')]
+    assert leftovers == []
+    # Không còn lỗi giả: quay lui thật thành công, cài đặt về đúng bản sao lưu.
+    monkeypatch.setattr(install_db, '_step', lambda name: None)
+    report = install_db.rollback_database(super_url, owner_url(creds), APP, backup_file, key, uploads)
+    names, files, text = _snapshot(creds, uploads, settings)
+    assert marker not in names and files == ['truoc.pdf']
+    assert json.loads(text) == {'advance_payment': True, 'addendum': True, 'controlled_drugs': True}
+    assert report['settings'] == 'restored'
+    assert json.loads(Path(report['kept_settings']).read_text(encoding='utf-8'))['addendum'] is False
 
 
 def _job_env(tmp_path, creds, **extra):

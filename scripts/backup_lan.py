@@ -13,6 +13,7 @@ from pathlib import Path
 import secrets
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from urllib.parse import urlsplit, unquote
@@ -22,6 +23,7 @@ from app.config import DATABASE_URL, DATA, LAN
 from app.database import LOCK_ID
 from app.resources import LIMITS
 from app.storage import tree_bytes, require_space, free_bytes, StorageLimitError
+from app.ui_settings import FILE_NAME as SETTINGS_NAME, settings_path, load_settings, parse_settings, serialize, write_settings, DEFAULTS as SETTINGS_DEFAULTS
 
 MAGIC = b'MDCLINIC1'
 CHUNK = 1024*1024
@@ -174,13 +176,18 @@ def backup(destination, key_path, prune=True, enforce_budget=True):
                 for path in uploads.rglob('*'):
                     if path.is_symlink():raise ValueError('Attachment storage must not contain symlinks')
                     if path.is_file():files['attachments/'+str(path.relative_to(uploads)).replace(os.sep,'/')]=checksum(path)
-            manifest={'format':1,'created_at':datetime.now(timezone.utc).isoformat(),'files':files}
+            # Cài đặt giao diện đang có hiệu lực (tệp thiếu/hỏng thì là mặc định, đã ghi cảnh báo).
+            settings,settings_source=load_settings(settings_path(uploads))
+            (root/SETTINGS_NAME).write_bytes(serialize(settings))
+            files[SETTINGS_NAME]=checksum(root/SETTINGS_NAME)
+            manifest={'format':1,'created_at':datetime.now(timezone.utc).isoformat(),'files':files,'ui_settings_source':settings_source}
             (root/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False),encoding='utf-8')
             if not uploads.exists():(root/'attachments').mkdir()
             name='minhduc-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+secrets.token_hex(4)+'.mdbackup'
             pending=root/'encrypted.tmp'
             encrypt_archive([(root/'database.dump','database.dump'),
                              (uploads if uploads.exists() else root/'attachments','attachments'),
+                             (root/SETTINGS_NAME,SETTINGS_NAME),
                              (root/'manifest.json','manifest.json')],pending,key)
             if enforce_budget and current+pending.stat().st_size>LIMITS.backup_total_bytes:raise StorageLimitError('Bản backup mới vượt ngân sách dung lượng')
             target=destination/name
@@ -205,7 +212,7 @@ def unpack_verified(source, key_path, root):
             path=Path(item.name)
             if path.is_absolute() or '..' in path.parts or item.issym() or item.islnk() or not (item.isfile() or item.isdir()):
                 raise ValueError('Unsafe archive member')
-            if path.parts[0] not in ('database.dump','attachments','manifest.json'):
+            if path.parts[0] not in ('database.dump','attachments','manifest.json',SETTINGS_NAME):
                 raise ValueError('Unexpected archive member')
         tar.extractall(root, filter='data')
     manifest=json.loads((root/'manifest.json').read_text(encoding='utf-8'))
@@ -218,24 +225,38 @@ def unpack_verified(source, key_path, root):
     return manifest
 
 
-def restore(source, key_path, url, uploads):
+def restore(source, key_path, url, uploads, settings=None):
+    """settings: nơi ghi ui_settings.json; mặc định <cha thư mục đính kèm đích>/caidat/,
+    đúng chỗ ứng dụng đọc khi CLINIC_UPLOAD_DIR chuyển sang đích này."""
     # No in-place overwrites: operator must create a separate empty target.
     uploads = uploads.resolve()
+    settings = Path(settings).resolve() if settings else uploads.parent/'caidat'/SETTINGS_NAME
     uploads.parent.mkdir(parents=True,exist_ok=True)
     if uploads.exists() and any(uploads.iterdir()):
         raise ValueError('Restore attachment destination must be empty')
     with tempfile.TemporaryDirectory(prefix='.restore-',dir=uploads.parent) as temp:
         root=Path(temp)
-        unpack_verified(source,key_path,root)
+        manifest=unpack_verified(source,key_path,root)
+        restored_settings=None
+        if SETTINGS_NAME in manifest['files']:
+            try:restored_settings=parse_settings((root/SETTINGS_NAME).read_bytes())
+            except ValueError:
+                print('CẢNH BÁO: cài đặt giao diện trong bản sao không hợp lệ; ghi giá trị mặc định.',file=sys.stderr)
+                restored_settings=dict(SETTINGS_DEFAULTS)
+        else:
+            print('CẢNH BÁO: bản sao cũ chưa có cài đặt giao diện; giữ nguyên hoặc dùng mặc định. Vào Cài đặt kiểm tra lại.',file=sys.stderr)
         with maintenance_lock(url) as c:
             if c.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'").fetchone()[0]:
                 raise ValueError('Restore database must be empty; never overwrite the running clinic')
+            if settings.exists():
+                raise ValueError('Restore settings destination already exists; never overwrite live settings')
             # Stage files first; do not expose restored state before both pieces exist.
             staged=root/'attachments'
             pg_tool('pg_restore',['--single-transaction','--exit-on-error','--no-owner','--no-acl','--dbname',unquote(urlsplit(url).path.lstrip('/')),str(root/'database.dump')],url)
             if uploads.exists():
                 uploads.rmdir()
             os.replace(staged,uploads)
+            if restored_settings is not None:write_settings(settings,restored_settings)
             # Restored browser tokens must not become valid again.
             c.execute('DELETE FROM sessions')
             c.execute('INSERT INTO audit_log(event,object_type,created_at) VALUES(%s,%s,%s)',
@@ -251,6 +272,7 @@ def main():
     parser.add_argument('--file',type=Path)
     parser.add_argument('--target-url-env', default='CLINIC_RESTORE_DATABASE_URL')
     parser.add_argument('--target-uploads',type=Path)
+    parser.add_argument('--target-settings',type=Path,help='mặc định: cạnh --target-uploads, tên ui_settings.json')
     args=parser.parse_args()
     if not LAN:
         parser.error('Requires CLINIC_MODE=lan')
@@ -269,7 +291,7 @@ def main():
             print('Authenticated backup and checksums verified:',result['created_at'])
     else:
         if not args.file or not args.target_uploads:parser.error('--file and --target-uploads required')
-        restore(args.file,args.key,os.environ[args.target_url_env],args.target_uploads)
+        restore(args.file,args.key,os.environ[args.target_url_env],args.target_uploads,args.target_settings)
         print('Restored into separate empty destination; sessions revoked. Validate before switching server configuration.')
 
 

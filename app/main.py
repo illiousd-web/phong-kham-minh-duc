@@ -120,7 +120,7 @@ async def security_headers(request:Request,call_next):
     response=await call_next(request)
     if LAN:
         response.headers['Strict-Transport-Security']='max-age=31536000'
-        if response.status_code != 503 and request.url.path.startswith('/api/') and request.url.path not in ('/api/health','/api/login','/api/audit'):
+        if response.status_code != 503 and request.url.path.startswith('/api/') and request.url.path not in ('/api/health','/api/login','/api/audit','/api/queue-counts'):
             token = request.cookies.get('__Host-clinic', '')
             if token:
                 try:
@@ -623,7 +623,8 @@ def get_rx(u=Depends(principal)):
 
 @app.get('/api/dues')
 def dues(u=Depends(principal)):
-    require(u,'cashier','reception','manager')
+    # Lễ tân không xem công nợ từng lượt; người kiêm thu ngân đọc qua vai trò cashier.
+    require(u,'cashier','manager')
     with db() as c:
         sql='''SELECT v.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,
          COALESCE((SELECT SUM(ch.amount) FROM effective_charges ch WHERE ch.visit_id=v.id AND NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id)),0)-COALESCE((SELECT SUM(amount) FROM effective_adjustments WHERE visit_id=v.id AND kind='discount' AND status='approved'),0) AS charged,
@@ -980,6 +981,11 @@ install_catalog(app, db, principal, require, audit)
 install_workflows(app, db, principal, require, audit, visit_access, NOW)
 from .workflows_v050 import install_v050
 install_v050(app,db,principal,require,audit,visit_access,NOW)
+from .ui_settings import install_ui_settings
+install_ui_settings(app,db,principal,require,audit,FILES)
+from .ui_settings import settings_path, read_settings
+from .queue_counts import install_queue_counts
+install_queue_counts(app,principal.peek,lambda:read_settings(settings_path(FILES)))
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse

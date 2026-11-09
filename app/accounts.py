@@ -25,8 +25,10 @@ class ResetInput(BaseModel):
 
 
 class AccountUpdate(BaseModel):
-    active: bool
-    roles: list[Role] = Field(min_length=1, max_length=11)
+    """Chỉ đổi trường được gửi. Không gửi roles thì giữ nguyên quyền (ví dụ chỉ khóa/mở)."""
+    active: bool | None = None
+    roles: list[Role] | None = Field(default=None, min_length=1, max_length=11)
+    full_name: str | None = Field(default=None, min_length=2, max_length=180)
 
 
 def create_account(c, data, pw_hash):
@@ -63,19 +65,34 @@ def install_accounts(app, db, principal, require, audit, pw_hash, now):
     def update_account(uid: int, data: AccountUpdate, u=Depends(principal)):
         require(u, 'admin')
         with db(True) as c:
-            if not c.execute('SELECT 1 FROM users WHERE id=?', (uid,)).fetchone():
+            row = c.execute('SELECT active FROM users WHERE id=?', (uid,)).fetchone()
+            if not row:
                 raise HTTPException(404, 'Không có tài khoản')
-            if not data.active or 'admin' not in data.roles:
+            if data.active is None and data.roles is None and data.full_name is None:
+                raise HTTPException(422, 'Không có thay đổi nào')
+            old_roles = {r[0] for r in c.execute('SELECT role FROM user_roles WHERE user_id=?', (uid,))}
+            roles = set(data.roles) if data.roles is not None else old_roles
+            active = data.active if data.active is not None else bool(row['active'])
+            if (not active or 'admin' not in roles) and 'admin' in old_roles:
                 others = c.execute("SELECT COUNT(*) FROM users u JOIN user_roles r ON r.user_id=u.id WHERE u.active=1 AND r.role='admin' AND u.id<>?", (uid,)).fetchone()[0]
-                current_admin = c.execute("SELECT 1 FROM user_roles WHERE user_id=? AND role='admin'", (uid,)).fetchone()
-                if current_admin and not others:
+                if not others:
                     raise HTTPException(409, 'Phải giữ ít nhất một quản trị viên hoạt động')
-            c.execute('UPDATE users SET active=? WHERE id=?', (int(data.active),uid))
-            c.execute('DELETE FROM user_roles WHERE user_id=?', (uid,))
-            for role in sorted(set(data.roles)):
-                c.execute('INSERT INTO user_roles VALUES(?,?)', (uid,role))
-            c.execute('DELETE FROM sessions WHERE user_id=?', (uid,))
-            audit(c,u,'account_updated','user',uid,','.join(sorted(set(data.roles)))+'; active='+str(data.active))
+            changes = []
+            if data.full_name is not None:
+                c.execute('UPDATE users SET full_name=? WHERE id=?', (data.full_name.strip(), uid))
+                changes.append('full_name')
+            if data.active is not None:
+                c.execute('UPDATE users SET active=? WHERE id=?', (int(active), uid))
+                changes.append('active='+str(active))
+            if data.roles is not None and roles != old_roles:
+                c.execute('DELETE FROM user_roles WHERE user_id=?', (uid,))
+                for role in sorted(roles):
+                    c.execute('INSERT INTO user_roles VALUES(?,?)', (uid,role))
+                changes.append('roles='+','.join(sorted(roles)))
+            # Đổi quyền hoặc khóa: thu hồi mọi phiên của người đó.
+            if roles != old_roles or not active:
+                c.execute('DELETE FROM sessions WHERE user_id=?', (uid,))
+            audit(c,u,'account_updated','user',uid,'; '.join(changes) or 'không đổi')
         return {'ok':True}
 
     @app.post('/api/accounts/{uid}/password')

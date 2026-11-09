@@ -118,37 +118,126 @@ def admin_count(url):
             return 0
 
 
+def _step(name):
+    """Mốc giữa các bước quay lui. Kiểm thử thay hàm này để chèn lỗi giả; chạy thật không làm gì."""
+
+
 def rollback_database(super_url, owner_url, app_role, backup_file, key_file, uploads):
-    """Put the database and attachments back to a verified backup.
+    """Put the database, attachments and UI settings back to a verified backup.
 
     The current database is RENAMED (kept for investigation), never dropped; the
-    current attachment folder is renamed the same way.
+    current attachment folder and ui_settings.json are renamed the same way.
+    Every precondition is checked BEFORE the database is renamed. If any later
+    step fails, everything is put back as it was (old database name, attachment
+    folder and settings file) and the error is raised.
     """
-    from scripts.backup_lan import unpack_verified, restore  # needs CLINIC_* LAN config
+    from scripts.backup_lan import unpack_verified, restore, SETTINGS_NAME  # needs CLINIC_* LAN config
+    from app.ui_settings import settings_path
+    import shutil
     import tempfile
     _, owner, _, db_name = parts(owner_url)
-    uploads = Path(uploads)
-    stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
-    # Fail before touching anything if the backup cannot be authenticated.
-    with tempfile.TemporaryDirectory(prefix='.verify-', dir=uploads.parent) as temp:
-        unpack_verified(Path(backup_file), key_file, Path(temp))
+    uploads = Path(uploads).resolve()
+    live_settings = settings_path(uploads)
+    # Giờ + hậu tố ngẫu nhiên: hai lần quay lui trong cùng một giây không trùng tên CSDL/thư mục giữ lại.
+    import secrets
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S') + '_' + secrets.token_hex(2)
     kept = f'{db_name}_loi_{stamp}'
-    with psycopg.connect(super_url, autocommit=True, connect_timeout=10) as c:
-        c.execute('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=%s AND pid<>pg_backend_pid()', (db_name,))
-        c.execute(sql.SQL('ALTER DATABASE {} RENAME TO {}').format(sql.Identifier(db_name), sql.Identifier(kept)))
-        c.execute(sql.SQL("CREATE DATABASE {} OWNER {} ENCODING 'UTF8' TEMPLATE template0").format(
-            sql.Identifier(db_name), sql.Identifier(owner)))
-        c.execute(sql.SQL('REVOKE ALL ON DATABASE {} FROM PUBLIC').format(sql.Identifier(db_name)))
-        c.execute(sql.SQL('GRANT CONNECT ON DATABASE {} TO {}').format(sql.Identifier(db_name), sql.Identifier(app_role)))
     staged = uploads.with_name(uploads.name + f'.khoiphuc-{stamp}')
-    restore(Path(backup_file), key_file, owner_url, staged)
-    moved = None
-    if uploads.exists():
-        moved = uploads.with_name(uploads.name + f'.loi-{stamp}')
-        os.replace(uploads, moved)
-    os.replace(staged, uploads)
-    grant(owner_url, app_role, db_name)
-    return {'kept_database': kept, 'kept_attachments': str(moved) if moved else None}
+    staged_settings = live_settings.with_name(f'.ui_settings.khoiphuc-{stamp}.json')
+    moved = uploads.with_name(uploads.name + f'.loi-{stamp}')
+    old_settings = live_settings.with_name(f'ui_settings.loi-{stamp}.json')
+
+    # 1. Kiểm mọi điều kiện trước khi đụng vào CSDL đang chạy.
+    uploads.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.verify-', dir=uploads.parent) as temp:
+        manifest = unpack_verified(Path(backup_file), key_file, Path(temp))  # giải mã + kiểm hash
+    has_settings = SETTINGS_NAME in manifest['files']
+    for path in (staged, staged_settings, moved, old_settings):
+        if path.exists():
+            raise ValueError(f'Đường dẫn tạm đã có sẵn, không ghi đè: {path.name}')
+    for folder in {uploads.parent, live_settings.parent}:
+        folder.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=folder, prefix='.ghi-thu-') as probe:
+            probe.write(b'ok')
+            probe.flush()
+    with psycopg.connect(super_url, autocommit=True, connect_timeout=10) as c:
+        if not c.execute('SELECT 1 FROM pg_database WHERE datname=%s', (db_name,)).fetchone():
+            raise ValueError(f'Không thấy CSDL {db_name}')
+        if c.execute('SELECT 1 FROM pg_database WHERE datname=%s', (kept,)).fetchone():
+            raise ValueError(f'CSDL {kept} đã có sẵn, không ghi đè')
+
+    done = set()
+    try:
+        _step('rename')
+        with psycopg.connect(super_url, autocommit=True, connect_timeout=10) as c:
+            c.execute('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=%s AND pid<>pg_backend_pid()', (db_name,))
+            c.execute(sql.SQL('ALTER DATABASE {} RENAME TO {}').format(sql.Identifier(db_name), sql.Identifier(kept)))
+            done.add('renamed')
+            _step('create')
+            c.execute(sql.SQL("CREATE DATABASE {} OWNER {} ENCODING 'UTF8' TEMPLATE template0").format(
+                sql.Identifier(db_name), sql.Identifier(owner)))
+            c.execute(sql.SQL('REVOKE ALL ON DATABASE {} FROM PUBLIC').format(sql.Identifier(db_name)))
+            c.execute(sql.SQL('GRANT CONNECT ON DATABASE {} TO {}').format(sql.Identifier(db_name), sql.Identifier(app_role)))
+        _step('restore')
+        # Cài đặt được khôi phục vào chỗ tạm, chưa đụng tệp đang dùng.
+        restore(Path(backup_file), key_file, owner_url, staged, settings=staged_settings)
+        _step('attachments')
+        if uploads.exists():
+            os.replace(uploads, moved)
+            done.add('attachments_moved')
+        os.replace(staged, uploads)
+        done.add('attachments_swapped')
+        _step('settings')
+        if has_settings and staged_settings.exists():
+            if live_settings.exists():
+                os.replace(live_settings, old_settings)
+                done.add('settings_moved')
+            os.replace(staged_settings, live_settings)
+            done.add('settings_swapped')
+        _step('grant')
+        grant(owner_url, app_role, db_name)
+    except BaseException as error:
+        problems = _undo_rollback(super_url, db_name, kept, done, uploads, staged, moved,
+                                  live_settings, staged_settings, old_settings, shutil)
+        if problems:
+            raise RuntimeError('Quay lui lỗi và hoàn tác KHÔNG trọn vẹn: ' + '; '.join(problems)) from error
+        raise
+    return {'kept_database': kept,
+            'kept_attachments': str(moved) if 'attachments_moved' in done else None,
+            'settings': 'restored' if 'settings_swapped' in done else 'kept',
+            'kept_settings': str(old_settings) if 'settings_moved' in done else None}
+
+
+def _undo_rollback(super_url, db_name, kept, done, uploads, staged, moved, live_settings, staged_settings, old_settings, shutil):
+    """Đưa mọi thứ về như trước khi quay lui. Trả danh sách lỗi (rỗng nếu hoàn tác trọn vẹn)."""
+    problems = []
+
+    def attempt(label, action):
+        try:
+            action()
+        except Exception as error:  # noqa: BLE001 - gom lỗi để báo đủ, không bỏ dở hoàn tác
+            problems.append(f'{label}: {type(error).__name__}')
+
+    if 'settings_swapped' in done:
+        attempt('bỏ cài đặt vừa khôi phục', lambda: os.replace(live_settings, staged_settings))
+    if 'settings_moved' in done:
+        attempt('trả cài đặt cũ', lambda: os.replace(old_settings, live_settings))
+    if 'attachments_swapped' in done:
+        attempt('bỏ thư mục đính kèm vừa khôi phục', lambda: os.replace(uploads, staged))
+    if 'attachments_moved' in done:
+        attempt('trả thư mục đính kèm cũ', lambda: os.replace(moved, uploads))
+    attempt('dọn tệp tạm', lambda: staged_settings.unlink(missing_ok=True))
+    if staged.exists():
+        attempt('dọn thư mục tạm', lambda: shutil.rmtree(staged))
+    if 'renamed' in done:
+        def database_back():
+            with psycopg.connect(super_url, autocommit=True, connect_timeout=10) as c:
+                # Chỉ xóa CSDL MỚI tạo trong lần quay lui này; CSDL cũ đang mang tên kept.
+                if c.execute('SELECT 1 FROM pg_database WHERE datname=%s', (db_name,)).fetchone():
+                    c.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(db_name)))
+                c.execute(sql.SQL('ALTER DATABASE {} RENAME TO {}').format(sql.Identifier(kept), sql.Identifier(db_name)))
+        attempt('đổi tên CSDL cũ về', database_back)
+    return problems
 
 
 def load(args):
@@ -197,7 +286,10 @@ def main(argv=None):
             # code: bring installer-managed policy (backup retention) up to date.
             from scripts.install_env import apply_managed
             changed = sorted(set(apply_managed(args.clinic_env)) | set(apply_managed(args.owner_env) if args.owner_env else set()))
-            result = {'granted': True, 'managed_changed': changed}
+            # Tệp cài đặt giao diện mặc định cho máy mới (không sửa tệp đã có).
+            from app.ui_settings import settings_path, ensure_default_settings
+            uploads = Path(urls['uploads']) if urls['uploads'] else Path(os.environ.get('CLINIC_DATA_DIR', '.')) / 'attachments'
+            result = {'granted': True, 'managed_changed': changed, 'ui_settings': ensure_default_settings(settings_path(uploads))}
         elif args.command == 'fingerprint':
             result = fingerprint(urls['owner'])
         elif args.command == 'admin-count':

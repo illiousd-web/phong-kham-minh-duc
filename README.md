@@ -3,7 +3,7 @@
 Danh mục/chỉ định và công nợ; đơn thuốc cấu trúc, quy đổi, cấp/trả và kiểm soát riêng; điều dưỡng được phân công; hoàn tất, khóa và phụ lục có phiên bản. Chỉ dùng dữ liệu giả lập. Giữ profile Windows 11 / i3 / 8 GB / SSD 256 GB.
 
 - [Nguồn main và đối chiếu ZIP v0.4.1](docs/V050_SOURCE.md)
-- [Hướng dẫn A–D](docs/V050_USAGE.md)
+- [Hướng dẫn sử dụng theo vai trò](docs/HUONG_DAN_SU_DUNG.md)
 - [Cài và nâng cấp, backup/rollback](docs/V050_UPGRADE.md)
 - [Kết quả kiểm thử và giới hạn](docs/V050_VALIDATION.md)
 - **[Cài đặt tự động trên Windows — từng bước cho người không chuyên](docs/CAI_DAT_TUNG_BUOC.md)**: `deploy\windows\CAI_DAT.bat` (máy chủ), `CAI_MAY_TRAM.bat`, `CAP_NHAT.bat`, `KIEM_TRA.bat`.

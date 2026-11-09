@@ -83,7 +83,7 @@ def install_auth(app, db, lan, now):
             raise HTTPException(401, 'Sai tài khoản hoặc mật khẩu')
         return payload
 
-    def principal(request: Request, authorization: Annotated[str | None, Header()] = None):
+    def authenticate(request, authorization, touch):
         token = request.cookies.get(COOKIE) if lan else (authorization[7:] if authorization and authorization.startswith('Bearer ') else None)
         if not token or len(token) < 48 or len(token) > 200:
             raise HTTPException(401, 'Cần đăng nhập')
@@ -95,9 +95,21 @@ def install_auth(app, db, lan, now):
             if lan:
                 if not u['last_seen'] or datetime.fromisoformat(u['last_seen']) < datetime.now(timezone.utc)-timedelta(minutes=IDLE_MINUTES):
                     raise HTTPException(401, 'Phiên hết hạn do không hoạt động')
-                c.execute('UPDATE sessions SET last_seen=? WHERE token_hash=?', (now(),digest))
+                if touch:
+                    c.execute('UPDATE sessions SET last_seen=? WHERE token_hash=?', (now(),digest))
             roles = [r[0] for r in c.execute('SELECT role FROM user_roles WHERE user_id=? ORDER BY role', (u['id'],))]
             return {'id':u['id'],'username':u['username'],'name':u['full_name'],'roles':roles,'token_hash':digest}
+
+    def principal(request: Request, authorization: Annotated[str | None, Header()] = None):
+        """Người dùng đã đăng nhập; mỗi lần gọi tính là một thao tác, gia hạn phiên."""
+        return authenticate(request, authorization, True)
+
+    def peek(request: Request, authorization: Annotated[str | None, Header()] = None):
+        """Như principal nhưng KHÔNG gia hạn phiên: chỉ dùng cho lệnh hỏi định kỳ
+        (số đếm hàng chờ), để tự đăng xuất sau IDLE_MINUTES không thao tác vẫn đúng."""
+        return authenticate(request, authorization, False)
+
+    principal.peek = peek
 
     @app.get('/api/me')
     def me(u=Depends(principal)):

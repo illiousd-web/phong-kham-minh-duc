@@ -68,6 +68,7 @@ function Invoke-QuayVe {
             '--super-env', $P.SuperEnv, 'rollback', '--file', $State.backup, '--key', $P.BackupKey)
         if ($r.Ok) {
             Set-SecureAcl -Path $P.Attachments -Directory -Writers @($Names.ServiceAcct)
+            if (Test-Path -LiteralPath $P.Settings) { Set-SecureAcl -Path $P.Settings -Directory -Writers @($Names.ServiceAcct) }
             Write-Dat 'Đã khôi phục cơ sở dữ liệu và tệp đính kèm về thời điểm trước cập nhật.'
         }
         else { Write-Loi 'Khôi phục cơ sở dữ liệu thất bại; KHÔNG dùng phần mềm, báo người hỗ trợ ngay.'; $r.Output | Select-Object -Last 3 | ForEach-Object { Write-Thongtin $_ } }
@@ -167,6 +168,9 @@ try {
     # Bước grant (mã mới) cũng cập nhật chính sách sao lưu (14 bản), giữ nguyên mật khẩu; đặt lại quyền tệp.
     Set-SecureAcl -Path $P.ClinicEnv -Readers @($Names.ServiceAcct)
     Set-SecureAcl -Path $P.OwnerEnv
+    # Thư mục cài đặt giao diện (ui_settings.json): dịch vụ được ghi khi quản trị đổi Cài đặt.
+    New-Item -ItemType Directory -Force -Path $P.Settings | Out-Null
+    Set-SecureAcl -Path $P.Settings -Directory -Writers @($Names.ServiceAcct)
     if (@((ConvertFrom-PythonJson $r).managed_changed).Count -gt 0) { Write-Dat 'Đã chuyển chính sách sao lưu: giữ 14 bản trên máy chủ (xóa bớt bản cũ chỉ sau lần sao lưu mới đầu tiên đã kiểm).' }
     Write-Dat 'Cấu trúc dữ liệu đã cập nhật.'
 

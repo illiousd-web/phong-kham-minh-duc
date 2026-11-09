@@ -148,6 +148,35 @@ def pg_accent_check():
     print('PASS: mật khẩu postgres có dấu -> tệp UTF-8, đăng nhập SCRAM-SHA-256 thật đạt; bản bỏ dấu bị từ chối')
 
 
+SETTINGS_FILE = DATA / 'caidat' / 'ui_settings.json'
+CHOSEN = {'advance_payment': True, 'addendum': True, 'controlled_drugs': False}
+
+
+def settings_set():
+    """CI: quản trị đổi Cài đặt qua HTTPS (dịch vụ phải ghi được thư mục caidat)."""
+    call = session()
+    status, body = call('PUT', '/api/ui-settings', CHOSEN)
+    assert status == 200 and body == {**CHOSEN, 'source': 'file'}, (status, body)
+    assert json.loads(SETTINGS_FILE.read_text(encoding='utf-8')) == CHOSEN
+    print('PASS: quản trị lưu Cài đặt qua HTTPS; tệp caidat\\ui_settings.json đã ghi')
+
+
+def settings_check():
+    """CI: sau khi CAP_NHAT lỗi tự quay về, cài đặt vẫn đúng và dịch vụ vẫn ghi được."""
+    call = session()
+    status, body = call('GET', '/api/ui-settings')
+    assert status == 200 and body == {**CHOSEN, 'source': 'file'}, (status, body)
+    kept = list(SETTINGS_FILE.parent.glob('ui_settings.loi-*.json'))
+    assert kept, 'quay lui phải giữ bản cài đặt lúc lỗi để đối chiếu'
+    leftovers = [p.name for p in SETTINGS_FILE.parent.iterdir() if 'khoiphuc' in p.name]
+    assert not leftovers, leftovers
+    status, body = call('PUT', '/api/ui-settings', {'advance_payment': False})
+    assert status == 200 and body['advance_payment'] is False, (status, body)
+    status, body = call('PUT', '/api/ui-settings', {'advance_payment': True})
+    assert status == 200, status
+    print('PASS: CAP_NHAT lỗi trên máy ĐÃ có cài đặt -> quay về đúng cài đặt, dịch vụ vẫn ghi được')
+
+
 def fresh_install_report():
     """CI: a FIRST install has only 1 verified backup, so the backup row must be KHÔNG ĐẠT
     (needs 3) with the reason and the action, and it must be the ONLY failing row."""
@@ -175,6 +204,10 @@ if __name__ == '__main__':
         pg_set_password()
     elif command == 'pg-accent-check':
         pg_accent_check()
+    elif command == 'settings-set':
+        settings_set()
+    elif command == 'settings-check':
+        settings_check()
     elif command == 'fresh-install-report':
         fresh_install_report()
     else:

@@ -266,6 +266,9 @@ jobs:
           $now = & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py count | Select-Object -Last 1
           if ($now -ne $env:COUNT_BEFORE) { throw "Data changed by update: $now vs $env:COUNT_BEFORE" }
           Write-Output 'PASS: CAP_NHAT thanh cong, du lieu giu nguyen'
+      - name: Administrator saves UI settings over HTTPS before the broken update
+        run: |
+          & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py settings-set; if ($LASTEXITCODE) { throw 'settings-set' }
       - name: CAP_NHAT.bat with a broken update must roll back (expected exit 50)
         shell: cmd
         run: |
@@ -281,6 +284,7 @@ jobs:
           $now = & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py count | Select-Object -Last 1
           if ($now -ne $env:COUNT_BEFORE) { throw "Rollback did not restore database: $now vs $env:COUNT_BEFORE" }
           Write-Output 'PASS: CAP_NHAT loi -> tu quay ve ban cu (ma, thu vien, CSDL), dich vu chay lai'
+          & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py settings-check; if ($LASTEXITCODE) { throw 'settings after rollback' }
       - name: Simulate a machine installed by the PR 7 installer (30 local backups) before the second CAI_DAT
         run: |
           foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {
@@ -436,6 +440,9 @@ jobs:
             $pw = ([regex]::Match($envText, 'clinic_app:([^@]+)@')).Groups[1].Value
             if (-not $pw -or $text.Contains($pw) -or $text.Contains('postgresql://') -or $text.Contains($env:MINHDUC_ADMIN_PASSWORD)) { throw 'Secret in report' }
             Write-Output 'PASS: bao cao khong chua mat khau'
+            # ASCII-only check (PowerShell 5.1 script encoding): the settings row must not start with "[KH" (KHONG DAT).
+            $row = ($text -split "`n") | Where-Object { $_ -match '^\[.*ui_settings\.json' } | Select-Object -First 1
+            if (-not $row -or $row -match '^\[KH') { throw "KIEM_TRA: settings row missing or failing: $row" }
           }
       - name: Collect logs (no secrets)
         if: always()
@@ -446,6 +453,11 @@ jobs:
           Copy-Item C:\ProgramData\MinhDuc\logs\server.log* "$env:RUNNER_TEMP\evidence" -ErrorAction SilentlyContinue
           Copy-Item C:\ProgramData\MinhDuc\capnhat\ket-qua-cap-nhat.json "$env:RUNNER_TEMP\evidence" -ErrorAction SilentlyContinue
           Copy-Item "$env:RUNNER_TEMP\kiem-tra.txt" "$env:RUNNER_TEMP\evidence" -ErrorAction SilentlyContinue
+          # PostgreSQL installer logs (for exit-code-1 failures): print only the tail, without any line mentioning a password.
+          foreach ($log in @(Get-ChildItem $env:TEMP -Filter 'install-postgresql*.log' -ErrorAction SilentlyContinue) + @(Get-ChildItem $env:TEMP -Filter 'bitrock_installer*.log' -ErrorAction SilentlyContinue)) {
+            Write-Output ('==== ' + $log.Name + ' (last 80 lines, password lines removed) ====')
+            Get-Content $log.FullName -Tail 400 -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '(?i)pass|pwd|secret' } | Select-Object -Last 80
+          }
           $global:LASTEXITCODE = 0
       - uses: actions/upload-artifact@v4
         if: always()

@@ -63,6 +63,18 @@ def collect(env, state_file=None, ca_file=None, timeout=15):
         facts['disk_free_gib'] = round(shutil.disk_usage(data).free / GIB, 1)
     except OSError:
         pass
+    # Cài đặt giao diện: tệp thiếu/hỏng thì phần mềm dùng mặc định, ở đây phải báo.
+    uploads = Path(env.get('CLINIC_UPLOAD_DIR', str(data / 'attachments')))
+    settings = Path(env['CLINIC_UI_SETTINGS']) if env.get('CLINIC_UI_SETTINGS') else uploads.parent / 'caidat' / 'ui_settings.json'
+    facts['ui_settings_path'] = str(settings)
+    try:
+        stored = json.loads(settings.read_text(encoding='utf-8'))
+        ok = isinstance(stored, dict) and all(isinstance(stored.get(k), bool) for k in ('advance_payment', 'addendum', 'controlled_drugs'))
+        facts['ui_settings'] = 'file' if ok else 'invalid'
+    except FileNotFoundError:
+        facts['ui_settings'] = 'missing'
+    except (OSError, ValueError):
+        facts['ui_settings'] = 'invalid'
     backups = Path(env.get('CLINIC_BACKUP_DIR', str(data / 'backups')))
     files = sorted(backups.glob('minhduc-*.mdbackup'), key=lambda p: p.stat().st_mtime) if backups.exists() else []
     facts['backup_count'] = len(files)
@@ -167,6 +179,12 @@ def evaluate(facts, now=None):
     add('Tệp hoán đổi (page file) do Windows tự quản lý', page.get('auto') is True, page.get('detail', 'không đọc được'))
     add('Tệp cấu hình chỉ quản trị và dịch vụ đọc được', facts.get('env_acl_ok') is True,
         facts.get('env_acl_detail', 'không đọc được'))
+    ui = facts.get('ui_settings')
+    add('Tệp cài đặt chức năng phụ (ui_settings.json) đọc được', ui == 'file',
+        'Đọc được' if ui == 'file' else
+        ('Chưa có tệp' if ui == 'missing' else 'Tệp hỏng' if ui == 'invalid' else 'Không kiểm được')
+        + ': phần mềm đang dùng giá trị mặc định (ứng trước TẮT, phụ lục BẬT, thuốc kiểm soát BẬT). '
+          'Quản trị vào menu Cài đặt, kiểm tra rồi bấm Lưu cài đặt; nếu vừa khôi phục, báo người hỗ trợ.')
     return rows
 
 

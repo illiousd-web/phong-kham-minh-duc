@@ -202,7 +202,7 @@ function Step-CauHinhVaCSDL {
     if (-not $r.Ok) { Stop-CaiDat 'Không tạo được tài khoản/cơ sở dữ liệu PostgreSQL.' $r.Output 16 }
     $db = ConvertFrom-PythonJson $r
     if ($db.created_database) { Write-Dat 'Đã tạo cơ sở dữ liệu minhduc (UTF-8).' } else { Write-Dat 'Cơ sở dữ liệu đã có, giữ nguyên dữ liệu.' }
-    foreach ($d in @($P.Attachments, $P.Logs, $P.Backups, $P.Tls)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+    foreach ($d in @($P.Attachments, $P.Settings, $P.Logs, $P.Backups, $P.Tls)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
 }
 
 function Step-CauHinhPostgres {
@@ -330,7 +330,7 @@ function Step-DichVu {
     Set-SecureAcl -Path $P.ClinicEnv -Readers @($Names.ServiceAcct)
     Set-SecureAcl -Path $P.Tls -Directory -Readers @($Names.ServiceAcct)
     Set-SecureAcl -Path $P.Backups -Directory
-    foreach ($w in @($P.Attachments, $P.Logs)) { Set-SecureAcl -Path $w -Directory -Writers @($Names.ServiceAcct) }
+    foreach ($w in @($P.Attachments, $P.Settings, $P.Logs)) { Set-SecureAcl -Path $w -Directory -Writers @($Names.ServiceAcct) }
     Set-SecureAcl -Path $P.ServiceDir -Directory -Readers @($Names.ServiceAcct)
     Set-SecureAcl -Path $P.Journal -Directory
     Set-SecureAcl -Path $P.Code -Directory -Readers @('*S-1-5-32-545', $Names.ServiceAcct)

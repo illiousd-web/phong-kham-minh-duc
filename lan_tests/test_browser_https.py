@@ -10,10 +10,11 @@ import sys
 import time
 import httpx
 import pytest
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright,expect
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from .conftest import ROOT,PASSWORDS,IDS,SERVICE,db
+from .browser_helpers import settle,go,pick,send,submit,no_horizontal_scroll
 
 
 def test_real_https_three_browser_roles_and_pdf():
@@ -62,62 +63,95 @@ def test_real_https_three_browser_roles_and_pdf():
                     page.locator('#logout').wait_for(state='visible')
                     assert page.evaluate("sessionStorage.getItem('md_token')") is None
                     assert '__Host-clinic=' not in page.evaluate('document.cookie')
-                def go(role,where):
-                    page=pages[role];page.locator(f'[data-page="{where}"]').click()
-                    page.locator('#page-title').get_by_text({'reception':'Tiếp đón','clinical':'Khám bệnh','cashier':'Thu ngân','orders':'Chỉ định / kết quả','rx':'Đơn thuốc','stock':'Kho thuốc','accounts':'Tài khoản'}[where],exact=True).wait_for()
-                    return page
-                r=go('reception','reception')
+                # Mỗi vai trò vào thẳng màn hình công việc, chỉ thấy menu của mình, không còn menu mang số phiên bản.
+                expected={'reception':['reception','prices'],'doctor':['doctor'],'cashier':['cashier'],'technician':['lab'],'pharmacy':['pharmacy'],'admin':['admin','settings']}
+                for role,page in pages.items():
+                    settle(page)
+                    nav=page.locator('#navigation [data-action="navigate"]')
+                    assert [nav.nth(i).get_attribute('data-page') for i in range(nav.count())]==expected[role]
+                    assert 'v0.5' not in page.locator('#navigation').inner_text() and 'Quy trình' not in page.locator('#navigation').inner_text()
+                    expect(page.locator('#workspace')).to_have_attribute('data-page',expected[role][0])
+                # Bác sĩ đang mở màn hình khám, chưa bấm gì thêm.
+                d=go(pages['doctor'],'doctor')
+                r=pages['reception']
+                # Lễ tân xem bảng giá dịch vụ chỉ đọc để báo giá.
+                r=go(r,'prices')
+                expect(r.locator('#workspace tr[data-search]').filter(has_text='Khám giả lập')).to_contain_text('150.000')
+                assert r.locator('#workspace form').count()==0 and r.locator('#workspace button').count()==0
+                r.locator('#price-filter').fill('xét nghiệm https')
+                expect(r.locator('#workspace tr[data-search]:visible')).to_have_count(1)
+                r=go(r,'reception')
+                r.locator('#workspace summary').filter(has_text='Thêm bệnh nhân mới').click()
                 r.locator('[data-form="patient"] [name="full_name"]').fill('Bệnh nhân giả lập HTTPS ba máy')
                 r.locator('[data-form="patient"] [name="date_of_birth"]').fill('15/03/1985')
                 r.locator('[data-form="patient"] [name="sex"]').select_option('Nữ')
                 r.locator('[data-form="patient"] [name="phone"]').fill('0900000099')
-                r.locator('[data-form="patient"] button').click()
-                r.get_by_text('Đã lưu bệnh nhân',exact=False).wait_for()
-                # Select the newly created synthetic patient explicitly.
-                patient_option=r.locator('[data-form="visit"] select[name="patient_id"] option').filter(has_text='Bệnh nhân giả lập HTTPS ba máy').first
-                r.locator('[data-form="visit"] select[name="patient_id"]').select_option(patient_option.get_attribute('value'))
+                submit(r,'patient','Đã lưu bệnh nhân')
+                # Bệnh nhân vừa tạo được chọn sẵn ở bước 2.
+                expect(r.locator('#visit-step .patient-head')).to_contain_text('Bệnh nhân giả lập HTTPS ba máy')
                 r.locator('[data-form="visit"] select[name="doctor_id"]').select_option(str(IDS['doctor']))
-                r.locator('[data-form="visit"] button').click()
-                r.get_by_text('Đã tiếp nhận lượt khám',exact=False).wait_for()
-                r.locator('[data-kind="intake"]').first.wait_for()
-                vid=r.locator('[data-kind="intake"]').first.get_attribute('data-id')
-                d=go('doctor','clinical')
-                d.locator('select[name="visit_choose"]').select_option(vid)
-                d.locator('[name="chief_complaint"]').fill('Ghi khám giả lập HTTPS')
-                d.locator('[name="diagnosis"]').fill('Chẩn đoán giả lập')
+                vid=str(submit(r,'visit','Đã tiếp nhận lượt khám').json()['id'])
+                expect(r.locator(f'[data-kind="intake"][data-id="{vid}"]').first).to_be_visible()
+                # Số đếm Tiếp đón đúng bằng số dòng của hàng chờ Tiếp đón.
+                rows=r.locator('#workspace [data-kind="intake"][data-format="pdf"]').count()
+                expect(r.locator('#navigation [data-count="reception"]')).to_have_text(str(rows))
+                # Số đếm tự cập nhật không cần bấm: mô phỏng lần hỏi định kỳ (cùng đường chạy khi quay lại tab).
+                with db() as c:open_visits=c.execute("SELECT COUNT(*) FROM visits WHERE doctor_id=? AND status NOT IN ('completed','cancelled')",(IDS['doctor'],)).fetchone()[0]
+                d.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+                expect(d.locator('#navigation [data-count="doctor"]')).to_have_text(str(open_visits))
+                expect(d.locator('#queue-news')).to_contain_text('Hàng chờ có thêm 1 việc mới')
+                d.locator('#queue-news button').click();settle(d)
+                pick(d,'visit',vid)
+                d.locator('[data-form="clinical"] [name="chief_complaint"]').fill('Ghi khám giả lập HTTPS')
+                d.locator('[data-form="clinical"] [name="diagnosis"]').fill('Chẩn đoán giả lập')
                 d.locator('#v_pulse').fill('88')
                 d.locator('#v_bp').fill('150/95')
-                d.locator('#vitals-flags').get_by_text('Huyết áp cao').wait_for()
-                d.locator('[name="follow_up"]').fill('01/01/2027')
-                d.locator('[data-form="clinical"] button.btn').click()
-                d.get_by_text('Đã lưu phiếu khám',exact=False).wait_for()
-                cash=go('cashier','cashier')
+                expect(d.locator('#vitals-flags')).to_contain_text('Huyết áp cao')
+                d.locator('[data-form="clinical"] [name="follow_up"]').fill('01/01/2027')
+                submit(d,'clinical','Đã lưu phiếu khám')
+                expect(d.locator('#v_bp')).to_have_value('150/95')
+                cash=go(pages['cashier'],'cashier')
                 # Three authenticated browser contexts stay open together.
                 for role in ('reception','doctor','cashier'):
                     assert pages[role].evaluate("fetch('/api/me').then(r=>r.status)")==200
                     pages[role].screenshot(path=str(evidence/(role+'.png')),full_page=True)
-                d=go('doctor','orders')
-                d.locator('[data-form="order"] [name="visit_id"]').select_option(vid)
                 d.locator('[data-form="order"] [name="service_id"]').select_option(label='Xét nghiệm – Xét nghiệm HTTPS giả lập (42.000 đ)')
-                d.locator('[data-form="order"] button').click();d.get_by_text('Đã lập chỉ định',exact=False).wait_for()
-                tech=pages['technician'];tech.locator('[data-page="orders"]').click()
+                submit(d,'order','Đã lập chỉ định')
+                tech=go(pages['technician'],'lab')
+                tech.locator('[data-action="pick"][data-kind="order"]').filter(has_text='Xét nghiệm HTTPS giả lập').first.click();settle(tech)
+                expect(tech.locator('#workspace .patient-head')).to_contain_text('Xét nghiệm HTTPS giả lập')
                 tech.locator('[data-form="result"] [name="result_text"]').fill('Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nKết luận: Kết quả giả lập HTTPS')
-                tech.locator('[data-form="result"] button').click();tech.get_by_text('Đã chuyển kết quả',exact=False).wait_for()
-                d=go('doctor','clinical');d=go('doctor','orders')
-                d.locator('[data-action="approve"]').first.click();d.get_by_text('Đã duyệt quy trình mô phỏng',exact=False).wait_for()
+                submit(tech,'result','Đã chuyển kết quả')
+                d=go(d,'doctor')
+                send(d,d.locator('[data-action="approve"]').first,'Đã duyệt kết quả')
                 with d.expect_download() as download:d.locator('[data-kind="lab"][data-format="pdf"]').first.click()
                 download.value.save_as(str(evidence/'result.pdf'))
-                d=go('doctor','rx');d.locator('[data-form="rx"] [name="visit_id"]').select_option(vid)
                 d.locator('[data-form="rx"] [name="quantity"]').fill('2')
-                d.locator('[data-form="rx"] button.btn').click();d.get_by_text('Đã lưu đơn thuốc cấu trúc',exact=False).wait_for()
+                submit(d,'rx','Đã lưu đơn thuốc')
                 with d.expect_download() as download:d.locator('[data-kind="rx"][data-format="pdf"]').first.click()
                 download.value.save_as(str(evidence/'rx.pdf'))
-                cash.locator('[data-form="payment"] [name="visit_id"]').select_option(vid)
+                cash=go(cash,'cashier');pick(cash,'cash',vid)
+                expect(cash.locator('[data-form="payment"] [name="amount"]')).to_have_value('192000')
                 cash.locator('[data-form="payment"] [name="amount"]').fill('150000')
-                cash.locator('[data-form="payment"] button').click();cash.get_by_text('Đã ghi khoản thu vào cơ sở dữ liệu demo',exact=False).wait_for()
-                assert (evidence/'result.pdf').read_bytes().startswith(b'%PDF-')
-                assert (evidence/'rx.pdf').read_bytes().startswith(b'%PDF-')
-                admin=go('admin','accounts');admin.locator('[data-form="account"]').wait_for()
+                submit(cash,'payment','Đã thu tiền')
+                with cash.expect_download() as download:cash.locator('[data-action="export-receipt"]').first.click()
+                download.value.save_as(str(evidence/'receipt.pdf'))
+                for name in ('result.pdf','rx.pdf','receipt.pdf'):
+                    assert (evidence/name).read_bytes().startswith(b'%PDF-'),name
+                admin=pages['admin'];admin.locator('[data-form="account"]').wait_for()
+                # Cài đặt: chỉ quản trị thấy; bật/tắt ứng trước lưu phía máy chủ.
+                admin=go(admin,'settings')
+                expect(admin.locator('[name="advance_payment"]')).not_to_be_checked()
+                admin.locator('[name="advance_payment"]').check();submit(admin,'ui-settings','Đã lưu cài đặt')
+                expect(admin.locator('[name="advance_payment"]')).to_be_checked()
+                cash=go(cash,'cashier');pick(cash,'cash',vid)
+                expect(cash.locator('#workspace summary').filter(has_text='Nhận tiền ứng trước')).to_have_count(1)
+                admin.locator('[name="advance_payment"]').uncheck();submit(admin,'ui-settings','Đã lưu cài đặt')
+                cash=go(cash,'cashier')
+                expect(cash.locator('#workspace summary').filter(has_text='Nhận tiền ứng trước')).to_have_count(0)
+                # Bác sĩ dùng được trên điện thoại 390px: không tràn ngang.
+                d.set_viewport_size({'width':390,'height':844});d=go(d,'doctor')
+                no_horizontal_scroll(d)
                 # Existing teal/white styles and logo load through HTTPS.
                 assert r.locator('img').first.evaluate('(img)=>img.complete && img.naturalWidth>0')
                 assert not errors,errors

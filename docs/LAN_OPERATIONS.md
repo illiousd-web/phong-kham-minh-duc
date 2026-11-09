@@ -1,4 +1,4 @@
-> **v0.5.0:** xem [nâng cấp từ v0.4.x](V050_UPGRADE.md) và [hướng dẫn A–D](V050_USAGE.md). Migration hiện tại là schema 3; chạy bằng owner rồi cấp lại quyền runtime.
+> **v0.5.0:** xem [nâng cấp từ v0.4.x](V050_UPGRADE.md) và [hướng dẫn sử dụng](HUONG_DAN_SU_DUNG.md). Migration hiện tại là schema 3; chạy bằng owner rồi cấp lại quyền runtime.
 
 > **Profile máy 8 GB (Issue #3):** mặc định mới 1 worker/pool4, backup7bản và ngưỡng dung lượng. Xem [hướng dẫn Windows ngắn](WINDOWS_8GB_QUICKSTART.md) và [cấu hình tài nguyên](RESOURCE_LIGHT.md); các con số 2worker/pool16/backup30 trong phần v0.4 cũ bên dưới là thông tin lịch sử.
 
@@ -45,6 +45,10 @@ Không restore đè database đang chạy. Tạo database đích rỗng riêng d
 ```sh
 .venv/bin/python -m scripts.with_env /etc/minhduc/restore.env scripts.backup_lan restore --key /etc/minhduc/backup.key --file /duong-dan/ban-sao.mdbackup --target-uploads /var/lib/minhduc-restored/attachments
 ```
+
+Bản sao lưu chứa cả `ui_settings.json` (bật/tắt chức năng phụ). Khi khôi phục, tệp được ghi vào `caidat/ui_settings.json` cạnh thư mục `--target-uploads` (ví dụ `/var/lib/minhduc-restored/caidat/ui_settings.json`), đúng chỗ ứng dụng đọc sau khi đổi `CLINIC_UPLOAD_DIR` sang đích đó; đặt nơi khác bằng `--target-settings` rồi khai `CLINIC_UI_SETTINGS`. Lệnh từ chối ghi đè tệp cài đặt đã có. Bản sao lưu cũ chưa có tệp này: lệnh in cảnh báo, ứng dụng dùng mặc định; vào Cài đặt kiểm tra lại.
+
+Quay lui khi cập nhật lỗi (`scripts.install_db rollback`, CAP_NHAT gọi tự động): kiểm giải mã bản sao, chỗ ghi cài đặt và thư mục tạm TRƯỚC khi đổi tên CSDL; khôi phục cài đặt vào tệp tạm rồi mới thay; giữ bản lỗi (`<db>_loi_<giờ>`, `attachments.loi-<giờ>`, `caidat/ui_settings.loi-<giờ>.json`). Bước nào lỗi thì tự đổi tên CSDL cũ về, trả thư mục đính kèm và cài đặt cũ, phần mềm chạy tiếp như trước khi quay lui.
 
 `restore.env` chứa cấu hình LAN đầy đủ, URL nguồn hợp lệ và URL đích owner. Lệnh kiểm tag GCM, manifest, hash, thành viên archive; từ chối đường dẫn vượt thư mục, symlink, database/thư mục đích không rỗng. pg_restore chạy single transaction và exit-on-error. Sau restore thu hồi toàn bộ phiên và ghi sự kiện khôi phục. Nếu máy hết đĩa/lỗi filesystem sau bước DB đã commit, đích có thể chỉ hoàn tất một phần: không chuyển ứng dụng sang đích đó; tạo đích rỗng khác và chạy lại sau khi sửa nguyên nhân.
 

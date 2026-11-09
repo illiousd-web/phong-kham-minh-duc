@@ -1,6 +1,6 @@
 > **Bộ cài tự động:** thay cho các bước cài tay bên dưới, dùng `deploy\windows\CAI_DAT.bat` theo [hướng dẫn từng bước](CAI_DAT_TUNG_BUOC.md). Phần dưới giữ lại để tham khảo kỹ thuật.
 
-> **v0.5.0:** xem [nâng cấp từ v0.4.x](V050_UPGRADE.md) và [hướng dẫn A–D](V050_USAGE.md). Migration hiện tại là schema 3; chạy bằng owner rồi cấp lại quyền runtime.
+> **v0.5.0:** xem [nâng cấp từ v0.4.x](V050_UPGRADE.md) và [hướng dẫn sử dụng](HUONG_DAN_SU_DUNG.md). Migration hiện tại là schema 3; chạy bằng owner rồi cấp lại quyền runtime.
 
 # Minh Đức LAN trên máy i3 / RAM 8 GB — hướng dẫn ngắn
 

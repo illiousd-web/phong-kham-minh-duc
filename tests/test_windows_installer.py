@@ -213,6 +213,7 @@ def _good_facts():
         'backup_state': {'last_success_utc': (NOW - timedelta(hours=2)).isoformat(), 'verified_count': 3}, 'backup_count': 3,
         'disk_free_gib': 120.5, 'memory': {'total_mib': 7900, 'available_mib': 3000},
         'pagefile': {'auto': True, 'detail': 'Windows tự quản lý'}, 'env_acl_ok': True, 'env_acl_detail': 'ok',
+        'ui_settings': 'file',
     }
 
 
@@ -240,6 +241,8 @@ def test_health_all_pass():
     ({'memory': {'total_mib': 4096, 'available_mib': 2000}}, 'RAM'),
     ({'pagefile': {'auto': False, 'detail': 'Cố định 512 MB'}}, 'page file'),
     ({'env_acl_ok': False}, 'Tệp cấu hình'),
+    ({'ui_settings': 'missing'}, 'ui_settings.json'),
+    ({'ui_settings': 'invalid'}, 'ui_settings.json'),
     ({'external_declared': True, 'backup_state': {'last_success_utc': NOW.isoformat(), 'verified_count': 3,
                                                    'external_last_copy_utc': (NOW - timedelta(days=4)).isoformat()}}, 'Ổ sao lưu ngoài'),
 ])
@@ -924,3 +927,15 @@ def test_docs_no_self_disable_smart_app_control_and_new_acceptance_items():
     assert 'Windows 7 + Chrome 109' in checklist and 'không có cảnh báo chứng chỉ' in checklist
     assert 'gõ mật khẩu có dấu' in checklist
     assert 'thời gian một lần sao lưu' in checklist and 'độ trễ thao tác khám' in checklist
+
+
+def test_collect_reports_ui_settings_state(tmp_path):
+    env = {'CLINIC_DATA_DIR': str(tmp_path), 'CLINIC_DATABASE_URL': 'postgresql://u:p@127.0.0.1:1/x',
+           'CLINIC_ORIGIN': 'https://127.0.0.1:1', 'CLINIC_UPLOAD_DIR': str(tmp_path / 'attachments')}
+    target = tmp_path / 'caidat' / 'ui_settings.json'
+    assert install_health.collect(env, timeout=1)['ui_settings'] == 'missing'
+    target.parent.mkdir()
+    target.write_text('{hỏng', encoding='utf-8')
+    assert install_health.collect(env, timeout=1)['ui_settings'] == 'invalid'
+    target.write_text('{"advance_payment": false, "addendum": true, "controlled_drugs": true}', encoding='utf-8')
+    assert install_health.collect(env, timeout=1)['ui_settings'] == 'file'
