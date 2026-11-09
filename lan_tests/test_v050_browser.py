@@ -43,6 +43,7 @@ def test_v050_all_workflows_https_browser(clients,visit):
                     assert page.evaluate("showDay('2026-11-08T18:30:01.123456+00:00')")=='09/11/2026 01:30'
                     page.locator('[name="username"]').fill('test_'+role);page.locator('[name="password"]').fill(PASSWORDS[role])
                     page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for()
+                    assert page.locator('[data-page="v050"]').count()==(0 if role=='technician' else 1)
                 def go(role,where):
                     page=pages[role];expect(page.locator('#workspace')).not_to_have_attribute('aria-busy','true');page.locator(f'[data-page="{where}"]').click();page.wait_for_load_state('networkidle')
                     expect(page.locator('#workspace')).not_to_have_attribute('aria-busy','true')

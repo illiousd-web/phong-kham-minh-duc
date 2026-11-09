@@ -84,7 +84,7 @@ function formButtons(kind,id){return `<span class="printactions"><button type="b
 
 function printHtml(markup){$('print-overlay').innerHTML=markup;$('print-overlay').classList.remove('hidden');document.body.classList.add('printing');window.print()}
 window.addEventListener('afterprint',()=>{document.body.classList.remove('printing');$('print-overlay').classList.add('hidden');$('print-overlay').innerHTML=''})
-function viewInit(){if(!auth){renderLogin();return}const r=role();const m=[...(menus[r]||menus.reception),['v050','Quy trình v0.5'],['password','Đổi mật khẩu']];
+function viewInit(){if(!auth){renderLogin();return}const r=role();const m=[...(menus[r]||menus.reception),...(r==='technician'?[]:[['v050','Quy trình v0.5']]),['password','Đổi mật khẩu']];
  if(!m.some(x=>x[0]===active))active=m[0][0];$('page-title').textContent=m.find(x=>x[0]===active)[1];$('user-label').textContent=auth.user.name+' · '+roles[r];$('logout').classList.remove('hidden');
  $('navigation').innerHTML=(auth.user.roles.length>1?selectField('Vai trò đang dùng','role_switch',auth.user.roles.filter(k=>menus[k]).map(k=>[k,roles[k]])):'')+m.map(([id,label])=>`<button class="navbutton" data-action="navigate" data-page="${esc(id)}" aria-current="${active===id?'page':'false'}">${esc(label)}</button>`).join('');}
 let renderEpoch=0;
