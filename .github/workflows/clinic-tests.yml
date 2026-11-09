@@ -453,6 +453,11 @@ jobs:
           Copy-Item C:\ProgramData\MinhDuc\logs\server.log* "$env:RUNNER_TEMP\evidence" -ErrorAction SilentlyContinue
           Copy-Item C:\ProgramData\MinhDuc\capnhat\ket-qua-cap-nhat.json "$env:RUNNER_TEMP\evidence" -ErrorAction SilentlyContinue
           Copy-Item "$env:RUNNER_TEMP\kiem-tra.txt" "$env:RUNNER_TEMP\evidence" -ErrorAction SilentlyContinue
+          # PostgreSQL installer logs (for exit-code-1 failures): print only the tail, without any line mentioning a password.
+          foreach ($log in @(Get-ChildItem $env:TEMP -Filter 'install-postgresql*.log' -ErrorAction SilentlyContinue) + @(Get-ChildItem $env:TEMP -Filter 'bitrock_installer*.log' -ErrorAction SilentlyContinue)) {
+            Write-Output ('==== ' + $log.Name + ' (last 80 lines, password lines removed) ====')
+            Get-Content $log.FullName -Tail 400 -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '(?i)pass|pwd|secret' } | Select-Object -Last 80
+          }
           $global:LASTEXITCODE = 0
       - uses: actions/upload-artifact@v4
         if: always()
