@@ -218,6 +218,16 @@ jobs:
           if ($now -ne $env:COUNT_BEFORE) { throw "Data changed: $now vs $env:COUNT_BEFORE" }
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after rerun' }
           Write-Output 'PASS: chay CAI_DAT lan hai khong mat du lieu, khong doi mat khau/khoa/chung chi'
+      - name: CAI_MAY_TRAM.bat from the read-only share folder (same VM acts as workstation)
+        shell: cmd
+        run: call C:\MinhDuc-ChiaSe\CAI_MAY_TRAM.bat -KhongHoi
+      - name: Verify workstation shortcut
+        run: |
+          $link = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Phòng khám Minh Đức.lnk'
+          if (-not (Test-Path -LiteralPath $link)) { throw 'Shortcut missing' }
+          $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
+          if ($sc.Arguments -notmatch '^--app=https://') { throw "Unexpected shortcut arguments $($sc.Arguments)" }
+          Write-Output ("PASS: bieu tuong Desktop -> " + $sc.TargetPath + " " + $sc.Arguments)
       - name: KIEM_TRA.bat report has no secrets
         shell: cmd
         run: call C:\MinhDuc\deploy\windows\KIEM_TRA.bat -KhongHoi -TepKetQua "%RUNNER_TEMP%\kiem-tra.txt"
