@@ -433,8 +433,10 @@ function Step-BieuTuong {
     $icon = Join-Path $P.ServiceDir 'minhduc.ico'
     $logo = Join-Path $P.Code 'app\static\logo_minh_duc.png'
     Invoke-Python -Paths $P -Quiet -OkCodes @(0, 1) -Arguments @('-c', 'import sys;from PIL import Image;Image.open(sys.argv[1]).convert("RGBA").save(sys.argv[2],sizes=[(256,256),(48,48),(32,32),(16,16)])', $logo, $icon) | Out-Null
-    $link = New-AppShortcut -Url $script:Origin -Icon $icon
-    if ($link) { Write-Dat ('Đã tạo biểu tượng "Phòng khám Minh Đức" trên Desktop.') }
+    try {
+        $link = New-AppShortcut -Url $script:Origin -Icon $icon
+        if ($link) { Write-Dat ('Đã tạo biểu tượng "Phòng khám Minh Đức" trên Desktop.') }
+    } catch { Write-Luu ('Chưa tạo được biểu tượng Desktop (' + $_.Exception.Message + '). Mở Chrome và gõ địa chỉ ' + $script:Origin) }
 }
 
 # ---------------------------------------------------------------------------

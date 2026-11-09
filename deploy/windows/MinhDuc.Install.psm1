@@ -513,13 +513,17 @@ function New-AppShortcut {
     if (-not $browser) { Write-Luu 'Chưa thấy Chrome hoặc Edge; cài Google Chrome rồi chạy lại để tạo biểu tượng.'; return $null }
     $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
     $link = Join-Path $desktop $script:Names.Shortcut
+    # WScript.Shell chỉ lưu được tên tệp theo bảng mã ANSI: lưu tên không dấu rồi đổi tên.
+    $tmp = Join-Path $desktop 'MinhDuc-tam.lnk'
     $shell = New-Object -ComObject WScript.Shell
-    $sc = $shell.CreateShortcut($link)
+    $sc = $shell.CreateShortcut($tmp)
     $sc.TargetPath = $browser
     $sc.Arguments = '--app=' + $Url
     $sc.Description = 'Phần mềm quản lý Phòng khám đa khoa Minh Đức'
     if ($Icon -and (Test-Path -LiteralPath $Icon)) { $sc.IconLocation = $Icon }
     $sc.Save()
+    if (Test-Path -LiteralPath $link) { Remove-Item -LiteralPath $link -Force }
+    Move-Item -LiteralPath $tmp -Destination $link -Force
     if ($browser -notmatch 'chrome.exe') { Write-Luu 'Chưa có Chrome; biểu tượng đang mở bằng Microsoft Edge.' }
     return $link
 }

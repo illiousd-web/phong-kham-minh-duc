@@ -62,10 +62,14 @@ foreach ($c in @((Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.
     if ($c -and (Test-Path -LiteralPath $c)) { $browser = $c; break }
 }
 if ($browser) {
-    $link = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Phòng khám Minh Đức.lnk'
-    $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
+    $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
+    $link = Join-Path $desktop 'Phòng khám Minh Đức.lnk'
+    $tmp = Join-Path $desktop 'MinhDuc-tam.lnk'   # WScript.Shell chỉ lưu tên ANSI; đổi tên sau
+    $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($tmp)
     $sc.TargetPath = $browser; $sc.Arguments = '--app=' + $MayChu; $sc.Description = 'Phần mềm Phòng khám đa khoa Minh Đức'
     $sc.Save()
+    if (Test-Path -LiteralPath $link) { Remove-Item -LiteralPath $link -Force }
+    Move-Item -LiteralPath $tmp -Destination $link -Force
     Dat 'Đã tạo biểu tượng "Phòng khám Minh Đức" trên Desktop.'
     if ($browser -notmatch 'chrome') { Write-Host '  [LƯU Ý] Chưa có Chrome; biểu tượng dùng Microsoft Edge.' -ForegroundColor Yellow }
 } else { Loi 'Chưa có Chrome hoặc Edge. Cài Google Chrome rồi chạy lại.' }
