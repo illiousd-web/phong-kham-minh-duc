@@ -57,7 +57,7 @@ Bộ cài làm 13 bước, mỗi bước in **[ĐẠT]**, **[LƯU Ý]** hoặc *
 | 8. Chứng chỉ HTTPS | **"Vân tay chứng chỉ (8 ký tự đầu…): XXXXXXXX"** | **Ghi 8 ký tự này ra giấy** |
 | 9. Dịch vụ Windows | "Dịch vụ "MinhDuc" đang chạy tại https://…:8443" | **Ghi địa chỉ này ra giấy** |
 | 10. Tường lửa | Có thể hỏi chuyển mạng sang "Riêng tư" | Gõ **C** |
-| 11. Lịch sao lưu | Hỏi có ổ USB/ổ ngoài không; "Sao lưu thử… ĐẠT" | Xem dưới |
+| 11. Lịch sao lưu | Giữ 7 bản trên máy chủ, 30 bản trên ổ ngoài. Hỏi có ổ USB/ổ ngoài không; "Sao lưu thử… ĐẠT" | Xem dưới |
 | 12. Tài khoản quản trị | Hỏi tên đăng nhập, họ tên, mật khẩu | Xem dưới |
 | 13. Kiểm tra sức khỏe | Bảng **ĐẠT / KHÔNG ĐẠT** từng mục | Đọc kết quả |
 
@@ -95,6 +95,8 @@ Không bao giờ bấm *"Advanced → Proceed"* để bỏ qua cảnh báo chứ
 - **Hằng ngày:** để máy chủ bật qua **20:00** để sao lưu tự chạy. Nếu máy tắt lúc 20:00, lần bật sau máy tự sao lưu bù.
 - **Nếu trên Desktop máy chủ có tệp "CANH BAO SAO LUU…"**: mở đọc, làm theo, rồi bấm `KIEM_TRA.bat` (mục 7).
 - **Hằng tuần:** cắm ổ sao lưu ngoài ít nhất một lần. Ổ vắng mặt **quá 3 ngày** thì máy sẽ cảnh báo.
+- **Số bản sao lưu:** máy chủ giữ **7 bản** gần nhất (đủ một tuần, tiết kiệm ổ SSD); ổ ngoài giữ **30 bản** (khoảng một tháng). Máy cài bằng bản cũ (giữ 30 bản trên máy) sẽ tự chuyển sang 7/30 khi chạy lại `CAI_DAT.bat` hoặc `CAP_NHAT.bat`; mật khẩu không đổi.
+- **Chứng chỉ HTTPS** có hạn 1 năm. Khi còn **dưới 60 ngày**, tệp cảnh báo trên Desktop và báo cáo `KIEM_TRA` sẽ nhắc. Làm theo mục 6a.
 - Không tắt **Microsoft Defender** hay **Windows Firewall**.
 
 ---
@@ -108,6 +110,17 @@ Không bao giờ bấm *"Advanced → Proceed"* để bỏ qua cảnh báo chứ
 5. Máy tự làm: sao lưu → kiểm bản sao lưu → dừng dịch vụ → thay mã → cài thư viện → cập nhật cấu trúc dữ liệu → bật dịch vụ → kiểm tra.
    - Thấy **CẬP NHẬT THÀNH CÔNG** là xong.
    - Thấy **ĐÃ QUAY VỀ BẢN CŨ**: phần mềm vẫn chạy bản trước, dữ liệu được khôi phục về lúc trước cập nhật. Gửi thư mục `C:\ProgramData\MinhDuc\nhatky` cho người hỗ trợ.
+
+## 6a. Gia hạn chứng chỉ HTTPS (mỗi năm một lần)
+
+Dùng khi tệp cảnh báo hoặc `KIEM_TRA` báo *"Chứng chỉ HTTPS còn … ngày"*. **Máy trạm không phải cài lại.**
+
+1. Chọn lúc vắng bệnh nhân (phần mềm ngắt khoảng 1 phút).
+2. Mở `C:\MinhDuc\deploy\windows`, bấm đúp **`GIA_HAN_CHUNG_CHI.bat`** → **Yes**.
+3. Máy tự làm: lưu chứng chỉ cũ → cấp chứng chỉ mới bằng chứng chỉ gốc (CA) đang dùng → khởi động lại dịch vụ → kiểm tra trang web dùng đúng chứng chỉ mới.
+   - Thấy **GIA HẠN THÀNH CÔNG** là xong.
+   - Thấy **ĐÃ TRẢ CHỨNG CHỈ CŨ**: phần mềm vẫn chạy bằng chứng chỉ cũ. Chạy `KIEM_TRA.bat` và gửi báo cáo cho người hỗ trợ.
+4. Nếu báo *"Không thấy khóa CA"*: chép tệp `ca.key` (đã cất trên USB, nếu có) vào `C:\ProgramData\MinhDuc\quantri\` rồi chạy lại. Mất `ca.key` thì phải tạo chứng chỉ gốc mới và cài lại mọi máy trạm — báo người hỗ trợ.
 
 ---
 
@@ -138,7 +151,7 @@ Khi bộ cài dừng, dòng **DỪNG LẠI** màu đỏ cho biết lý do; các 
 | *"Cổng 5432/8443 đang bị phần mềm khác dùng"* | Báo người hỗ trợ, gửi kèm báo cáo `KIEM_TRA`. |
 | *"Dịch vụ web chưa trả lời sau 2 phút"* | Khởi động lại máy, chạy `KIEM_TRA.bat`, gửi tệp báo cáo. |
 | Máy trạm: *"Chưa kết nối được"* | Máy trạm và máy chủ phải cùng mạng phòng khám (không dùng Wi-Fi khách). Máy chủ phải đang bật. Chạy `KIEM_TRA.bat` trên máy chủ. |
-| Có tệp *"CANH BAO SAO LUU"* trên Desktop máy chủ | Đọc tệp. Nếu là ổ ngoài vắng mặt: cắm ổ lại, tối nay máy tự chép. Nếu sao lưu thất bại: chạy `KIEM_TRA.bat`, gửi báo cáo. |
+| Có tệp *"CANH BAO SAO LUU"* trên Desktop máy chủ | Đọc tệp. Nếu là ổ ngoài vắng mặt: cắm ổ lại, tối nay máy tự chép. Nếu sao lưu thất bại: chạy `KIEM_TRA.bat`, gửi báo cáo. Nếu là chứng chỉ sắp hết hạn: làm mục 6a. |
 
 Mã kết quả cuối cửa sổ (`Ma ket qua`) giúp người hỗ trợ biết dừng ở bước nào; gửi kèm khi báo lỗi.
 
@@ -159,10 +172,10 @@ In trang này, đánh dấu từng ô. Chỉ dùng dữ liệu giả lập khi t
 - [ ] Sáng hôm sau: `KIEM_TRA.bat` báo bản sao lưu mới hơn 36 giờ, lịch sao lưu ĐẠT.
 - [ ] Ổ sao lưu ngoài có thư mục `MinhDuc-SaoLuu` chứa tệp `.mdbackup` mới; **không có** tệp `backup.key` trên ổ đó.
 - [ ] Rút ổ ngoài 4 ngày (thử nghiệm): Desktop máy chủ xuất hiện tệp cảnh báo; cắm lại thì cảnh báo tự hết sau lần sao lưu kế tiếp.
+- [ ] Chạy thử `GIA_HAN_CHUNG_CHI.bat` một lần: báo GIA HẠN THÀNH CÔNG, máy trạm vẫn mở được phần mềm không cảnh báo, không phải cài lại.
 - [ ] Người hỗ trợ đã diễn tập khôi phục một bản sao lưu sang cơ sở dữ liệu riêng và đối chiếu số liệu giả lập.
 - [ ] Chạy lại `CAI_DAT.bat` một lần: vẫn đăng nhập bằng mật khẩu cũ, dữ liệu giả lập còn nguyên.
-- [ ] Tệp `MinhDuc-KiemTra-….txt` đã gửi người hỗ trợ và được xác nhận.
-- [ ] Đã ghi lại cấu hình máy, ngày cài, người cài, kết quả các ô trên vào sổ bàn giao.
+- [ ] Đã gửi tệp `MinhDuc-KiemTra-….txt` cho người hỗ trợ (được xác nhận) và ghi cấu hình máy, ngày cài, người cài, kết quả các ô trên vào sổ bàn giao.
 
 ---
 
@@ -174,5 +187,6 @@ In trang này, đánh dấu từng ô. Chỉ dùng dữ liệu giả lập khi t
 - Dịch vụ `MinhDuc` (WinSW) chạy `python -m scripts.with_env clinic.env scripts.run_lan`, khởi động trễ tự động, phụ thuộc `postgresql-x64-17`, tự chạy lại sau 10/30/60 giây; nhật ký xoay vòng 5 tệp × 5 MB trong `logs\service`, nhật ký ứng dụng như cũ.
 - PostgreSQL: thêm `include_if_exists = 'minhduc-8gb.conf'` cuối `postgresql.conf` (bản cũ lưu `postgresql.conf.truoc-minhduc-…`), `pg_hba.conf` chỉ còn 127.0.0.1/::1 SCRAM (bản cũ được lưu). Cơ sở dữ liệu tạo với bảng mã UTF8.
 - Tường lửa: nhóm quy tắc `MinhDuc`: cho phép TCP 8443 tới IP máy chủ, chỉ từ dải LAN hiện tại, hồ sơ Private/Domain; chặn 5432 từ mạng.
-- Sao lưu: tác vụ `MinhDuc - Sao luu 20h` chạy dưới SYSTEM, `scripts.backup_job`: sao lưu mã hóa → giải mã thử và kiểm SHA-256 từng tệp → chép ra ổ ngoài (nhận ra bằng tệp đánh dấu, không theo chữ cái ổ) → giữ 30 bản mỗi nơi → trạng thái `backup-status.json`, cảnh báo trên Desktop chung và nhật ký sự kiện Windows.
+- Sao lưu: tác vụ `MinhDuc - Sao luu 20h` chạy dưới SYSTEM, `scripts.backup_job`: sao lưu mã hóa → giải mã thử và kiểm SHA-256 từng tệp → chép ra ổ ngoài (nhận ra bằng tệp đánh dấu, không theo chữ cái ổ) → giữ 7 bản trên máy chủ (`CLINIC_BACKUP_KEEP=7`) và 30 bản trên ổ ngoài (`CLINIC_OFFSITE_KEEP=30`; hai giá trị này do bộ cài quản lý, `CAI_DAT`/`CAP_NHAT` tự đặt lại) → trạng thái `backup-status.json`, cảnh báo trên Desktop chung và nhật ký sự kiện Windows (sao lưu lỗi, ổ ngoài vắng quá 3 ngày, chứng chỉ HTTPS còn dưới 60 ngày).
+- Gia hạn chứng chỉ: `GIA_HAN_CHUNG_CHI.bat` → `scripts.install_cert renew` dùng `quantri\ca.key`; khóa máy chủ mới, cùng tên/IP, CA giữ nguyên; bản cũ lưu `server.crt.cu-<thời điểm>`; kiểm số sê-ri chứng chỉ dịch vụ đang dùng; lỗi thì `rollback`. Kết quả ghi `nhatky\ket-qua-gia-han.json`. `CAI_DAT` chạy lại khi chứng chỉ còn dưới 60 ngày (cùng IP) cũng gia hạn theo cách này.
 - Cập nhật lỗi sau khi đã đổi cấu trúc dữ liệu: cơ sở dữ liệu lỗi được **đổi tên** thành `minhduc_loi_<thời điểm>` (không xóa), tệp đính kèm lỗi đổi tên `attachments.loi-<thời điểm>`; khôi phục từ bản sao lưu vừa kiểm tra.

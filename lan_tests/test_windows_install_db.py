@@ -17,6 +17,22 @@ import pytest
 from lan_tests.conftest import SOURCE
 from scripts import install_db, install_env, backup_job
 
+def _server_uses_trust():
+    """True when the test server accepts a wrong password (pg_hba 'trust')."""
+    p = urlsplit(SOURCE)
+    wrong = urlunsplit(p._replace(netloc=f'{p.username}:sai-{secrets.token_hex(8)}@{p.hostname}:{p.port or 5432}'))
+    try:
+        with psycopg.connect(wrong, connect_timeout=5):
+            return True
+    except psycopg.OperationalError:
+        return False
+
+
+if _server_uses_trust():
+    pytest.skip('PostgreSQL kiểm thử đang dùng chế độ trust (chấp nhận mọi mật khẩu): không kiểm được '
+                'việc từ chối mật khẩu sai của bộ cài. Dùng máy chủ kiểm thử xác thực scram-sha-256.',
+                allow_module_level=True)
+
 SUFFIX = secrets.token_hex(4)
 DB = f'minhduc_inst_{SUFFIX}'
 OWNER = f'inst_owner_{SUFFIX}'
@@ -138,6 +154,23 @@ def run_job(env, marker, args):
     result = subprocess.run([sys.executable, '-c', JOB, str(marker), *args], cwd=root, env=env,
                             capture_output=True, text=True)
     return result
+
+
+def test_grant_cli_moves_old_install_to_7_local_30_external(creds, tmp_path):
+    clinic, owner = tmp_path / 'clinic.env', tmp_path / 'owner.env'
+    env = {**_lan_env(tmp_path, creds), 'CLINIC_BACKUP_KEEP': '30', 'CLINIC_OFFSITE_KEEP': '30'}
+    install_env.write_env(clinic, env, ['test'])
+    install_env.write_env(owner, {**env, 'CLINIC_DATABASE_URL': owner_url(creds)}, ['test'])
+    saved = dict(os.environ)
+    try:
+        assert install_db.main(['--clinic-env', str(clinic), '--owner-env', str(owner), 'grant']) == 0
+    finally:
+        os.environ.clear(); os.environ.update(saved)
+    for path, url in ((clinic, app_url(creds)), (owner, owner_url(creds))):
+        values = install_env.read_env(path)
+        assert values['CLINIC_BACKUP_KEEP'] == '7' and values['CLINIC_OFFSITE_KEEP'] == '30'
+        assert values['CLINIC_DATABASE_URL'] == url, 'passwords must be kept'
+    assert install_db.can_login(app_url(creds))
 
 
 def test_nightly_job_backup_verify_external_copy_and_rollback(creds, tmp_path):

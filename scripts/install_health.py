@@ -19,6 +19,7 @@ import sys
 import urllib.request
 
 VN = timezone(timedelta(hours=7))
+CERT_WARNING_DAYS = 60  # cùng ngưỡng với lịch sao lưu (scripts.backup_job)
 GIB = 1024 ** 3
 
 
@@ -104,11 +105,13 @@ def evaluate(facts, now=None):
         f'Phiên bản cấu trúc dữ liệu: {version}' if facts.get('db_ok') else f"Lỗi: {facts.get('db_error', 'không rõ')}")
     add('Trang đăng nhập mở được qua HTTPS (chứng chỉ hợp lệ)', facts.get('https_health') and facts.get('login_page'),
         f"Địa chỉ: {facts.get('origin', '?')}" + (f" — lỗi: {facts['https_error']}" if facts.get('https_error') else ''))
+    title = f'Chứng chỉ HTTPS còn hạn trên {CERT_WARNING_DAYS} ngày'
     if facts.get('cert_not_after'):
         days = (datetime.fromisoformat(facts['cert_not_after']) - now).days
-        add('Chứng chỉ HTTPS còn hạn trên 30 ngày', days > 30, f'Còn {days} ngày')
+        add(title, days >= CERT_WARNING_DAYS, f'Còn {days} ngày' + (
+            '' if days >= CERT_WARNING_DAYS else ' — bấm GIA_HAN_CHUNG_CHI.bat (máy trạm không phải cài lại)'))
     else:
-        add('Chứng chỉ HTTPS còn hạn trên 30 ngày', False, 'Không đọc được chứng chỉ')
+        add(title, False, 'Không đọc được chứng chỉ')
     fw = facts.get('firewall') or {}
     add('Tường lửa chỉ mở cổng web cho mạng nội bộ', fw.get('exists') and fw.get('enabled') and fw.get('scoped'),
         f"Cổng {fw.get('port', '?')} cho {fw.get('remote', '?')}")

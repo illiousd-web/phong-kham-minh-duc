@@ -6,6 +6,11 @@ create : run scripts.create_lan_certificate into a fresh temporary folder,
          then place server.crt/server.key/ca.crt in --tls-dir and the CA
          private key in --ca-key (administrators only, never shared).
 fingerprint : SHA-256 of ca.crt, shown on server and workstation for comparison.
+renew  : issue a NEW server certificate (new key, same names/IPs) signed by the
+         EXISTING clinic CA, so workstations do not need CAI_MAY_TRAM again.
+         Old files are kept as *.cu-<stamp>; `rollback --stamp` puts them back.
+served : read the certificate the running HTTPS service presents (verified
+         against ca.crt) to prove the service picked up the renewed one.
 """
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -19,21 +24,109 @@ import sys
 import tempfile
 
 
-def check(cert_path, ip, days):
+RENEW_WARNING_DAYS = 60
+
+
+def status(cert_path, ip, days):
+    """code: ok | missing | ip (needs a new CA + workstation reinstall) | expiring (renewable)."""
     from cryptography import x509
     from cryptography.x509.oid import ExtensionOID
     path = Path(cert_path)
     if not path.exists():
-        return False, 'chưa có chứng chỉ'
+        return {'ok': False, 'code': 'missing', 'reason': 'chưa có chứng chỉ'}
     cert = x509.load_pem_x509_certificate(path.read_bytes())
     san = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
     addresses = [str(a) for a in san.get_values_for_type(x509.IPAddress)]
-    if str(ipaddress.ip_address(ip)) not in addresses:
-        return False, f'chứng chỉ đang cấp cho IP {", ".join(addresses)}, khác IP máy hiện tại {ip}'
     left = cert.not_valid_after_utc - datetime.now(timezone.utc)
+    if str(ipaddress.ip_address(ip)) not in addresses:
+        return {'ok': False, 'code': 'ip', 'days_left': left.days,
+                'reason': f'chứng chỉ đang cấp cho IP {", ".join(addresses)}, khác IP máy hiện tại {ip}'}
     if left <= timedelta(days=days):
-        return False, f'chứng chỉ còn {left.days} ngày'
-    return True, f'chứng chỉ hợp lệ, còn {left.days} ngày'
+        return {'ok': False, 'code': 'expiring', 'days_left': left.days, 'reason': f'chứng chỉ còn {left.days} ngày'}
+    return {'ok': True, 'code': 'ok', 'days_left': left.days, 'reason': f'chứng chỉ hợp lệ, còn {left.days} ngày'}
+
+
+def check(cert_path, ip, days):
+    result = status(cert_path, ip, days)
+    return result['ok'], result['reason']
+
+
+def days_left(cert_path, now=None):
+    from cryptography import x509
+    cert = x509.load_pem_x509_certificate(Path(cert_path).read_bytes())
+    return (cert.not_valid_after_utc - (now or datetime.now(timezone.utc))).days
+
+
+def renew(tls_dir, ca_key_path, valid_days=365):
+    """New server key + certificate from the existing CA; CA itself unchanged."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
+    tls_dir = Path(tls_dir)
+    ca_cert = x509.load_pem_x509_certificate((tls_dir / 'ca.crt').read_bytes())
+    ca_key = serialization.load_pem_private_key(Path(ca_key_path).read_bytes(), password=None)
+    if ca_key.public_key().public_numbers() != ca_cert.public_key().public_numbers():
+        raise ValueError('Khóa CA (ca.key) không khớp chứng chỉ gốc ca.crt đang phát cho máy trạm.')
+    now = datetime.now(timezone.utc)
+    if ca_cert.not_valid_after_utc - now < timedelta(days=30):
+        raise ValueError('Chứng chỉ gốc (CA) sắp hết hạn: phải tạo CA mới và cài lại mọi máy trạm.')
+    old = x509.load_pem_x509_certificate((tls_dir / 'server.crt').read_bytes())
+    san = old.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
+    key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    not_after = min(now + timedelta(days=valid_days), ca_cert.not_valid_after_utc - timedelta(days=1))
+    cert = (x509.CertificateBuilder().subject_name(old.subject).issuer_name(ca_cert.subject)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(minutes=5)).not_valid_after(not_after)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(x509.SubjectAlternativeName(list(san)), critical=False)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+            .add_extension(x509.KeyUsage(digital_signature=True, key_encipherment=True, content_commitment=False,
+                                         data_encipherment=False, key_agreement=False, key_cert_sign=False,
+                                         crl_sign=False, encipher_only=None, decipher_only=None), critical=True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+            .sign(ca_key, hashes.SHA256()))
+    stamp = now.strftime('%Y%m%d%H%M%S')
+    with tempfile.TemporaryDirectory(prefix='.renew-', dir=tls_dir) as temp:
+        new_crt, new_key = Path(temp) / 'server.crt', Path(temp) / 'server.key'
+        new_key.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                              serialization.NoEncryption()))
+        new_crt.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        for name in ('server.crt', 'server.key'):
+            os.replace(tls_dir / name, tls_dir / f'{name}.cu-{stamp}')
+        os.replace(new_key, tls_dir / 'server.key')
+        os.replace(new_crt, tls_dir / 'server.crt')
+    return {'stamp': stamp, 'not_after': not_after.isoformat(), 'serial': format(cert.serial_number, 'X'),
+            'ca_fingerprint': fingerprint(tls_dir / 'ca.crt')}
+
+
+def rollback(tls_dir, stamp):
+    """Put back the server certificate saved by renew(); keep the failed one aside."""
+    tls_dir = Path(tls_dir)
+    for name in ('server.crt', 'server.key'):
+        saved = tls_dir / f'{name}.cu-{stamp}'
+        if not saved.exists():
+            raise ValueError(f'Không thấy bản lưu {saved.name}')
+    for name in ('server.crt', 'server.key'):
+        current = tls_dir / name
+        if current.exists():
+            os.replace(current, tls_dir / f'{name}.loi-{stamp}')
+        os.replace(tls_dir / f'{name}.cu-{stamp}', current)
+    return {'restored': stamp}
+
+
+def served(origin, ca_file, timeout=10):
+    """Certificate actually presented by the HTTPS service, verified with the clinic CA."""
+    import socket
+    import ssl
+    from urllib.parse import urlsplit
+    parts = urlsplit(origin)
+    context = ssl.create_default_context(cafile=str(ca_file))
+    with socket.create_connection((parts.hostname, parts.port or 443), timeout=timeout) as sock:
+        with context.wrap_socket(sock, server_hostname=parts.hostname) as tls:
+            peer = tls.getpeercert()
+    return {'serial': peer['serialNumber'].upper().lstrip('0'), 'not_after': peer['notAfter']}
 
 
 def fingerprint(ca_path):
@@ -77,11 +170,27 @@ def main(argv=None):
     n = sub.add_parser('create'); n.add_argument('--ip', required=True); n.add_argument('--tls-dir', required=True)
     n.add_argument('--ca-key', required=True)
     f = sub.add_parser('fingerprint'); f.add_argument('--ca', required=True)
+    r = sub.add_parser('renew'); r.add_argument('--tls-dir', required=True); r.add_argument('--ca-key', required=True)
+    b = sub.add_parser('rollback'); b.add_argument('--tls-dir', required=True); b.add_argument('--stamp', required=True)
+    s = sub.add_parser('served'); s.add_argument('--origin', required=True); s.add_argument('--ca', required=True)
     args = parser.parse_args(argv)
     if args.command == 'check':
-        ok, reason = check(args.cert, args.ip, args.days)
-        print(json.dumps({'ok': ok, 'reason': reason}, ensure_ascii=False))
-        return 0 if ok else 1
+        result = status(args.cert, args.ip, args.days)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result['ok'] else 1
+    try:
+        if args.command == 'renew':
+            print(json.dumps(renew(args.tls_dir, args.ca_key)))
+            return 0
+        if args.command == 'rollback':
+            print(json.dumps(rollback(args.tls_dir, args.stamp)))
+            return 0
+        if args.command == 'served':
+            print(json.dumps(served(args.origin, args.ca)))
+            return 0
+    except (ValueError, OSError) as error:
+        print(f'LOI: {error}', file=sys.stderr)
+        return 2
     if args.command == 'create':
         print(json.dumps({'fingerprint': create(args.ip, args.tls_dir, args.ca_key)}))
         return 0

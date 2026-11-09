@@ -3,7 +3,8 @@
 backup -> authenticate/verify the new file -> optional copy to a declared
 external drive -> status file + warnings. Old good backups are never removed
 before a new one is verified; retention comes from CLINIC_BACKUP_KEEP /
-CLINIC_OFFSITE_KEEP (30 each in the Windows installer configuration).
+CLINIC_OFFSITE_KEEP (7 on the server, 30 on the external drive in the Windows
+installer configuration). Also warns when the HTTPS certificate has < 60 days left.
 
 The external drive is recognised by a marker file, not by drive letter, so a
 USB stick that comes back as E: or F: is still found. A drive on the same
@@ -25,6 +26,7 @@ import tempfile
 MARKER_DIR = 'MinhDuc-SaoLuu'
 MARKER_FILE = 'minhduc-backup-target.json'
 ABSENT_LIMIT = timedelta(days=3)
+CERT_WARNING_DAYS = 60
 
 
 def now_utc():
@@ -77,7 +79,20 @@ def evaluate(state, external_config, now):
                             '(vắng mặt hoặc lỗi). Cắm lại ổ và chạy KIEM_TRA.bat.')
         if state.get('external_error'):
             warnings.append('Chép ra ổ ngoài lỗi: ' + state['external_error'])
+    days = state.get('cert_days_left')
+    if days is not None and days < CERT_WARNING_DAYS:
+        warnings.append(f'Chứng chỉ HTTPS của máy chủ còn {days} ngày. Bấm đúp GIA_HAN_CHUNG_CHI.bat '
+                        '(máy trạm không phải cài lại).')
     return warnings
+
+
+def cert_days_left(cert_path, now):
+    try:
+        from cryptography import x509
+        cert = x509.load_pem_x509_certificate(Path(cert_path).read_bytes())
+        return (cert.not_valid_after_utc - now).days
+    except (OSError, ValueError, ImportError):
+        return None
 
 
 def write_json(path, data):
@@ -149,6 +164,8 @@ def run(args, now=None):
                 state['external_last_copy_utc'] = now.isoformat()
             except Exception as error:
                 state['external_error'] = f'{type(error).__name__}: {str(error).splitlines()[0] if str(error) else ""}'[:300]
+    if os.environ.get('CLINIC_TLS_CERT'):
+        state['cert_days_left'] = cert_days_left(os.environ['CLINIC_TLS_CERT'], now)
     state['last_run_utc'] = now.isoformat()
     warnings = evaluate(state, external, now)
     state['warnings'] = warnings

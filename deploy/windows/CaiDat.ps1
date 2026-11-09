@@ -113,7 +113,8 @@ function Step-CaiPostgres {
             $sec = Read-Host -AsSecureString '  Mật khẩu postgres'
             $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
             if ($plain -match '[\r\n]') { Stop-CaiDat 'Mật khẩu không hợp lệ.' @() 8 }
-            Set-Content -LiteralPath $P.SuperEnv -Value ('MINHDUC_PG_SUPER_PASSWORD=' + $plain) -Encoding ASCII
+            # UTF-8 (không BOM): mật khẩu có chữ có dấu không bị hỏng như khi ghi ASCII.
+            [IO.File]::WriteAllText($P.SuperEnv, ('MINHDUC_PG_SUPER_PASSWORD=' + $plain + "`r`n"), (New-Object Text.UTF8Encoding($false)))
             $plain = $null
             Set-SecureAcl -Path $P.SuperEnv
         }
@@ -187,6 +188,7 @@ function Step-CauHinhVaCSDL {
             'Nếu buộc phải đổi IP: liên hệ người hỗ trợ (cần tạo lại chứng chỉ và cài lại cho máy trạm).') 15
     }
     if ($report.clinic_env_created) { Write-Dat 'Đã tạo clinic.env với mật khẩu ngẫu nhiên mạnh.' } else { Write-Dat 'Giữ nguyên clinic.env và mật khẩu đang dùng.' }
+    if (@($report.managed_changed).Count -gt 0) { Write-Dat 'Đã chuyển chính sách sao lưu: giữ 7 bản trên máy chủ, 30 bản trên ổ ngoài.' }
     $script:Origin = $report.origin
     $script:Cidr = $report.cidr
     $dbArgs = @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, '--owner-env', $P.OwnerEnv, '--super-env', $P.SuperEnv, 'ensure')
@@ -243,6 +245,9 @@ function Step-Migration {
     if (-not $r.Ok) { Stop-CaiDat 'Migration thất bại.' ($r.Output | Select-Object -Last 6) 18 }
     $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, '--owner-env', $P.OwnerEnv, 'grant')
     if (-not $r.Ok) { Stop-CaiDat 'Cấp quyền cho tài khoản ứng dụng thất bại.' $r.Output 19 }
+    $readers = if (Get-Service -Name $Names.Service -ErrorAction SilentlyContinue) { @($Names.ServiceAcct) } else { @() }
+    Set-SecureAcl -Path $P.ClinicEnv -Readers $readers
+    Set-SecureAcl -Path $P.OwnerEnv
     Write-Dat 'Cấu trúc dữ liệu đã cập nhật; tài khoản web chỉ có quyền tối thiểu.'
 }
 
@@ -250,9 +255,14 @@ function Step-ChungChi {
     param($Snap)
     Write-Buoc "Bước 8/${Tong}: Chứng chỉ HTTPS theo IP $($Snap.ip.address)"
     $cert = Join-Path $P.Tls 'server.crt'
-    $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 1) -Arguments @('-m', 'scripts.install_cert', 'check', '--cert', $cert, '--ip', $Snap.ip.address)
+    $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 1) -Arguments @('-m', 'scripts.install_cert', 'check', '--cert', $cert, '--ip', $Snap.ip.address, '--days', '60')
     $state = ConvertFrom-PythonJson $r
-    if ($r.Code -ne 0) {
+    if ($state.code -eq 'expiring' -and (Test-Path -LiteralPath $P.CaKey)) {
+        # Cùng IP, chỉ sắp hết hạn: gia hạn bằng CA hiện có, máy trạm không phải cài lại.
+        $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_cert', 'renew', '--tls-dir', $P.Tls, '--ca-key', $P.CaKey)
+        if (-not $r.Ok) { Stop-CaiDat 'Không gia hạn được chứng chỉ.' $r.Output 22 }
+        Write-Dat ('Đã gia hạn chứng chỉ bằng CA hiện có (' + $state.reason + ' trước khi gia hạn); máy trạm không phải cài lại.')
+    } elseif ($r.Code -ne 0) {
         if (Test-Path -LiteralPath $cert) {
             Write-Luu ('Chứng chỉ hiện tại cần thay: ' + $state.reason + '.')
             Write-Luu 'Sau khi tạo mới, MỌI máy trạm phải chạy lại CAI_MAY_TRAM.bat.'
@@ -345,7 +355,7 @@ function Step-TuongLua {
 }
 
 function Step-SaoLuu {
-    Write-Buoc "Bước 11/${Tong}: Lịch sao lưu 20:00 hằng ngày, giữ 30 bản"
+    Write-Buoc "Bước 11/${Tong}: Lịch sao lưu 20:00 hằng ngày, giữ 7 bản trên máy, 30 bản trên ổ ngoài"
     if (-not (Test-Path -LiteralPath $P.BackupKey)) {
         $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_lan', 'keygen', '--key', $P.BackupKey)
         if (-not $r.Ok) { Stop-CaiDat 'Không tạo được khóa sao lưu.' $r.Output 26 }
@@ -385,7 +395,7 @@ function Step-SaoLuu {
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 3) `
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $Names.BackupTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings `
-        -Description 'Sao luu ma hoa + kiem tra ban sao luu, giu 30 ban; chep ra o ngoai neu co.' -Force | Out-Null
+        -Description 'Sao luu ma hoa + kiem tra ban sao luu; giu 7 ban tren may, 30 ban tren o ngoai; canh bao chung chi duoi 60 ngay.' -Force | Out-Null
     Write-Dat 'Đã đặt lịch sao lưu 20:00 hằng ngày (chạy bù nếu máy tắt lúc 20:00).'
     Write-Thongtin 'Chạy sao lưu thử ngay bây giờ...'
     $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 3) -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_job', '--key', $P.BackupKey,

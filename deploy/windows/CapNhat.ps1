@@ -163,6 +163,10 @@ try {
     if (-not $r.Ok) { $r.Output | Select-Object -Last 5 | ForEach-Object { Write-Thongtin $_ }; throw 'Migration thất bại.' }
     $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, '--owner-env', $P.OwnerEnv, 'grant')
     if (-not $r.Ok) { throw 'Cấp quyền thất bại.' }
+    # Bước grant (mã mới) cũng cập nhật chính sách sao lưu 7/30, giữ nguyên mật khẩu; đặt lại quyền tệp.
+    Set-SecureAcl -Path $P.ClinicEnv -Readers @($Names.ServiceAcct)
+    Set-SecureAcl -Path $P.OwnerEnv
+    if (@((ConvertFrom-PythonJson $r).managed_changed).Count -gt 0) { Write-Dat 'Đã chuyển chính sách sao lưu: giữ 7 bản trên máy chủ, 30 bản trên ổ ngoài.' }
     Write-Dat 'Cấu trúc dữ liệu đã cập nhật.'
 
     Write-Buoc 'Bước 8/8: Bật dịch vụ và kiểm tra sức khỏe'

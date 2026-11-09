@@ -100,15 +100,50 @@ def desired(ip, cidr, data_dir, pg_bin, app_password):
         'CLINIC_THREAD_LIMIT': '8', 'CLINIC_CONCURRENCY': '48', 'CLINIC_EXPORT_SLOTS': '1',
         'CLINIC_EXPORT_MAX_MB': '10', 'CLINIC_UPLOAD_MAX_MB': '5', 'CLINIC_UPLOAD_TOTAL_MB': '2048',
         'CLINIC_MIN_FREE_MB': '10240', 'CLINIC_BACKUP_TOTAL_MB': '20480',
-        'CLINIC_BACKUP_KEEP': '30', 'CLINIC_REQUIRE_OFFSITE': '0', 'CLINIC_OFFSITE_KEEP': '30',
+        'CLINIC_REQUIRE_OFFSITE': '0', **MANAGED,
     }
 
 
+# Values the installer owns: re-running CAI_DAT or CAP_NHAT resets them on machines
+# installed by an older version (e.g. 30 local backups -> 7). Never secrets.
+MANAGED = {'CLINIC_BACKUP_KEEP': '7', 'CLINIC_OFFSITE_KEEP': '30'}
+
+
 def merge(existing, wanted):
-    """Existing keys win (never rotate secrets silently); missing keys are added."""
+    """Existing keys win (never rotate secrets silently); missing keys are added;
+    installer-managed keys (MANAGED) are always set to the current policy."""
     result = dict(wanted)
     result.update(existing)
+    result.update(MANAGED)
     return result
+
+
+def apply_managed(path):
+    """Update only the managed keys in an existing env file; returns changed keys.
+
+    Rewrites the file only when something changes, so file hashes stay stable."""
+    values = read_env(path)
+    if not values:
+        return []
+    changed = [k for k, v in MANAGED.items() if values.get(k) != v]
+    if changed:
+        lines = Path(path).read_text(encoding='utf-8-sig').splitlines()
+        out, seen = [], set()
+        for line in lines:
+            key = line.split('=', 1)[0].strip() if '=' in line and not line.lstrip().startswith('#') else None
+            if key in MANAGED:
+                out.append(f'{key}={MANAGED[key]}')
+                seen.add(key)
+            else:
+                out.append(line)
+        out += [f'{k}={v}' for k, v in MANAGED.items() if k not in seen]
+        pending = Path(path).with_name('.' + Path(path).name + '.tmp')
+        with open(pending, 'w', encoding='utf-8', newline='\n') as handle:
+            handle.write('\n'.join(out) + '\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(pending, path)
+    return changed
 
 
 def write_configs(clinic_env, owner_env, ip, prefix, data_dir, pg_bin):
@@ -120,6 +155,7 @@ def write_configs(clinic_env, owner_env, ip, prefix, data_dir, pg_bin):
     if not app_password:
         app_password = new_password()
         report['new_password_roles'].append(APP_ROLE)
+    report['managed_changed'] = sorted(k for k, v in MANAGED.items() if old_clinic and old_clinic.get(k) != v)
     clinic = merge(old_clinic, desired(ip, cidr, data_dir, pg_bin, app_password))
     if old_clinic and old_clinic.get('CLINIC_BIND_IP') not in (None, ip):
         report['ip_changed'] = True
@@ -129,7 +165,7 @@ def write_configs(clinic_env, owner_env, ip, prefix, data_dir, pg_bin):
         owner_password = new_password()
         report['new_password_roles'].append(OWNER_ROLE)
     owner = dict(clinic)
-    owner.update({k: v for k, v in old_owner.items() if k != 'CLINIC_DATABASE_URL'})
+    owner.update({k: v for k, v in old_owner.items() if k != 'CLINIC_DATABASE_URL' and k not in MANAGED})
     owner['CLINIC_DATABASE_URL'] = f'postgresql://{OWNER_ROLE}:{owner_password}@127.0.0.1:5432/{DB_NAME}'
     write_env(clinic_env, clinic, ['Minh Duc LAN - tao boi CAI_DAT. KHONG gui tep nay cho ai, KHONG dua len Git.',
                                    'Dang KEY=VALUE, khong dau nhay. Chay lai CAI_DAT khong doi mat khau da co.'])
@@ -159,10 +195,14 @@ def main(argv=None):
         w.add_argument(name, required=True)
     s = sub.add_parser('super')
     s.add_argument('--file', required=True)
+    m = sub.add_parser('managed', help='CAP_NHAT: apply the current backup policy, keep everything else')
+    m.add_argument('files', nargs='+')
     args = parser.parse_args(argv)
     try:
         if args.command == 'cidr':
             print(lan_network(args.ip, args.prefix))
+        elif args.command == 'managed':
+            print(json.dumps({str(f): apply_managed(f) for f in args.files}))
         elif args.command == 'super':
             print(json.dumps({'created': write_super(args.file)}))
         else:

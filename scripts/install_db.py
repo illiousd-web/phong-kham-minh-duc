@@ -193,7 +193,11 @@ def main(argv=None):
             result = ensure(urls['super'], urls['owner'], urls['app'], args.allow_password_reset)
         elif args.command == 'grant':
             grant(urls['owner'], app, db_name)
-            result = {'granted': True}
+            # Post-migration step run by every CAI_DAT and CAP_NHAT version with the NEW
+            # code: bring installer-managed policy (backup retention) up to date.
+            from scripts.install_env import apply_managed
+            changed = sorted(set(apply_managed(args.clinic_env)) | set(apply_managed(args.owner_env) if args.owner_env else set()))
+            result = {'granted': True, 'managed_changed': changed}
         elif args.command == 'fingerprint':
             result = fingerprint(urls['owner'])
         elif args.command == 'admin-count':

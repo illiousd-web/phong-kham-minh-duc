@@ -39,7 +39,8 @@ def test_write_configs_creates_strong_unique_passwords(tmp_path):
     assert c['CLINIC_ALLOWED_CIDRS'] == '192.168.1.0/24'
     assert c['CLINIC_UPLOAD_DIR'] == 'C:\\ProgramData\\MinhDuc\\attachments'
     assert c['CLINIC_PG_DUMP'] == 'C:\\Program Files\\PostgreSQL\\17\\bin\\pg_dump.exe'
-    assert c['CLINIC_BACKUP_KEEP'] == '30' and c['CLINIC_WORKERS'] == '1' and c['CLINIC_POOL_MAX'] == '4'
+    assert c['CLINIC_BACKUP_KEEP'] == '7' and c['CLINIC_OFFSITE_KEEP'] == '30'
+    assert c['CLINIC_WORKERS'] == '1' and c['CLINIC_POOL_MAX'] == '4'
     assert app_pw not in json.dumps(report) and owner_pw not in json.dumps(report)
     # owner.env is a full LAN config (migration imports app.config) with the owner URL.
     assert o['CLINIC_ORIGIN'] == c['CLINIC_ORIGIN'] and o['CLINIC_DATABASE_URL'].startswith('postgresql://clinic_owner:')
@@ -50,13 +51,50 @@ def test_second_run_never_changes_existing_passwords_or_values(tmp_path):
     install_env.write_configs(clinic, owner, '192.168.1.10', 24, '/data', '/pg/bin')
     first_c, first_o = clinic.read_text(), owner.read_text()
     # Administrator tuned a value; a re-run must keep it.
-    clinic.write_text(first_c.replace('CLINIC_BACKUP_KEEP=30', 'CLINIC_BACKUP_KEEP=20'))
+    clinic.write_text(first_c.replace('CLINIC_MIN_FREE_MB=10240', 'CLINIC_MIN_FREE_MB=12288'))
     report = install_env.write_configs(clinic, owner, '192.168.1.10', 24, '/data', '/pg/bin')
     assert report['new_password_roles'] == [] and not report['clinic_env_created']
     c = install_env.read_env(clinic)
-    assert c['CLINIC_BACKUP_KEEP'] == '20'
+    assert c['CLINIC_MIN_FREE_MB'] == '12288'
     assert c['CLINIC_DATABASE_URL'] == install_env.read_env(tmp_path / 'clinic.env')['CLINIC_DATABASE_URL']
     assert install_env.read_env(owner)['CLINIC_DATABASE_URL'] in first_o
+
+
+def _old_installer_files(tmp_path):
+    """Configuration written by the first Windows installer (30 local backups)."""
+    clinic, owner = tmp_path / 'clinic.env', tmp_path / 'owner.env'
+    install_env.write_configs(clinic, owner, '192.168.1.10', 24, '/data', '/pg')
+    for path in (clinic, owner):
+        path.write_text(path.read_text().replace('CLINIC_BACKUP_KEEP=7', 'CLINIC_BACKUP_KEEP=30'))
+    return clinic, owner
+
+
+def test_rerun_cai_dat_moves_old_install_to_7_local_30_external_keeping_passwords(tmp_path):
+    clinic, owner = _old_installer_files(tmp_path)
+    urls = (install_env.read_env(clinic)['CLINIC_DATABASE_URL'], install_env.read_env(owner)['CLINIC_DATABASE_URL'])
+    report = install_env.write_configs(clinic, owner, '192.168.1.10', 24, '/data', '/pg')
+    assert report['managed_changed'] == ['CLINIC_BACKUP_KEEP'] and report['new_password_roles'] == []
+    for path, url in zip((clinic, owner), urls):
+        values = install_env.read_env(path)
+        assert values['CLINIC_BACKUP_KEEP'] == '7' and values['CLINIC_OFFSITE_KEEP'] == '30'
+        assert values['CLINIC_DATABASE_URL'] == url
+
+
+def test_cap_nhat_managed_update_changes_only_policy_keys(tmp_path):
+    clinic, owner = _old_installer_files(tmp_path)
+    clinic.write_text(clinic.read_text().replace('CLINIC_OFFSITE_KEEP=30\n', ''))  # very old file without the key
+    before = {p: p.read_text() for p in (clinic, owner)}
+    assert install_env.main(['managed', str(clinic), str(owner)]) == 0
+    for path in (clinic, owner):
+        old_lines = [l for l in before[path].splitlines() if not l.startswith(('CLINIC_BACKUP_KEEP', 'CLINIC_OFFSITE_KEEP'))]
+        new_lines = [l for l in path.read_text().splitlines() if not l.startswith(('CLINIC_BACKUP_KEEP', 'CLINIC_OFFSITE_KEEP'))]
+        assert old_lines == new_lines, 'passwords, comments and other values must be untouched'
+        values = install_env.read_env(path)
+        assert values['CLINIC_BACKUP_KEEP'] == '7' and values['CLINIC_OFFSITE_KEEP'] == '30'
+    # Second call: nothing to change, file not rewritten.
+    stamp = clinic.stat().st_mtime_ns
+    assert install_env.apply_managed(clinic) == [] and clinic.stat().st_mtime_ns == stamp
+    assert install_env.apply_managed(tmp_path / 'missing.env') == []
 
 
 def test_ip_change_is_reported_not_silently_applied(tmp_path):
@@ -190,6 +228,7 @@ def test_health_all_pass():
     ({'schema_version': 2}, 'cơ sở dữ liệu'),
     ({'login_page': False}, 'Trang đăng nhập'),
     ({'cert_not_after': (NOW + timedelta(days=10)).isoformat()}, 'Chứng chỉ'),
+    ({'cert_not_after': (NOW + timedelta(days=59, hours=1)).isoformat()}, 'Chứng chỉ'),
     ({'firewall': {'exists': True, 'enabled': True, 'scoped': False}}, 'Tường lửa'),
     ({'backup_task': {}}, 'Lịch sao lưu'),
     ({'backup_state': {'last_success_utc': (NOW - timedelta(hours=50)).isoformat()}}, 'Bản sao lưu'),
@@ -334,3 +373,134 @@ def test_report_file_has_single_crlf_line_endings(tmp_path, monkeypatch):
     install_health.main(['--windows-facts', str(facts_file), '--output', str(out)])
     data = out.read_bytes()
     assert data.startswith(b'\xef\xbb\xbf') and b'\r\n' in data and b'\r\r\n' not in data
+
+
+# ---------- Lệnh 1b: gia hạn chứng chỉ bằng CA hiện có, cảnh báo 60 ngày ----------
+
+def _x509(path):
+    from cryptography import x509
+    return x509.load_pem_x509_certificate(Path(path).read_bytes())
+
+
+def test_renew_keeps_ca_and_names_new_key_and_rollback(tmp_path):
+    from scripts import install_cert
+    tls, ca_key = tmp_path / 'tls', tmp_path / 'quantri' / 'ca.key'
+    fp = install_cert.create('192.168.1.10', tls, ca_key)
+    ca_before = (tls / 'ca.crt').read_bytes()
+    old_cert, old_key = (tls / 'server.crt').read_bytes(), (tls / 'server.key').read_bytes()
+    result = install_cert.renew(tls, ca_key)
+    assert result['ca_fingerprint'] == fp and (tls / 'ca.crt').read_bytes() == ca_before, 'CA must not change'
+    new, old = _x509(tls / 'server.crt'), _x509(tls / f"server.crt.cu-{result['stamp']}")
+    assert (tls / 'server.key').read_bytes() != old_key and new.serial_number != old.serial_number
+    from cryptography import x509
+    from cryptography.x509.oid import ExtensionOID
+    san = lambda c: c.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
+    assert list(san(new)) == list(san(old)) and new.issuer == _x509(tls / 'ca.crt').subject
+    assert format(new.serial_number, 'X') == result['serial']
+    # Issued by the same CA: verifies with the unchanged ca.crt.
+    _x509(tls / 'ca.crt').public_key().verify(new.signature, new.tbs_certificate_bytes,
+        __import__('cryptography.hazmat.primitives.asymmetric.padding', fromlist=['PKCS1v15']).PKCS1v15(),
+        new.signature_hash_algorithm)
+    assert install_cert.check(tls / 'server.crt', '192.168.1.10', 300)[0]
+    # Failure path: rollback restores the previous certificate and key exactly.
+    install_cert.rollback(tls, result['stamp'])
+    assert (tls / 'server.crt').read_bytes() == old_cert and (tls / 'server.key').read_bytes() == old_key
+    assert (tls / f"server.crt.loi-{result['stamp']}").exists()
+    with pytest.raises(ValueError):
+        install_cert.rollback(tls, result['stamp'])
+
+
+def test_renew_refuses_foreign_ca_key(tmp_path):
+    from scripts import install_cert
+    install_cert.create('192.168.1.10', tmp_path / 'a', tmp_path / 'a-key' / 'ca.key')
+    install_cert.create('192.168.1.10', tmp_path / 'b', tmp_path / 'b-key' / 'ca.key')
+    before = (tmp_path / 'a' / 'server.crt').read_bytes()
+    with pytest.raises(ValueError, match='không khớp'):
+        install_cert.renew(tmp_path / 'a', tmp_path / 'b-key' / 'ca.key')
+    assert (tmp_path / 'a' / 'server.crt').read_bytes() == before and not list((tmp_path / 'a').glob('*.cu-*'))
+
+
+def test_status_codes_distinguish_renewable_from_new_ca(tmp_path):
+    from scripts import install_cert
+    tls = tmp_path / 'tls'
+    install_cert.create('192.168.1.10', tls, tmp_path / 'ca.key')
+    assert install_cert.status(tls / 'server.crt', '192.168.1.10', 30)['code'] == 'ok'
+    assert install_cert.status(tls / 'server.crt', '192.168.1.10', 400)['code'] == 'expiring'
+    assert install_cert.status(tls / 'server.crt', '192.168.1.99', 30)['code'] == 'ip'
+    assert install_cert.status(tmp_path / 'none', '192.168.1.10', 30)['code'] == 'missing'
+
+
+def test_served_reads_certificate_from_running_tls_server(tmp_path):
+    import socket, ssl, threading
+    from scripts import install_cert
+    tls = tmp_path / 'tls'
+    install_cert.create('127.0.0.1', tls, tmp_path / 'ca.key')
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(tls / 'server.crt', tls / 'server.key')
+    listener = socket.create_server(('127.0.0.1', 0))
+    port = listener.getsockname()[1]
+
+    def serve():
+        conn, _ = listener.accept()
+        try:
+            with context.wrap_socket(conn, server_side=True):
+                pass
+        except OSError:
+            pass
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    result = install_cert.served(f'https://127.0.0.1:{port}', tls / 'ca.crt')
+    thread.join(5); listener.close()
+    assert result['serial'] == format(_x509(tls / 'server.crt').serial_number, 'X')
+
+
+def test_backup_job_warns_on_desktop_when_certificate_under_60_days():
+    ok = {'last_success_utc': (NOW - timedelta(hours=1)).isoformat()}
+    assert backup_job.evaluate({**ok, 'cert_days_left': 60}, None, NOW) == []
+    warnings = backup_job.evaluate({**ok, 'cert_days_left': 59}, None, NOW)
+    assert len(warnings) == 1 and '59 ngày' in warnings[0] and 'GIA_HAN_CHUNG_CHI.bat' in warnings[0]
+
+
+def test_backup_job_reads_certificate_expiry(tmp_path):
+    from scripts import install_cert
+    install_cert.create('192.168.1.10', tmp_path / 'tls', tmp_path / 'ca.key')
+    days = backup_job.cert_days_left(tmp_path / 'tls' / 'server.crt', datetime.now(timezone.utc))
+    assert 360 <= days <= 365
+    assert backup_job.cert_days_left(tmp_path / 'none.crt', NOW) is None
+
+
+def test_gia_han_bat_exists_elevates_and_ps_rolls_back():
+    text = (WIN / 'GIA_HAN_CHUNG_CHI.bat').read_text()
+    assert 'RunAs' in text and 'GiaHanChungChi.ps1' in text
+    ps = (WIN / 'GiaHanChungChi.ps1').read_text(encoding='utf-8-sig')
+    for needle in ("'renew'", "'rollback'", "'served'", 'Restart-Service', 'Wait-Https'):
+        assert needle in ps, needle
+
+
+# ---------- Lệnh 1b: mật khẩu postgres nhập tay có dấu ----------
+
+def test_postgres_password_file_written_utf8_not_ascii():
+    text = (WIN / 'CaiDat.ps1').read_text(encoding='utf-8-sig')
+    line = [l for l in text.splitlines() if 'MINHDUC_PG_SUPER_PASSWORD=' in l and 'SuperEnv' in l]
+    assert line, 'postgres.env must be written from CaiDat.ps1'
+    assert all('ASCII' not in l and 'Set-Content' not in l for l in line), line
+    assert 'UTF8Encoding' in text
+
+
+def test_accented_postgres_password_round_trips_into_connection_url(tmp_path):
+    from urllib.parse import urlsplit, unquote
+    from scripts import install_db
+    password = 'Mật-khẩu Đức#1/2@phòng'
+    (tmp_path / 'postgres.env').write_bytes(('MINHDUC_PG_SUPER_PASSWORD=' + password + '\r\n').encode('utf-8'))
+    clinic = tmp_path / 'clinic.env'
+    install_env.write_configs(clinic, tmp_path / 'owner.env', '192.168.1.10', 24, '/data', '/pg')
+
+    class Args:
+        clinic_env, owner_env, super_env = str(clinic), str(tmp_path / 'owner.env'), str(tmp_path / 'postgres.env')
+    saved = dict(os.environ)
+    try:
+        urls = install_db.load(Args)
+    finally:
+        os.environ.clear(); os.environ.update(saved)
+    parts = urlsplit(urls['super'])
+    assert unquote(parts.password) == password and parts.username == 'postgres' and parts.hostname == '127.0.0.1'

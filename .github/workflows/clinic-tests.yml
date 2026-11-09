@@ -172,6 +172,14 @@ jobs:
           Add-Content $env:GITHUB_ENV ("ENV_HASH=" + (Get-FileHash C:\ProgramData\MinhDuc\clinic.env).Hash)
           Add-Content $env:GITHUB_ENV ("KEY_HASH=" + (Get-FileHash C:\ProgramData\MinhDuc\quantri\backup.key).Hash)
           Add-Content $env:GITHUB_ENV ("CA_HASH=" + (Get-FileHash C:\ProgramData\MinhDuc\tls\ca.crt).Hash)
+      - name: Simulate a machine installed by the PR 7 installer (30 local backups) before CAP_NHAT
+        run: |
+          foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {
+            $t = [IO.File]::ReadAllText($f)
+            if (-not $t.Contains('CLINIC_BACKUP_KEEP=7')) { throw "Unexpected retention in $f" }
+            [IO.File]::WriteAllText($f, $t.Replace('CLINIC_BACKUP_KEEP=7', 'CLINIC_BACKUP_KEEP=30'), (New-Object Text.UTF8Encoding($false)))
+          }
+          Write-Output 'Retention set back to the old 30 local backups'
       - name: Build update zips (same code, and a deliberately broken one)
         run: |
           git archive --format=zip --prefix=phong-kham-minh-duc-main/ -o "$env:RUNNER_TEMP\minhduc-ok.zip" HEAD
@@ -185,6 +193,12 @@ jobs:
         run: call C:\MinhDuc\deploy\windows\CAP_NHAT.bat -KhongHoi -TepZip "%RUNNER_TEMP%\minhduc-ok.zip"
       - name: Verify update result
         run: |
+          foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {
+            $t = [IO.File]::ReadAllText($f)
+            if (-not ($t.Contains("`nCLINIC_BACKUP_KEEP=7`n") -and $t.Contains("`nCLINIC_OFFSITE_KEEP=30`n"))) { throw "Retention not migrated in $f" }
+          }
+          if ((Get-FileHash C:\ProgramData\MinhDuc\clinic.env).Hash -ne $env:ENV_HASH) { throw 'clinic.env differs beyond the retention policy (password changed?)' }
+          Write-Output 'PASS: CAP_NHAT tu chuyen sang giu 7 ban tren may / 30 ban o ngoai, giu nguyen mat khau'
           $r = Get-Content C:\ProgramData\MinhDuc\capnhat\ket-qua-cap-nhat.json -Raw | ConvertFrom-Json
           if ($r.status -ne 'thanh_cong') { throw "Update status $($r.status): $($r.detail)" }
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after update' }
@@ -206,6 +220,14 @@ jobs:
           $now = & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py count | Select-Object -Last 1
           if ($now -ne $env:COUNT_BEFORE) { throw "Rollback did not restore database: $now vs $env:COUNT_BEFORE" }
           Write-Output 'PASS: CAP_NHAT loi -> tu quay ve ban cu (ma, thu vien, CSDL), dich vu chay lai'
+      - name: Simulate a machine installed by the PR 7 installer (30 local backups) before the second CAI_DAT
+        run: |
+          foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {
+            $t = [IO.File]::ReadAllText($f)
+            if (-not $t.Contains('CLINIC_BACKUP_KEEP=7')) { throw "Unexpected retention in $f" }
+            [IO.File]::WriteAllText($f, $t.Replace('CLINIC_BACKUP_KEEP=7', 'CLINIC_BACKUP_KEEP=30'), (New-Object Text.UTF8Encoding($false)))
+          }
+          Write-Output 'Retention set back to the old 30 local backups'
       - name: CAI_DAT.bat second run keeps data, passwords, keys and certificate
         shell: cmd
         run: call C:\MinhDuc\deploy\windows\CAI_DAT.bat -KhongHoi -ChapNhanIPDong -PageFile Giu
@@ -218,6 +240,25 @@ jobs:
           if ($now -ne $env:COUNT_BEFORE) { throw "Data changed: $now vs $env:COUNT_BEFORE" }
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after rerun' }
           Write-Output 'PASS: chay CAI_DAT lan hai khong mat du lieu, khong doi mat khau/khoa/chung chi'
+      - name: GIA_HAN_CHUNG_CHI.bat renews the server certificate with the existing CA
+        run: |
+          $py = 'C:\MinhDuc\.venv\Scripts\python.exe'
+          $origin = ((Get-Content C:\ProgramData\MinhDuc\clinic.env) -match '^CLINIC_ORIGIN=') -replace '^CLINIC_ORIGIN=',''
+          Push-Location C:\MinhDuc
+          $before = (& $py -m scripts.install_cert served --origin $origin --ca C:\ProgramData\MinhDuc\tls\ca.crt | ConvertFrom-Json).serial
+          Pop-Location
+          & cmd /c "call C:\MinhDuc\deploy\windows\GIA_HAN_CHUNG_CHI.bat -KhongHoi"
+          if ($LASTEXITCODE -ne 0) { throw "GIA_HAN_CHUNG_CHI exit $LASTEXITCODE" }
+          $r = Get-Content C:\ProgramData\MinhDuc\nhatky\ket-qua-gia-han.json -Raw | ConvertFrom-Json
+          if ($r.status -ne 'thanh_cong') { throw "Renewal status $($r.status): $($r.detail)" }
+          Push-Location C:\MinhDuc
+          $after = (& $py -m scripts.install_cert served --origin $origin --ca C:\ProgramData\MinhDuc\tls\ca.crt | ConvertFrom-Json).serial
+          Pop-Location
+          if (-not $after -or $after -eq $before) { throw "Served certificate did not change ($before -> $after)" }
+          if ((Get-FileHash C:\ProgramData\MinhDuc\tls\ca.crt).Hash -ne $env:CA_HASH) { throw 'CA changed: workstations would need reinstall' }
+          if (-not (Test-Path C:\ProgramData\MinhDuc\tls\server.crt.cu-*)) { throw 'Old certificate not kept' }
+          & $py .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after renewal' }
+          Write-Output "PASS: gia han chung chi ($before -> $after), CA giu nguyen, may tram van tin cay, dang nhap duoc"
       - name: CAI_MAY_TRAM.bat from the read-only share folder (same VM acts as workstation)
         shell: cmd
         run: call C:\MinhDuc-ChiaSe\CAI_MAY_TRAM.bat -KhongHoi
