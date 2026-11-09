@@ -153,11 +153,11 @@ function Get-PrecheckAssessment {
     } else { Add-Item 'pagefile' 'OK' 'Tệp hoán đổi phù hợp.' @() }
     $ci = $Snapshot.code_integrity
     if ($ci.language_mode -ne 'FullLanguage') {
-        Add-Item 'appcontrol' 'STOP' 'Windows đang chạy PowerShell ở chế độ hạn chế (App Control đang chặn script).' @('Nếu là Smart App Control: mở Windows Security > App & browser control > Smart App Control settings > chọn Off.', 'Nếu máy do công ty/CNTT quản lý: nhờ quản trị CNTT thêm quy tắc cho phép thư mục C:\MinhDuc.')
+        Add-Item 'appcontrol' 'STOP' 'Windows đang chạy PowerShell ở chế độ hạn chế (App Control đang chặn script).' @('Không tự tắt Smart App Control hay App Control. Dừng cài và gọi người hỗ trợ (chụp màn hình này gửi kèm).')
     } elseif ($ci.sac_state -eq 1) {
-        Add-Item 'appcontrol' 'STOP' 'Smart App Control đang BẬT: sẽ chặn Python, thư viện và trình chạy dịch vụ chưa có chữ ký số.' @('Mở Windows Security > App & browser control > Smart App Control settings > chọn Off.', 'Giữ nguyên Microsoft Defender và Tường lửa; chỉ tắt riêng Smart App Control.', 'Hỏi người phụ trách trước nếu không chắc: trên một số bản Windows, bật lại Smart App Control cần cài lại Windows.')
+        Add-Item 'appcontrol' 'STOP' 'Smart App Control đang BẬT: sẽ chặn Python, thư viện và trình chạy dịch vụ chưa có chữ ký số.' @('Không tự tắt Smart App Control hay App Control. Dừng cài và gọi người hỗ trợ (chụp màn hình này gửi kèm).', 'Giữ nguyên Microsoft Defender và Tường lửa.')
     } elseif ($ci.sac_state -eq 2) {
-        Add-Item 'appcontrol' 'ASK_SAC' 'Smart App Control đang ở chế độ đánh giá; Windows có thể tự BẬT sau này và chặn phần mềm.' @('Nên tắt Smart App Control trước khi dùng thật (Windows Security > App & browser control > Smart App Control settings).')
+        Add-Item 'appcontrol' 'ASK_SAC' 'Smart App Control đang ở chế độ đánh giá; Windows có thể tự BẬT sau này và chặn phần mềm.' @('Không tự tắt Smart App Control. Báo người hỗ trợ trước khi dùng thật; nếu sau này Windows chặn phần mềm thì dừng và gọi người hỗ trợ.')
     } elseif ($ci.usermode -eq 2) {
         Add-Item 'appcontrol' 'STOP' 'Có chính sách App Control for Business chặn ứng dụng ở chế độ người dùng.' @('Nhờ quản trị CNTT cho phép C:\MinhDuc, Python 3.12 và PostgreSQL 17 rồi chạy lại.')
     } else {

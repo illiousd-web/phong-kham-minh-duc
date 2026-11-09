@@ -4,6 +4,7 @@
 param([switch]$KhongHoi, [string]$ThuMucMa = 'C:\MinhDuc', [string]$ThuMucDuLieu = 'C:\ProgramData\MinhDuc', [string]$TepKetQua = '')
 if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
     Write-Host 'DỪNG LẠI: Windows đang chặn script (App Control / Smart App Control).' -ForegroundColor Red
+    Write-Host '  - Không tự tắt Smart App Control hay App Control. Dừng và gọi người hỗ trợ (chụp màn hình này gửi kèm).' -ForegroundColor Yellow
     exit 20
 }
 $ErrorActionPreference = 'Stop'

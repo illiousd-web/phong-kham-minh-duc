@@ -148,6 +148,19 @@ def pg_accent_check():
     print('PASS: mật khẩu postgres có dấu -> tệp UTF-8, đăng nhập SCRAM-SHA-256 thật đạt; bản bỏ dấu bị từ chối')
 
 
+def fresh_install_report():
+    """CI: a FIRST install has only 1 verified backup, so the backup row must be KHÔNG ĐẠT
+    (needs 3) with the reason and the action, and it must be the ONLY failing row."""
+    report = sorted((DATA / 'nhatky').glob('kiem-tra-sau-cai-*.txt'), key=lambda p: p.stat().st_mtime)[-1]
+    lines = report.read_text(encoding='utf-8-sig').splitlines()
+    failed = [(line, lines[i + 1].strip()) for i, line in enumerate(lines) if line.startswith('[KHÔNG ĐẠT]')]
+    assert len(failed) == 1, failed
+    title, detail = failed[0]
+    assert title.startswith('[KHÔNG ĐẠT] Sao lưu:'), title
+    assert 'mới có 1 bản đã kiểm, cần ít nhất 3' in detail and '20:00' in detail, detail
+    print('PASS: may moi cai -> chi muc sao luu KHONG DAT (moi 1 ban da kiem, can 3), co ly do va viec can lam')
+
+
 if __name__ == '__main__':
     command = sys.argv[1]
     if command == 'login':
@@ -162,3 +175,7 @@ if __name__ == '__main__':
         pg_set_password()
     elif command == 'pg-accent-check':
         pg_accent_check()
+    elif command == 'fresh-install-report':
+        fresh_install_report()
+    else:
+        raise SystemExit(f'unknown command {command}')

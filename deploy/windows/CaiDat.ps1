@@ -15,8 +15,7 @@ param(
 # chạy script ở chế độ hạn chế (ConstrainedLanguage) và sẽ làm hỏng bộ cài.
 if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
     Write-Host 'DỪNG LẠI: Windows đang chặn script cài đặt (App Control / Smart App Control).' -ForegroundColor Red
-    Write-Host '  - Nếu là Smart App Control: mở Windows Security > App & browser control > Smart App Control settings > chọn Off.' -ForegroundColor Yellow
-    Write-Host '  - Nếu máy do bộ phận CNTT quản lý: nhờ họ cho phép thư mục cài đặt.' -ForegroundColor Yellow
+    Write-Host '  - Không tự tắt Smart App Control hay App Control. Dừng cài và gọi người hỗ trợ (chụp màn hình này gửi kèm).' -ForegroundColor Yellow
     Write-Host '  - Không tắt Microsoft Defender hay Tường lửa.' -ForegroundColor Yellow
     exit 20
 }
@@ -66,7 +65,7 @@ function Step-KiemTraMay {
             if ($doi) { Set-PagefileSystemManaged; $script:CanKhoiDongLai = $true; Write-Dat 'Đã chuyển sang Windows tự quản lý (có hiệu lực sau khi khởi động lại).' }
             else { Write-Luu 'Giữ nguyên tệp hoán đổi. Máy có thể chậm hoặc báo thiếu bộ nhớ khi mở nhiều trang.' }
         } elseif ($it.level -eq 'ASK_SAC') {
-            if (-not (Read-CoKhong 'Vẫn tiếp tục cài khi Smart App Control đang đánh giá?' -KhongHoi:$KhongHoi -MacDinh $true)) { Stop-CaiDat 'Bạn chọn dừng để tắt Smart App Control trước.' @() 4 }
+            if (-not (Read-CoKhong 'Vẫn tiếp tục cài khi Smart App Control đang đánh giá?' -KhongHoi:$KhongHoi -MacDinh $true)) { Stop-CaiDat 'Bạn chọn dừng.' @('Không tự tắt Smart App Control hay App Control. Dừng cài và gọi người hỗ trợ (chụp màn hình này gửi kèm).') 4 }
         }
     }
     return $snap

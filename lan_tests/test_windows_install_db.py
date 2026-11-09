@@ -149,7 +149,29 @@ if os.environ.get('MINHDUC_TEST_VERIFY_FAIL')=='1':
     def broken(*a, **k):
         raise ValueError('Backup checksum mismatch (gia lap)')
     lan.unpack_verified=broken
+if os.environ.get('MINHDUC_TEST_DISK'):
+    # Simulated small disk: free = capacity - backups on it; fixed space needed for a new backup.
+    capacity, need = (int(v) for v in os.environ['MINHDUC_TEST_DISK'].split(','))
+    b.space_required = lambda d: need
+    b.disk_free = lambda d: capacity - sum(p.stat().st_size for p in Path(d).glob('minhduc-*.mdbackup'))
 sys.exit(b.main(sys.argv[2:]))
+"""
+
+LEGACY = """import os,sys,time
+from pathlib import Path
+import scripts.backup_lan as lan
+directory, key, count = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
+now = time.time()
+for i in range(count):
+    path = lan.backup(directory, key, prune=False, enforce_budget=False)
+    os.utime(path, (now - 86400 * (count - i), now - 86400 * (count - i)))
+    print(path.name)
+"""
+
+RESTORE = """import sys
+from pathlib import Path
+from scripts.backup_lan import restore
+restore(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4]))
 """
 
 
@@ -253,38 +275,126 @@ def _job_env(tmp_path, creds, **extra):
     return env
 
 
-def _legacy(directory, count):
-    """Backups left by an older installer (30 kept, no verification marker)."""
-    import time
-    directory.mkdir(parents=True, exist_ok=True)
-    now = time.time()
-    for i in range(count):
-        path = directory / f'minhduc-2026{i:04d}T000000Z-legacy{i:02d}.mdbackup'
-        path.write_bytes(b'legacy synthetic backup ' + bytes([i]))
-        os.utime(path, (now - 86400 * (count - i), now - 86400 * (count - i)))
+def _python(script, env, *args):
+    import subprocess, sys
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run([sys.executable, '-c', script, *map(str, args)], cwd=root, env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout.split()
 
 
-def test_switch_from_30_to_14_prunes_only_after_first_verified_backup(creds, tmp_path):
+def _legacy(env, directory, key, count):
+    """REAL encrypted .mdbackup files as an older installer left them (no .verified marker), oldest first."""
+    return _python(LEGACY, env, directory, key, count)
+
+
+def _restore_ok(creds, env, backup_file, key, tmp_path, expected_name):
+    """Restore one backup into a separate empty database and check a known row."""
+    target = DB + '_kp_' + secrets.token_hex(3)
+    with psycopg.connect(SOURCE, autocommit=True) as c:
+        c.execute(sql.SQL("CREATE DATABASE {} OWNER {} ENCODING 'UTF8' TEMPLATE template0").format(
+            sql.Identifier(target), sql.Identifier(OWNER)))
+    target_url = url(OWNER, creds['owner'], target)
+    _python(RESTORE, env, backup_file, key, target_url, tmp_path / ('khoiphuc-' + target))
+    with psycopg.connect(target_url) as c:
+        names = [r[0] for r in c.execute('SELECT name FROM service_catalog')]
+    assert expected_name in names, names
+
+
+def test_switch_from_30_to_14_with_real_encrypted_backups_then_restore_old_one(creds, tmp_path):
     key = tmp_path / 'backup.key'
     key.write_bytes(secrets.token_bytes(32))
     backups = tmp_path / 'backups'
-    _legacy(backups, 30)
+    marker_name = 'Dịch vụ trong bản sao lưu cũ ' + secrets.token_hex(3)
+    with psycopg.connect(owner_url(creds)) as c:
+        c.execute('INSERT INTO service_catalog(name,price) VALUES(%s,1000)', (marker_name,))
+    legacy = _legacy(_job_env(tmp_path, creds, CLINIC_BACKUP_KEEP='30'), backups, key, 30)
+    assert len(legacy) == 30 and not list(backups.glob('*.verified'))
     state, alert = tmp_path / 'state.json', tmp_path / 'alert.txt'
     args = ['--key', str(key), '--directory', str(backups), '--state', str(state), '--alert-file', str(alert)]
     # First run fails verification: nothing old is deleted, the bad new file is removed, alert written.
     failed = run_job(_job_env(tmp_path, creds, MINHDUC_TEST_VERIFY_FAIL='1'), tmp_path / 'none', args)
     assert failed.returncode == 1, failed.stdout + failed.stderr
-    assert len(list(backups.glob('minhduc-*.mdbackup'))) == 30 and not list(backups.glob('*.verified'))
+    assert sorted(p.name for p in backups.glob('minhduc-*.mdbackup')) == sorted(legacy)
     text = alert.read_text(encoding='utf-8-sig')
     assert 'THẤT BẠI' in text and 'không xóa bản cũ nào' in text
-    # Next run verifies the new backup, then trims to 14 (oldest legacy first).
+    # Next run verifies the new backup, then trims to 14: the 17 oldest legacy files go.
     ok = run_job(_job_env(tmp_path, creds), tmp_path / 'none', args)
     assert ok.returncode == 0, ok.stdout + ok.stderr
-    names = sorted(p.name for p in backups.glob('minhduc-*.mdbackup'))
-    assert len(names) == 14 and not any(f'legacy{i:02d}' in ' '.join(names) for i in range(17))
     saved = json.loads(state.read_text(encoding='utf-8'))
-    assert saved['verified_count'] == 1 and len(saved['pruned']) == 17 and not alert.exists()
-    assert (backups / (saved['last_file'] + '.verified')).exists()
+    names = sorted(p.name for p in backups.glob('minhduc-*.mdbackup'))
+    assert names == sorted(legacy[17:] + [saved['last_file']])
+    assert saved['verified_count'] == 1 and sorted(saved['pruned']) == sorted(legacy[:17]) and not alert.exists()
+    # An old backup that was kept still restores (oldest kept one).
+    _restore_ok(creds, _job_env(tmp_path, creds), backups / legacy[17], key, tmp_path, marker_name)
+
+
+def _make_verified(creds, tmp_path, backups, key, count, **extra):
+    state = tmp_path / 'state.json'
+    args = ['--key', str(key), '--directory', str(backups), '--state', str(state), '--alert-file', str(tmp_path / 'alert.txt')]
+    import time
+    for _ in range(count):
+        result = run_job(_job_env(tmp_path, creds, **extra), tmp_path / 'none', args)
+        assert result.returncode == 0, result.stdout + result.stderr
+        time.sleep(1.1)  # distinct timestamps/mtimes
+    return args, state
+
+
+def _oldest_first(backups):
+    return sorted(backups.glob('minhduc-*.mdbackup'), key=lambda p: (p.stat().st_mtime, p.name))
+
+
+def test_same_size_tampering_is_reported_and_deleted_before_good_backups(creds, tmp_path):
+    key = tmp_path / 'backup.key'
+    key.write_bytes(secrets.token_bytes(32))
+    backups = tmp_path / 'backups'
+    args, state = _make_verified(creds, tmp_path, backups, key, 3, CLINIC_BACKUP_KEEP='5')
+    files = _oldest_first(backups)
+    victim = files[1]  # middle one; the oldest good one is files[0]
+    data = bytearray(victim.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    victim.write_bytes(bytes(data))
+    assert len(data) == victim.stat().st_size
+    statuses = {i['name']: (i['verified'], i['corrupt']) for i in backup_job.list_backups(backups)}
+    assert statuses[victim.name] == (False, True)
+    # keep=3: after the 4th backup one must go -> the corrupt one, never the oldest good one.
+    result = run_job(_job_env(tmp_path, creds, CLINIC_BACKUP_KEEP='3'), tmp_path / 'none', args)
+    assert result.returncode == 3, result.stdout + result.stderr
+    saved = json.loads(state.read_text(encoding='utf-8'))
+    assert saved['corrupt'] == [victim.name] and saved['pruned'] == [victim.name]
+    assert files[0].exists() and not victim.exists() and saved['verified_count'] == 3
+    alert = (tmp_path / 'alert.txt').read_text(encoding='utf-8-sig')
+    assert 'HỎNG' in alert and victim.name in alert
+
+
+def test_disk_almost_full_frees_oldest_verified_but_keeps_three_else_stops(creds, tmp_path):
+    key = tmp_path / 'backup.key'
+    key.write_bytes(secrets.token_bytes(32))
+    backups = tmp_path / 'backups'
+    args, state = _make_verified(creds, tmp_path, backups, key, 5)
+    files = _oldest_first(backups)
+    total = sum(p.stat().st_size for p in files)
+    need = 10 ** 9
+    # Deficit needs exactly the two oldest: 5 verified -> 3 remain (allowed) -> new backup made.
+    deficit = files[0].stat().st_size + files[1].stat().st_size - 1
+    result = run_job(_job_env(tmp_path, creds, MINHDUC_TEST_DISK=f'{need + total - deficit},{need}'), tmp_path / 'none', args)
+    assert result.returncode == 3, result.stdout + result.stderr
+    saved = json.loads(state.read_text(encoding='utf-8'))
+    assert sorted(saved['freed_for_space']) == sorted(p.name for p in files[:2])
+    assert not files[0].exists() and not files[1].exists() and all(p.exists() for p in files[2:])
+    assert saved['verified_count'] == 4 and 'gần đầy' in (tmp_path / 'alert.txt').read_text(encoding='utf-8-sig')
+    # Now 4 verified: only 1 may go; a deficit larger than the oldest one -> stop, delete nothing.
+    before = sorted(p.name for p in backups.glob('minhduc-*.mdbackup'))
+    oldest = _oldest_first(backups)[0]
+    total = sum(p.stat().st_size for p in backups.glob('minhduc-*.mdbackup'))
+    deficit = oldest.stat().st_size + 1
+    result = run_job(_job_env(tmp_path, creds, MINHDUC_TEST_DISK=f'{need + total - deficit},{need}'), tmp_path / 'none', args)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert sorted(p.name for p in backups.glob('minhduc-*.mdbackup')) == before, 'nothing deleted'
+    saved = json.loads(state.read_text(encoding='utf-8'))
+    assert saved['space_error'] and 'không đủ chỗ' in saved['last_error'] and 'KHÔNG xóa bản nào' in saved['last_error']
+    assert 'THẤT BẠI' in (tmp_path / 'alert.txt').read_text(encoding='utf-8-sig')
 
 
 def test_external_copy_is_off_by_default(creds, tmp_path):

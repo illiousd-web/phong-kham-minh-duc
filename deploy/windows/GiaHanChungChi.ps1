@@ -1,4 +1,8 @@
 ﻿# Gia hạn chứng chỉ HTTPS của máy chủ bằng CA hiện có (ca.key trên máy).
+# Tự nhận ra chứng chỉ/khóa máy chủ thiếu hoặc hỏng: CHẾ ĐỘ PHỤC HỒI cấp chứng chỉ mới từ
+# ca.key mà không đọc chứng chỉ cũ. Mất cả ca.key: báo phải tạo CA mới và cài lại mọi máy trạm.
+# Mã thoát: 0 đạt (hoặc không gia hạn theo lựa chọn); 50 lỗi nhưng đã trả chứng chỉ cũ và HTTPS
+# kiểm lại đạt; 51 không trả được chứng chỉ cũ / phục hồi không thành công; mã khác: dừng trước khi thay đổi.
 # CA giữ nguyên nên máy trạm KHÔNG phải chạy lại CAI_MAY_TRAM.
 # Trình tự an toàn:
 #   1. Tạo mốc $stamp TRƯỚC mọi thay đổi (để khôi phục được ở bất kỳ giai đoạn nào).
@@ -11,6 +15,7 @@
 param([switch]$KhongHoi, [string]$ThuMucMa = 'C:\MinhDuc', [string]$ThuMucDuLieu = 'C:\ProgramData\MinhDuc')
 if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
     Write-Host 'DỪNG LẠI: Windows đang chặn script (App Control / Smart App Control).' -ForegroundColor Red
+    Write-Host '  - Không tự tắt Smart App Control hay App Control. Dừng và gọi người hỗ trợ (chụp màn hình này gửi kèm).' -ForegroundColor Yellow
     exit 20
 }
 $ErrorActionPreference = 'Stop'
@@ -40,25 +45,42 @@ try {
     $admin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { Stop-CaiDat 'Cần quyền Administrator.' @('Bấm đúp GIA_HAN_CHUNG_CHI.bat và chọn "Yes".') 30 }
     $cert = Join-Path $P.Tls 'server.crt'
+    $key = Join-Path $P.Tls 'server.key'
     $ca = Join-Path $P.Tls 'ca.crt'
-    if (-not (Test-Path -LiteralPath $P.ClinicEnv) -or -not (Test-Path -LiteralPath $cert)) { Stop-CaiDat 'Máy này chưa cài đặt bằng CAI_DAT.bat (thiếu cấu hình hoặc chứng chỉ).' @('Chạy CAI_DAT.bat.') 2 }
-    if (-not (Test-Path -LiteralPath $P.CaKey)) {
-        Stop-CaiDat 'Không thấy khóa CA (quantri\ca.key) trên máy.' @('Nếu đã chuyển ca.key ra USB riêng: chép lại vào C:\ProgramData\MinhDuc\quantri\ rồi chạy lại.',
-            'Nếu mất ca.key: chạy CAI_DAT.bat để tạo CA mới, sau đó cài lại MỌI máy trạm.') 3
-    }
+    if (-not (Test-Path -LiteralPath $P.ClinicEnv)) { Stop-CaiDat 'Máy này chưa cài đặt bằng CAI_DAT.bat (thiếu tệp cấu hình).' @('Chạy CAI_DAT.bat.') 2 }
     $cfg = Read-EnvFile -Path $P.ClinicEnv
     $origin = $cfg['CLINIC_ORIGIN']
+    $ip = $cfg['CLINIC_BIND_IP']
     Write-Host 'GIA HẠN CHỨNG CHỈ HTTPS — PHÒNG KHÁM ĐA KHOA MINH ĐỨC' -ForegroundColor Cyan
-    $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 1) -Arguments @('-m', 'scripts.install_cert', 'check', '--cert', $cert, '--ip', $cfg['CLINIC_BIND_IP'], '--days', '60')
+    $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 1) -Arguments @('-m', 'scripts.install_cert', 'check', '--cert', $cert, '--key', $key, '--ip', $ip, '--days', '60')
     $state = ConvertFrom-PythonJson $r
-    if ($null -eq $state) { Stop-CaiDat 'Không đọc được chứng chỉ hiện tại.' @('Chạy KIEM_TRA.bat và gửi báo cáo cho người hỗ trợ.') 4 }
+    if ($null -eq $state) { $state = [pscustomobject]@{ ok = $false; code = 'hong'; reason = 'không kiểm tra được chứng chỉ hiện tại' } }
+    # Chứng chỉ/khóa máy chủ thiếu hoặc hỏng: CHẾ ĐỘ PHỤC HỒI (không đọc chứng chỉ cũ, cấp mới từ ca.key).
+    $recovery = $state.code -in @('missing', 'hong')
+    if (-not (Test-Path -LiteralPath $P.CaKey)) {
+        if ($recovery) {
+            Stop-CaiDat ('Chứng chỉ máy chủ ' + $state.reason + ' VÀ không thấy khóa CA (quantri\ca.key).') @(
+                'Nếu ca.key được cất trên USB riêng: chép lại vào C:\ProgramData\MinhDuc\quantri\ rồi chạy lại GIA_HAN_CHUNG_CHI.bat.',
+                'Nếu mất hẳn ca.key: KHÔNG phục hồi được bằng CA cũ. Gọi người hỗ trợ tạo CA mới (CAI_DAT.bat), sau đó phải CÀI LẠI CA (CAI_MAY_TRAM.bat) cho MỌI máy trạm.') 5
+        }
+        Stop-CaiDat 'Không thấy khóa CA (quantri\ca.key) trên máy.' @('Nếu đã chuyển ca.key ra USB riêng: chép lại vào C:\ProgramData\MinhDuc\quantri\ rồi chạy lại.',
+            'Nếu mất hẳn ca.key: gọi người hỗ trợ tạo CA mới (CAI_DAT.bat), sau đó phải CÀI LẠI CA (CAI_MAY_TRAM.bat) cho MỌI máy trạm.') 3
+    }
+    if (-not (Test-Path -LiteralPath $ca)) {
+        Stop-CaiDat 'Không thấy chứng chỉ gốc tls\ca.crt trên máy chủ.' @('Gọi người hỗ trợ; không tự tạo CA mới (máy trạm sẽ phải cài lại).') 6
+    }
     if ($state.code -eq 'ip') {
         Stop-CaiDat ('Không gia hạn được: ' + $state.reason + '.') @('Đặt lại IP cũ cho máy chủ, hoặc liên hệ người hỗ trợ (đổi IP cần CA mới và cài lại máy trạm).') 4
     }
-    Write-Thongtin ('Hiện tại: ' + $state.reason + '.')
-    if ($state.ok -and -not (Read-CoKhong 'Chứng chỉ còn trên 60 ngày. Vẫn gia hạn ngay?' -KhongHoi:$KhongHoi -MacDinh $true)) {
-        Write-Result 'bo_qua' $state.reason
-        exit 0
+    if ($recovery) {
+        Write-Luu ('CHẾ ĐỘ PHỤC HỒI: ' + $state.reason + '. Sẽ cấp chứng chỉ mới cho IP ' + $ip + ' từ khóa CA hiện có, không đọc chứng chỉ cũ; CA giữ nguyên nên máy trạm không phải cài lại.')
+    } else {
+        Write-Thongtin ('Hiện tại: ' + $state.reason + '.')
+        if ($state.ok -and -not (Read-CoKhong 'Chứng chỉ còn trên 60 ngày. Vẫn gia hạn ngay?' -KhongHoi:$KhongHoi -MacDinh $true)) {
+            Write-Result 'bo_qua' $state.reason
+            Write-Host 'KHÔNG GIA HẠN (theo lựa chọn của bạn); chứng chỉ hiện tại giữ nguyên.'
+            exit 0
+        }
     }
     $oldSerial = Get-ServedSerial $origin $ca
     # Mốc khôi phục có TRƯỚC mọi thay đổi.
@@ -66,7 +88,9 @@ try {
 
     Write-Buoc 'Bước 1/4: Tạo chứng chỉ mới bằng CA hiện có (tên tạm, cạnh tệp cũ)'
     $changed = $true
-    $r = Invoke-Cert @('prepare', '--tls-dir', $P.Tls, '--ca-key', $P.CaKey, '--stamp', $stamp)
+    $prepareArgs = @('prepare', '--tls-dir', $P.Tls, '--ca-key', $P.CaKey, '--stamp', $stamp)
+    if ($recovery) { $prepareArgs += @('--ip', $ip) }
+    $r = Invoke-Cert $prepareArgs
     if (-not $r.Ok) { throw ('Không tạo được chứng chỉ mới: ' + (($r.Output | Select-Object -Last 1) -join '')) }
     $renewed = ConvertFrom-PythonJson $r
     Write-Dat ('Đã tạo chứng chỉ mới (hạn tới ' + $renewed.not_after.Substring(0, 10) + '); CA giữ nguyên, vân tay ' + $renewed.ca_fingerprint.Substring(0, 8) + '.')
@@ -94,10 +118,10 @@ try {
     if (-not (Wait-Https -Origin $origin -Seconds 120)) { Show-ServiceDiagnostics -Paths $P; throw 'Dịch vụ web không trả lời sau 2 phút.' }
     $served = Get-ServedSerial $origin $ca
     if ($served -ne $renewed.serial) { throw 'Máy chủ chưa dùng chứng chỉ mới.' }
-    Write-Dat ('HTTPS đang dùng chứng chỉ mới (số sê-ri ' + $served + '), máy trạm vẫn tin cậy.')
-    Write-Result 'thanh_cong' ('Hạn mới: ' + $renewed.not_after)
+    Write-Dat ('Đã kiểm: HTTPS đang dùng chứng chỉ mới (số sê-ri ' + $served + '), hợp lệ theo ca.crt của phòng khám (CA không đổi).')
+    Write-Result 'thanh_cong' ($(if ($recovery) { 'Phục hồi; ' } else { '' }) + 'hạn mới: ' + $renewed.not_after)
     Write-Host ''
-    Write-Host 'GIA HẠN THÀNH CÔNG.' -ForegroundColor Green
+    Write-Host $(if ($recovery) { 'PHỤC HỒI CHỨNG CHỈ THÀNH CÔNG (HTTPS đã kiểm lại: ĐẠT).' } else { 'GIA HẠN THÀNH CÔNG (HTTPS đã kiểm lại: ĐẠT).' }) -ForegroundColor Green
 } catch {
     $code = $_.Exception.Data['MinhDucExit']
     if ($null -ne $code -and -not $changed) {
@@ -121,12 +145,13 @@ try {
         if ($restoreOk) {
             Write-Dat ('Kiểm tra sau khôi phục ĐẠT: HTTPS dùng chứng chỉ cũ (số sê-ri ' + $servedNow + ').')
             Write-Result 'da_tra_chung_chi_cu' $reason
-            Write-Host 'GIA HẠN KHÔNG THÀNH CÔNG — ĐÃ TRẢ CHỨNG CHỈ CŨ, phần mềm vẫn dùng bình thường.' -ForegroundColor Yellow
+            Write-Host 'GIA HẠN KHÔNG THÀNH CÔNG — ĐÃ TRẢ CHỨNG CHỈ CŨ; HTTPS đã kiểm lại: ĐẠT. Báo người hỗ trợ để gia hạn lại.' -ForegroundColor Yellow
             $exitCode = 50
         } else {
             Write-Loi ('Kiểm tra sau khôi phục KHÔNG ĐẠT (khôi phục tệp: ' + $(if ($rollbackOk) { 'đạt' } else { 'lỗi' }) + ', HTTPS: ' + $(if ($httpsOk) { 'đạt' } else { 'lỗi' }) + ').')
             Write-Result 'khoi_phuc_that_bai' $reason
-            Write-Host 'KHÔI PHỤC CHỨNG CHỈ CŨ THẤT BẠI. Việc cần làm ngay:' -ForegroundColor Red
+            Write-Host $(if ($recovery) { 'PHỤC HỒI CHỨNG CHỈ KHÔNG THÀNH CÔNG.' } else { 'KHÔI PHỤC CHỨNG CHỈ CŨ THẤT BẠI: KHÔNG trả được chứng chỉ cũ.' }) -ForegroundColor Red
+            Write-Host 'Phần mềm CÓ THỂ KHÔNG TRUY CẬP ĐƯỢC từ máy trạm. GỌI NGƯỜI HỖ TRỢ NGAY. Trong lúc chờ:' -ForegroundColor Red
             Write-Host '  1. Bấm đúp KIEM_TRA.bat, gửi tệp báo cáo trên Desktop và thư mục C:\ProgramData\MinhDuc\nhatky cho người hỗ trợ.' -ForegroundColor Yellow
             Write-Host ('  2. Chạy lại GIA_HAN_CHUNG_CHI.bat một lần (các tệp cũ được giữ với đuôi .cu-' + $stamp + ').') -ForegroundColor Yellow
             Write-Host '  3. Nếu máy trạm báo lỗi chứng chỉ: KHÔNG bấm bỏ qua cảnh báo; chờ người hỗ trợ.' -ForegroundColor Yellow

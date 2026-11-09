@@ -185,11 +185,15 @@ jobs:
           Remove-Item 'HKLM:\SOFTWARE\PostgreSQL' -Recurse -Force -ErrorAction SilentlyContinue
           Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Where-Object { $_.PSChildName -like 'PostgreSQL*' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           $global:LASTEXITCODE = 0
-      - name: CAI_DAT.bat (first run, unattended)
+      - name: CAI_DAT.bat (first run, unattended; only the backup row may fail with 1 of 3 verified backups)
         shell: cmd
         env:
           MINHDUC_ADMIN_NAME: Quan tri CI gia lap
-        run: call deploy\windows\CAI_DAT.bat -KhongHoi -ChapNhanIPDong -PageFile Giu
+        run: |
+          call deploy\windows\CAI_DAT.bat -KhongHoi -ChapNhanIPDong -PageFile Giu
+          if %errorlevel% equ 0 exit /b 0
+          if %errorlevel% neq 40 exit /b %errorlevel%
+          C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py fresh-install-report
       - name: Service, HTTPS login page, administrator login, synthetic write
         run: |
           $svc = Get-Service MinhDuc
@@ -346,6 +350,47 @@ jobs:
           if ((Get-FileHash C:\ProgramData\MinhDuc\tls\ca.crt).Hash -ne $env:CA_HASH) { throw 'CA changed' }
           & $py .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after fault tests' }
           Write-Output 'PASS: chay lai GIA_HAN sau loi khoi phuc -> thanh cong, CA giu nguyen, dang nhap duoc'
+      - name: GIA_HAN_CHUNG_CHI recovery mode (certificate missing, damaged; CA key missing)
+        run: |
+          $py = 'C:\MinhDuc\.venv\Scripts\python.exe'
+          $tls = 'C:\ProgramData\MinhDuc\tls'
+          $q = 'C:\ProgramData\MinhDuc\quantri'
+          $origin = ((Get-Content C:\ProgramData\MinhDuc\clinic.env) -match '^CLINIC_ORIGIN=') -replace '^CLINIC_ORIGIN=',''
+          function Served { Push-Location C:\MinhDuc; $s = (& $py -m scripts.install_cert served --origin $origin --ca "$tls\ca.crt" | ConvertFrom-Json).serial; Pop-Location; return $s }
+          function GiaHan {
+            & cmd /c "call C:\MinhDuc\deploy\windows\GIA_HAN_CHUNG_CHI.bat -KhongHoi" | Out-Host
+            $code = $LASTEXITCODE
+            $status = (Get-Content C:\ProgramData\MinhDuc\nhatky\ket-qua-gia-han.json -Raw | ConvertFrom-Json).status
+            return @($code, $status)
+          }
+          # 1. server.crt and server.key deleted: recovery issues a new pair from the existing ca.key.
+          $before = Served
+          Remove-Item "$tls\server.crt", "$tls\server.key" -Force
+          $code, $status = GiaHan
+          if ($code -ne 0 -or $status -ne 'thanh_cong') { throw "missing cert -> exit $code status $status" }
+          $after = Served
+          if (-not $after -or $after -eq $before) { throw "missing cert -> served $before -> $after" }
+          if ((Get-FileHash "$tls\ca.crt").Hash -ne $env:CA_HASH) { throw 'CA changed' }
+          & $py .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after recovery (missing)' }
+          Write-Output "PASS: thieu chung chi -> che do phuc hoi tu ca.key ($before -> $after), CA giu nguyen, dang nhap duoc"
+          # 2. Damaged certificate AND ca.key missing: stop (exit 5), nothing replaced.
+          Rename-Item "$q\ca.key" 'ca.key.ci-giu'
+          [IO.File]::WriteAllText("$tls\server.crt", 'hong')
+          $code, $status = GiaHan
+          if ($code -ne 5 -or $status -ne 'dung') { throw "lost ca.key -> exit $code status $status (expected 5 / dung)" }
+          if ([IO.File]::ReadAllText("$tls\server.crt") -ne 'hong') { throw 'damaged certificate was touched without ca.key' }
+          if (Get-ChildItem $tls -Filter '*.moi-*') { throw 'temporary files left' }
+          Write-Output 'PASS: hong chung chi + mat ca.key -> dung (ma 5), bao phai cai lai CA cho moi may tram, khong thay tep nao'
+          # 3. ca.key back: recovery from the damaged certificate without reading it.
+          Rename-Item "$q\ca.key.ci-giu" 'ca.key'
+          $code, $status = GiaHan
+          if ($code -ne 0 -or $status -ne 'thanh_cong') { throw "damaged cert -> exit $code status $status" }
+          $fixed = Served
+          if (-not $fixed -or $fixed -eq $after) { throw "damaged cert -> served $after -> $fixed" }
+          if (-not (Get-ChildItem $tls -Filter 'server.crt.cu-*' | Where-Object { [IO.File]::ReadAllText($_.FullName) -eq 'hong' })) { throw 'damaged file not kept' }
+          if ((Get-FileHash "$tls\ca.crt").Hash -ne $env:CA_HASH) { throw 'CA changed' }
+          & $py .github\scripts\windows_e2e.py login; if ($LASTEXITCODE) { throw 'login after recovery (damaged)' }
+          Write-Output "PASS: chung chi hong -> phuc hoi tu ca.key ($after -> $fixed), giu tep hong de doi chieu, dang nhap duoc"
       - name: Accented postgres password via the existing-PostgreSQL path, real SCRAM login
         run: |
           $py = 'C:\MinhDuc\.venv\Scripts\python.exe'

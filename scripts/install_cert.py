@@ -11,6 +11,8 @@ renew  : issue a NEW server certificate (new key, same names/IPs) signed by the
          Stages for GIA_HAN_CHUNG_CHI: prepare (write *.moi-<stamp> next to the
          old files) -> caller sets/checks the service ACL -> verify -> commit
          (old files become *.cu-<stamp>). `rollback --stamp` works from any stage.
+         Recovery (server.crt/server.key missing or damaged): `prepare --ip` issues
+         a new pair from ca.key without reading the old certificate.
 served : read the certificate the running HTTPS service presents (verified
          against ca.crt) to prove the service picked up the renewed one.
 """
@@ -29,16 +31,29 @@ import tempfile
 RENEW_WARNING_DAYS = 60
 
 
-def status(cert_path, ip, days):
-    """code: ok | missing | ip (needs a new CA + workstation reinstall) | expiring (renewable)."""
+def status(cert_path, ip, days, key_path=None):
+    """code: ok | missing | hong (unreadable / no IP list / key missing or not matching: recoverable
+    from ca.key without reading the old certificate) | ip (needs a new CA + workstation
+    reinstall) | expiring (renewable)."""
     from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
     from cryptography.x509.oid import ExtensionOID
     path = Path(cert_path)
     if not path.exists():
         return {'ok': False, 'code': 'missing', 'reason': 'chưa có chứng chỉ'}
-    cert = x509.load_pem_x509_certificate(path.read_bytes())
-    san = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
-    addresses = [str(a) for a in san.get_values_for_type(x509.IPAddress)]
+    try:
+        cert = x509.load_pem_x509_certificate(path.read_bytes())
+        san = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
+        addresses = [str(a) for a in san.get_values_for_type(x509.IPAddress)]
+    except (OSError, ValueError, x509.ExtensionNotFound) as error:
+        return {'ok': False, 'code': 'hong', 'reason': f'không đọc được chứng chỉ ({type(error).__name__})'}
+    if key_path is not None:
+        try:
+            key = serialization.load_pem_private_key(Path(key_path).read_bytes(), password=None)
+            if key.public_key().public_numbers() != cert.public_key().public_numbers():
+                return {'ok': False, 'code': 'hong', 'reason': 'khóa server.key không khớp chứng chỉ'}
+        except (OSError, ValueError, TypeError) as error:
+            return {'ok': False, 'code': 'hong', 'reason': f'không đọc được khóa server.key ({type(error).__name__})'}
     left = cert.not_valid_after_utc - datetime.now(timezone.utc)
     if str(ipaddress.ip_address(ip)) not in addresses:
         return {'ok': False, 'code': 'ip', 'days_left': left.days,
@@ -71,11 +86,17 @@ def _temp(tls_dir, name, stamp):
     return Path(tls_dir) / f'{name}.moi-{stamp}'
 
 
-def prepare(tls_dir, ca_key_path, stamp, valid_days=365):
+def _absent(tls_dir, name, stamp):
+    return Path(tls_dir) / f'{name}.khong-co-{stamp}'
+
+
+def prepare(tls_dir, ca_key_path, stamp, valid_days=365, ip=None, name='minhduc.internal'):
     """Write the new pair next to the old files as server.crt/.key.moi-<stamp>.
 
     Files are created inside tls_dir so they inherit that folder's ACL (never a
-    private temporary folder). Nothing in use is touched.
+    private temporary folder). Nothing in use is touched. With `ip` (recovery mode,
+    old certificate missing or damaged) the old certificate is NOT read: names come
+    from `name`/`ip`, exactly like the certificate CAI_DAT creates.
     """
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -89,11 +110,17 @@ def prepare(tls_dir, ca_key_path, stamp, valid_days=365):
     now = datetime.now(timezone.utc)
     if ca_cert.not_valid_after_utc - now < timedelta(days=30):
         raise ValueError('Chứng chỉ gốc (CA) sắp hết hạn: phải tạo CA mới và cài lại mọi máy trạm.')
-    old = x509.load_pem_x509_certificate((tls_dir / 'server.crt').read_bytes())
-    san = old.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
+    if ip:
+        from cryptography.x509.oid import NameOID
+        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+        san = [x509.DNSName(name), x509.IPAddress(ipaddress.ip_address(ip))]
+    else:
+        old = x509.load_pem_x509_certificate((tls_dir / 'server.crt').read_bytes())
+        subject = old.subject
+        san = old.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
     key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
     not_after = min(now + timedelta(days=valid_days), ca_cert.not_valid_after_utc - timedelta(days=1))
-    cert = (x509.CertificateBuilder().subject_name(old.subject).issuer_name(ca_cert.subject)
+    cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(ca_cert.subject)
             .public_key(key.public_key()).serial_number(x509.random_serial_number())
             .not_valid_before(now - timedelta(minutes=5)).not_valid_after(not_after)
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
@@ -128,7 +155,10 @@ def commit(tls_dir, stamp):
         if not _temp(tls_dir, name, stamp).exists():
             raise ValueError(f'Không thấy tệp đã chuẩn bị {name}.moi-{stamp}')
     for index, name in enumerate(PAIR):
-        os.replace(tls_dir / name, tls_dir / f'{name}.cu-{stamp}')
+        if (tls_dir / name).exists():
+            os.replace(tls_dir / name, tls_dir / f'{name}.cu-{stamp}')
+        else:  # recovery mode: remember the file did not exist, so rollback can return to that state
+            _absent(tls_dir, name, stamp).write_text('', encoding='utf-8')
         os.replace(_temp(tls_dir, name, stamp), tls_dir / name)
         if index == 0 and os.environ.get(TEST_FAULT) == 'loi-giua-thay':
             raise OSError('Lỗi giả lập giữa lúc thay tệp (kiểm thử)')
@@ -159,19 +189,26 @@ def rollback(tls_dir, stamp):
         raise OSError('Lỗi giả lập khi khôi phục (kiểm thử)')
     tls_dir = Path(tls_dir)
     restored = []
+    absent_before = []
     for name in PAIR:
         saved = tls_dir / f'{name}.cu-{stamp}'
+        current = tls_dir / name
         if saved.exists():
-            current = tls_dir / name
             if current.exists():
                 os.replace(current, tls_dir / f'{name}.loi-{stamp}')
             os.replace(saved, current)
             restored.append(name)
+        elif _absent(tls_dir, name, stamp).exists():
+            # File did not exist before (recovery mode): back to "missing", new one kept as *.loi-<stamp>.
+            if current.exists():
+                os.replace(current, tls_dir / f'{name}.loi-{stamp}')
+            _absent(tls_dir, name, stamp).unlink()
+            absent_before.append(name)
         _temp(tls_dir, name, stamp).unlink(missing_ok=True)
     for name in PAIR:
-        if not (tls_dir / name).exists():
+        if name not in absent_before and not (tls_dir / name).exists():
             raise ValueError(f'Thiếu {name} sau khi khôi phục')
-    return {'restored': restored}
+    return {'restored': restored, 'absent_before': absent_before}
 
 
 def served(origin, ca_file, timeout=10):
@@ -224,19 +261,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     c = sub.add_parser('check'); c.add_argument('--cert', required=True); c.add_argument('--ip', required=True)
-    c.add_argument('--days', type=int, default=30)
+    c.add_argument('--days', type=int, default=30); c.add_argument('--key')
     n = sub.add_parser('create'); n.add_argument('--ip', required=True); n.add_argument('--tls-dir', required=True)
     n.add_argument('--ca-key', required=True)
     f = sub.add_parser('fingerprint'); f.add_argument('--ca', required=True)
     r = sub.add_parser('renew'); r.add_argument('--tls-dir', required=True); r.add_argument('--ca-key', required=True)
     pr = sub.add_parser('prepare'); pr.add_argument('--tls-dir', required=True); pr.add_argument('--ca-key', required=True)
     pr.add_argument('--stamp', required=True)
+    pr.add_argument('--ip', help='chế độ phục hồi: không đọc chứng chỉ cũ, cấp theo IP này')
     for cmd in ('verify', 'commit', 'rollback'):
         x = sub.add_parser(cmd); x.add_argument('--tls-dir', required=True); x.add_argument('--stamp', required=True)
     s = sub.add_parser('served'); s.add_argument('--origin', required=True); s.add_argument('--ca', required=True)
     args = parser.parse_args(argv)
     if args.command == 'check':
-        result = status(args.cert, args.ip, args.days)
+        result = status(args.cert, args.ip, args.days, args.key)
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result['ok'] else 1
     try:
@@ -244,7 +282,7 @@ def main(argv=None):
             print(json.dumps(renew(args.tls_dir, args.ca_key)))
             return 0
         if args.command == 'prepare':
-            print(json.dumps(prepare(args.tls_dir, args.ca_key, args.stamp)))
+            print(json.dumps(prepare(args.tls_dir, args.ca_key, args.stamp, ip=args.ip)))
             return 0
         if args.command in ('verify', 'commit', 'rollback'):
             action = {'verify': verify_pair, 'commit': commit, 'rollback': rollback}[args.command]

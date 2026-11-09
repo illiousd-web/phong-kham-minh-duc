@@ -72,6 +72,12 @@ Function MakeShortcut(url)
         Exit Function
     End If
     On Error GoTo 0
+    ' Kiem lai: tep .lnk phai that su ton tai sau khi tao.
+    If Not fso.FileExists(finalPath) Then
+        WScript.Echo "LOI: khong thay tep bieu tuong sau khi tao."
+        MakeShortcut = 4
+        Exit Function
+    End If
     WScript.Echo "OK " & browser
     MakeShortcut = 0
 End Function

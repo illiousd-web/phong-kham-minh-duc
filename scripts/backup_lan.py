@@ -138,6 +138,14 @@ def copy_offsite(source,directory):
     finally:pending.unlink(missing_ok=True)
 
 
+def space_required(destination):
+    """Free bytes backup() demands before it starts (same formula as its require_space)."""
+    uploads=Path(os.getenv('CLINIC_UPLOAD_DIR',str(DATA/'attachments')))
+    with psycopg.connect(DATABASE_URL,connect_timeout=10) as c:
+        estimate=c.execute('SELECT pg_database_size(current_database())').fetchone()[0]+tree_bytes(uploads)
+    return LIMITS.min_free_bytes+2*estimate+64*1024*1024
+
+
 def backup(destination, key_path, prune=True, enforce_budget=True):
     """prune/enforce_budget=False: caller (Windows scripts.backup_job) verifies the new
     file first and only then applies retention and the size budget."""

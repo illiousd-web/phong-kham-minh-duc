@@ -210,7 +210,7 @@ def _good_facts():
         'cert_not_after': (NOW + timedelta(days=300)).isoformat(),
         'firewall': {'exists': True, 'enabled': True, 'scoped': True, 'port': '8443', 'remote': '192.168.1.0/24'},
         'backup_task': {'exists': True, 'enabled': True, 'next_run': 'x', 'last_result': 0},
-        'backup_state': {'last_success_utc': (NOW - timedelta(hours=2)).isoformat()}, 'backup_count': 1,
+        'backup_state': {'last_success_utc': (NOW - timedelta(hours=2)).isoformat(), 'verified_count': 3}, 'backup_count': 3,
         'disk_free_gib': 120.5, 'memory': {'total_mib': 7900, 'available_mib': 3000},
         'pagefile': {'auto': True, 'detail': 'Windows tự quản lý'}, 'env_acl_ok': True, 'env_acl_detail': 'ok',
     }
@@ -231,13 +231,16 @@ def test_health_all_pass():
     ({'cert_not_after': (NOW + timedelta(days=59, hours=1)).isoformat()}, 'Chứng chỉ'),
     ({'firewall': {'exists': True, 'enabled': True, 'scoped': False}}, 'Tường lửa'),
     ({'backup_task': {}}, 'Lịch sao lưu'),
-    ({'backup_state': {'last_success_utc': (NOW - timedelta(hours=50)).isoformat()}}, 'Bản sao lưu'),
-    ({'backup_state': {}, 'backup_newest_utc': None}, 'Bản sao lưu'),
+    ({'backup_state': {'last_success_utc': (NOW - timedelta(hours=50)).isoformat(), 'verified_count': 3}}, 'Sao lưu:'),
+    ({'backup_state': {}, 'backup_newest_utc': None}, 'Sao lưu:'),
+    ({'backup_state': {'last_success_utc': NOW.isoformat(), 'verified_count': 2}}, 'Sao lưu:'),
+    ({'backup_state': {'last_success_utc': NOW.isoformat(), 'verified_count': 5, 'over_budget': True}}, 'Sao lưu:'),
+    ({'backup_state': {'last_success_utc': NOW.isoformat(), 'verified_count': 4, 'corrupt': ['x']}}, 'Sao lưu:'),
     ({'disk_free_gib': 12}, 'Ổ dữ liệu'),
     ({'memory': {'total_mib': 4096, 'available_mib': 2000}}, 'RAM'),
     ({'pagefile': {'auto': False, 'detail': 'Cố định 512 MB'}}, 'page file'),
     ({'env_acl_ok': False}, 'Tệp cấu hình'),
-    ({'external_declared': True, 'backup_state': {'last_success_utc': NOW.isoformat(),
+    ({'external_declared': True, 'backup_state': {'last_success_utc': NOW.isoformat(), 'verified_count': 3,
                                                    'external_last_copy_utc': (NOW - timedelta(days=4)).isoformat()}}, 'Ổ sao lưu ngoài'),
 ])
 def test_health_each_failure_detected(change, title_part):
@@ -424,7 +427,7 @@ def test_renew_keeps_ca_and_names_new_key_and_rollback(tmp_path):
     assert (tls / 'server.crt').read_bytes() == old_cert and (tls / 'server.key').read_bytes() == old_key
     assert (tls / f"server.crt.loi-{result['stamp']}").exists()
     # Rolling back again is harmless: nothing saved any more, live pair untouched.
-    assert install_cert.rollback(tls, result['stamp']) == {'restored': []}
+    assert install_cert.rollback(tls, result['stamp'])['restored'] == []
     assert (tls / 'server.crt').read_bytes() == old_cert
 
 
@@ -666,7 +669,7 @@ def test_fault_midway_swap_restores_exact_old_pair(tmp_path, monkeypatch):
         install_cert.commit(tls, stamp)
     assert (tls / 'server.crt').read_bytes() != crt and (tls / 'server.key').read_bytes() == key  # inconsistent state
     monkeypatch.delenv('MINHDUC_TEST_LOI')
-    assert install_cert.rollback(tls, stamp) == {'restored': ['server.crt']}
+    assert install_cert.rollback(tls, stamp)['restored'] == ['server.crt']
     assert (tls / 'server.crt').read_bytes() == crt and (tls / 'server.key').read_bytes() == key
     assert not list(tls.glob('*.moi-*'))
 
@@ -688,7 +691,7 @@ def test_fault_rollback_failure_is_reported_and_retry_works(tmp_path, monkeypatc
 def test_rollback_before_commit_only_cleans_up(tmp_path):
     install_cert, tls, ca_key, crt, key = _tls(tmp_path)
     install_cert.prepare(tls, ca_key, '20261109000005')
-    assert install_cert.rollback(tls, '20261109000005') == {'restored': []}
+    assert install_cert.rollback(tls, '20261109000005')['restored'] == []
     assert (tls / 'server.crt').read_bytes() == crt and not list(tls.glob('*.moi-*'))
 
 
@@ -700,3 +703,224 @@ def test_gia_han_script_reports_restore_only_after_https_check():
     assert ps.rfind('$restoreOk', 0, restored_banner) != -1, 'banner must depend on the post-restore HTTPS check'
     assert 'KHÔI PHỤC CHỨNG CHỈ CŨ THẤT BẠI' in ps
     assert ps.index('$stamp =') < ps.index("'prepare'"), 'stamp exists before anything changes'
+
+
+# ---------- Phản biện PR 8: đối chiếu SHA-256 thật, bản hỏng, ổ gần đầy, KIEM_TRA ----------
+
+def _real_backup(directory, name, payload):
+    import hashlib
+    path = directory / name
+    path.write_bytes(payload)
+    marker = {'size': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
+    path.with_name(name + backup_job.VERIFIED_SUFFIX).write_text(json.dumps(marker), encoding='utf-8')
+    return path
+
+
+def test_list_backups_same_size_tampering_is_corrupt_not_verified(tmp_path):
+    good = _real_backup(tmp_path, 'minhduc-1-good.mdbackup', b'A' * 4096)
+    bad = _real_backup(tmp_path, 'minhduc-2-bad.mdbackup', b'B' * 4096)
+    data = bytearray(bad.read_bytes())
+    data[100] ^= 0xFF  # same size, different content
+    bad.write_bytes(bytes(data))
+    assert bad.stat().st_size == 4096
+    status = {i['name']: (i['verified'], i['corrupt']) for i in backup_job.list_backups(tmp_path)}
+    assert status[good.name] == (True, False)
+    assert status[bad.name] == (False, True), 'same size but different SHA-256 must be corrupt'
+    # A marker without SHA-256 (or unreadable) is "not verified", not "corrupt".
+    legacy = tmp_path / 'minhduc-0-legacy.mdbackup'
+    legacy.write_bytes(b'x')
+    legacy.with_name(legacy.name + '.verified').write_text('{"size": 1}', encoding='utf-8')
+    status = {i['name']: (i['verified'], i['corrupt']) for i in backup_job.list_backups(tmp_path)}
+    assert status[legacy.name] == (False, False)
+
+
+def _items3(spec):
+    """spec newest first: list of (size, verified, corrupt)."""
+    return [{'name': f'b{i:02d}', 'size': size, 'verified': v, 'corrupt': c, 'path': None, 'mtime': 100 - i}
+            for i, (size, v, c) in enumerate(spec)]
+
+
+def test_corrupt_backup_is_never_kept_instead_of_a_good_one():
+    # newest good, a corrupt one in the middle, older good ones; keep=4 -> drop 2
+    items = _items3([(10, True, False), (10, False, True), (10, True, False), (10, True, False),
+                     (10, True, False), (10, True, False)])
+    deleted, _ = backup_job.plan_prune(items, keep=4, budget_bytes=10 ** 9)
+    assert [d['name'] for d in deleted] == ['b01', 'b05'], 'corrupt goes first, then the oldest good one'
+    plan = backup_job.plan_space(items, 15)
+    assert [d['name'] for d in plan] == ['b01', 'b05']
+
+
+def test_plan_space_frees_oldest_verified_but_keeps_three():
+    items = _items3([(10, True, False)] * 5)
+    assert [d['name'] for d in backup_job.plan_space(items, 20)] == ['b04', 'b03']
+    assert backup_job.plan_space(items, 21) is None, 'would need a 3rd deletion -> below 3 verified -> nothing'
+    assert backup_job.plan_space(items, 0) == []
+
+
+def test_plan_space_with_fewer_than_three_verified_deletes_none_of_them():
+    items = _items3([(10, True, False), (10, True, False), (50, False, False)])
+    assert [d['name'] for d in backup_job.plan_space(items, 40)] == ['b02'], 'unverified legacy may go'
+    assert backup_job.plan_space(items, 60) is None, 'the 2 verified ones are all kept -> stop, delete nothing'
+    deleted, over = backup_job.plan_prune(_items3([(10, True, False), (10, True, False)]), keep=14, budget_bytes=5)
+    assert deleted == [] and over
+
+
+def test_warnings_corrupt_and_space_freed():
+    ok = {'last_success_utc': (NOW - timedelta(hours=1)).isoformat()}
+    warnings = backup_job.evaluate({**ok, 'corrupt': ['minhduc-x.mdbackup']}, None, NOW)
+    assert len(warnings) == 1 and 'HỎNG' in warnings[0] and 'SHA-256' in warnings[0]
+    warnings = backup_job.evaluate({**ok, 'freed_for_space': ['a', 'b']}, None, NOW)
+    assert len(warnings) == 1 and 'gần đầy' in warnings[0] and '2 bản' in warnings[0]
+    warnings = backup_job.evaluate({**ok, 'over_budget': True}, None, NOW)
+    assert 'ít hơn thì giữ tất cả' in warnings[0]
+
+
+def test_health_backup_row_explains_reason_and_action():
+    def row(state):
+        facts = {**_good_facts(), 'backup_state': {'last_success_utc': NOW.isoformat(), **state}}
+        return [r for r in install_health.evaluate(facts, NOW) if r['muc'].startswith('Sao lưu:')][0]
+    fresh = row({'verified_count': 1})
+    assert not fresh['dat'] and 'mới có 1 bản đã kiểm, cần ít nhất 3' in fresh['chi_tiet'] and '20:00' in fresh['chi_tiet']
+    over = row({'verified_count': 6, 'over_budget': True})
+    assert not over['dat'] and 'ngân sách' in over['chi_tiet'] and 'báo người hỗ trợ' in over['chi_tiet']
+    assert row({'verified_count': 3})['dat']
+
+
+# ---------- Phản biện PR 8: chứng chỉ thiếu/hỏng -> chế độ phục hồi từ ca.key ----------
+
+def test_status_reports_damaged_certificate_or_key_as_recoverable(tmp_path):
+    from scripts import install_cert
+    tls, ca_key = tmp_path / 'tls', tmp_path / 'quantri' / 'ca.key'
+    install_cert.create('192.168.1.10', tls, ca_key)
+    ok = install_cert.status(tls / 'server.crt', '192.168.1.10', 30, tls / 'server.key')
+    assert ok['code'] == 'ok'
+    (tls / 'server.key').write_text('hong')
+    assert install_cert.status(tls / 'server.crt', '192.168.1.10', 30, tls / 'server.key')['code'] == 'hong'
+    (tls / 'server.crt').write_text('-----BEGIN CERTIFICATE-----\nhong\n-----END CERTIFICATE-----\n')
+    assert install_cert.status(tls / 'server.crt', '192.168.1.10', 30)['code'] == 'hong'
+    (tls / 'server.crt').unlink()
+    assert install_cert.status(tls / 'server.crt', '192.168.1.10', 30)['code'] == 'missing'
+
+
+def _recover(tmp_path, damage):
+    import ssl
+    from scripts import install_cert
+    tls, ca_key = tmp_path / 'tls', tmp_path / 'quantri' / 'ca.key'
+    install_cert.create('192.168.1.10', tls, ca_key)
+    ca_before = (tls / 'ca.crt').read_bytes()
+    damage(tls)
+    stamp = '20261109000009'
+    result = install_cert.prepare(tls, ca_key, stamp, ip='192.168.1.10')
+    install_cert.verify_pair(tls, stamp)
+    install_cert.commit(tls, stamp)
+    assert (tls / 'ca.crt').read_bytes() == ca_before, 'CA unchanged: workstations need nothing'
+    assert install_cert.status(tls / 'server.crt', '192.168.1.10', 300, tls / 'server.key')['code'] == 'ok'
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(tls / 'server.crt'), str(tls / 'server.key'))
+    new = _x509(tls / 'server.crt')
+    _x509(tls / 'ca.crt').public_key().verify(new.signature, new.tbs_certificate_bytes,
+        __import__('cryptography.hazmat.primitives.asymmetric.padding', fromlist=['PKCS1v15']).PKCS1v15(),
+        new.signature_hash_algorithm)
+    return install_cert, tls, stamp, result
+
+
+def test_recovery_when_certificate_missing_issues_from_existing_ca_key(tmp_path):
+    def damage(tls):
+        (tls / 'server.crt').unlink(); (tls / 'server.key').unlink()
+    install_cert, tls, stamp, _ = _recover(tmp_path, damage)
+    # Rollback of a recovery returns to "missing" (exact previous state), new pair kept as *.loi-.
+    result = install_cert.rollback(tls, stamp)
+    assert sorted(result['absent_before']) == ['server.crt', 'server.key']
+    assert not (tls / 'server.crt').exists() and (tls / f'server.crt.loi-{stamp}').exists()
+
+
+def test_recovery_when_certificate_damaged_never_reads_old_one(tmp_path):
+    def damage(tls):
+        (tls / 'server.crt').write_text('rac')
+    install_cert, tls, stamp, _ = _recover(tmp_path, damage)
+    assert (tls / f'server.crt.cu-{stamp}').read_text() == 'rac', 'damaged file kept for investigation'
+    install_cert.rollback(tls, stamp)
+    assert (tls / 'server.crt').read_text() == 'rac'
+
+
+def test_recovery_without_ca_key_fails_cleanly(tmp_path):
+    from scripts import install_cert
+    tls, ca_key = tmp_path / 'tls', tmp_path / 'quantri' / 'ca.key'
+    install_cert.create('192.168.1.10', tls, ca_key)
+    (tls / 'server.crt').unlink()
+    ca_key.unlink()
+    with pytest.raises(OSError):
+        install_cert.prepare(tls, ca_key, '20261109000010', ip='192.168.1.10')
+    assert not list(tls.glob('*.moi-*'))
+
+
+def test_gia_han_bat_prints_message_by_exit_code_without_unverified_claims():
+    bat = (WIN / 'GIA_HAN_CHUNG_CHI.bat').read_text(encoding='ascii')
+    assert '"%RC%"=="0"' in bat and '"%RC%"=="50"' in bat and '"%RC%"=="51"' in bat
+    m50 = bat[bat.index('"%RC%"=="50"'):bat.index('"%RC%"=="51"')]
+    assert 'DA TRA CHUNG CHI CU' in m50 and 'HTTPS da kiem lai: DAT' in m50
+    m51 = bat[bat.index('"%RC%"=="51"'):]
+    assert 'CO THE KHONG TRUY CAP DUOC' in m51 and 'GOI NGUOI HO TRO NGAY' in m51
+    assert 'chung chi cu da duoc tra lai' not in bat, 'old blanket claim removed'
+    ps = (WIN / 'GiaHanChungChi.ps1').read_text(encoding='utf-8-sig')
+    assert 'bình thường' not in ps and 'vẫn tin cậy' not in ps, 'no claim beyond what was checked'
+    assert 'CÓ THỂ KHÔNG TRUY CẬP ĐƯỢC' in ps and 'GỌI NGƯỜI HỖ TRỢ NGAY' in ps
+
+
+def test_gia_han_recovery_mode_and_lost_ca_key_message():
+    ps = (WIN / 'GiaHanChungChi.ps1').read_text(encoding='utf-8-sig')
+    assert "$recovery = $state.code -in @('missing', 'hong')" in ps
+    assert "if ($recovery) { $prepareArgs += @('--ip', $ip) }" in ps
+    lost = ps[ps.index('if ($recovery) {\n            Stop-CaiDat'):]
+    assert 'CÀI LẠI CA (CAI_MAY_TRAM.bat) cho MỌI máy trạm' in lost[:800]
+    # The certificate itself is no longer required to exist before starting (recovery).
+    assert "-not (Test-Path -LiteralPath $cert)" not in ps
+
+
+def test_certificate_warnings_point_to_recovery_procedure():
+    ok = {'last_success_utc': (NOW - timedelta(hours=1)).isoformat()}
+    warning = backup_job.evaluate({**ok, 'cert_unreadable': True}, None, NOW)[0]
+    assert 'GIA_HAN_CHUNG_CHI.bat' in warning and 'phục hồi' in warning and 'mọi máy trạm' in warning
+    facts = {**_good_facts(), 'cert_not_after': None}
+    row = [r for r in install_health.evaluate(facts, NOW) if r['muc'].startswith('Chứng chỉ')][0]
+    assert not row['dat'] and 'GIA_HAN_CHUNG_CHI.bat' in row['chi_tiet'] and 'tự phục hồi' in row['chi_tiet']
+
+
+# ---------- Phản biện PR 8: CAI_MAY_TRAM mã thoát certutil/cscript, kiểm .lnk, kiểm tay trên Windows 7 ----------
+
+def test_workstation_bat_treats_every_nonzero_certutil_cscript_code_as_error():
+    lines = (WIN / 'CAI_MAY_TRAM.bat').read_text(encoding='ascii').splitlines()
+    tool_lines = [i for i, line in enumerate(lines)
+                  if re.match(r'\s*(certutil|cscript)\b', line, re.I)]
+    assert len(tool_lines) >= 6, tool_lines  # dump, decode, hashfile, addstore, elevate, shortcut
+    for i in tool_lines:
+        following = lines[i + 1].strip()
+        assert re.match(r'(if %errorlevel% neq 0 \(|set "VBRC=%errorlevel%")', following, re.I), (lines[i], following)
+    bat = '\n'.join(lines)
+    # 'if errorlevel 1' misses negative HRESULT codes of certutil: never used right after certutil/cscript.
+    assert 'for /f "skip=1 delims=" %%h in (\'certutil' not in bat, 'exit code of certutil inside for /f is lost'
+    assert 'if not "%VBRC%"=="0"' in bat
+
+
+def test_workstation_bat_checks_shortcut_file_and_manual_check_without_curl():
+    bat = (WIN / 'CAI_MAY_TRAM.bat').read_text(encoding='ascii')
+    assert 'if not exist "%PUBLIC%\\Desktop\\Ph*ng kh*m Minh *.lnk"' in bat
+    vbs = (WIN / 'MayTram.vbs').read_text(encoding='ascii')
+    assert 'If Not fso.FileExists(finalPath) Then' in vbs
+    no_curl = bat[bat.index('where curl.exe'):bat.index('set "HTTP="')]
+    assert '[CAN KIEM TAY]' in no_curl and '[DAT]' not in no_curl
+    assert 'KHONG co canh bao chung chi' in no_curl and 'trang dang nhap' in no_curl
+    assert 'CON MOT VIEC: kiem tay' in bat
+
+
+def test_docs_no_self_disable_smart_app_control_and_new_acceptance_items():
+    doc = (ROOT / 'docs' / 'CAI_DAT_TUNG_BUOC.md').read_text(encoding='utf-8')
+    assert 'Smart App Control settings → Off' not in doc and 'chọn Off' not in doc
+    assert 'không tự tắt Smart App Control' in doc and 'gọi người hỗ trợ' in doc
+    for path in WIN.glob('*.ps*1'):
+        text = path.read_text(encoding='utf-8-sig')
+        assert 'chọn Off' not in text and 'Nên tắt Smart App Control' not in text, path.name
+    checklist = doc[doc.index('## 9. Danh sách nghiệm thu'):]
+    assert 'Windows 7 + Chrome 109' in checklist and 'không có cảnh báo chứng chỉ' in checklist
+    assert 'gõ mật khẩu có dấu' in checklist
+    assert 'thời gian một lần sao lưu' in checklist and 'độ trễ thao tác khám' in checklist

@@ -4,7 +4,11 @@ backup -> authenticate/verify the new file -> optional copy to a declared
 external drive -> status file + warnings. Old good backups are never removed
 before a new one is verified; retention comes from CLINIC_BACKUP_KEEP (14 on the
 server in the Windows installer configuration) and the CLINIC_BACKUP_TOTAL_MB
-budget, always keeping at least 3 verified backups. The external drive copy is an
+budget, always keeping at least 3 verified backups (all of them when fewer than 3
+exist). "Verified" means the file's SHA-256 still equals the one recorded right after
+the decrypt check; a mismatch marks the backup corrupt. When the disk is too full to
+create the new backup, old ones (corrupt first, then oldest) are deleted only if that
+frees enough space under the same floor; otherwise nothing is deleted and the job stops. The external drive copy is an
 opt-in (CLINIC_EXTERNAL_BACKUP=1), off by default. Also warns when the HTTPS
 certificate is missing/unreadable or has < 60 days left.
 
@@ -29,6 +33,7 @@ MARKER_DIR = 'MinhDuc-SaoLuu'
 MARKER_FILE = 'minhduc-backup-target.json'
 ABSENT_LIMIT = timedelta(days=3)
 CERT_WARNING_DAYS = 60
+GIB = 1024 ** 3
 
 
 def now_utc():
@@ -81,12 +86,21 @@ def evaluate(state, external_config, now):
                             '(vắng mặt hoặc lỗi). Cắm lại ổ và chạy KIEM_TRA.bat.')
         if state.get('external_error'):
             warnings.append('Chép ra ổ ngoài lỗi: ' + state['external_error'])
+    for name in state.get('corrupt') or []:
+        warnings.append(f'Bản sao lưu {name} bị HỎNG: nội dung không còn khớp SHA-256 đã ghi lúc kiểm. '
+                        'Bản này không được tính là bản đã kiểm và luôn bị xóa trước mọi bản tốt. '
+                        'Báo người hỗ trợ kiểm tra ổ đĩa máy chủ.')
+    if state.get('freed_for_space'):
+        warnings.append(f'Ổ đĩa gần đầy: đã xóa {len(state["freed_for_space"])} bản sao lưu cũ để có chỗ tạo bản mới '
+                        f'(vẫn giữ tối thiểu {MIN_VERIFIED} bản đã kiểm). Báo người hỗ trợ dọn ổ đĩa.')
     if state.get('over_budget'):
-        warnings.append(f'Bản sao lưu vượt ngân sách dung lượng: đã giữ tối thiểu {MIN_VERIFIED} bản đã kiểm, '
-                        'chưa xóa được thêm. Dọn ổ đĩa hoặc báo người hỗ trợ tăng ngân sách (CLINIC_BACKUP_TOTAL_MB).')
+        warnings.append(f'Bản sao lưu vượt ngân sách dung lượng nhưng không xóa thêm được: phải giữ tối thiểu {MIN_VERIFIED} '
+                        'bản đã kiểm (đang có ít hơn thì giữ tất cả). Báo người hỗ trợ dọn ổ đĩa hoặc tăng ngân sách '
+                        '(CLINIC_BACKUP_TOTAL_MB).')
     if state.get('cert_unreadable'):
-        warnings.append('Không đọc được chứng chỉ HTTPS của máy chủ (thiếu hoặc hỏng). Bấm KIEM_TRA.bat và báo người hỗ trợ; '
-                        'nếu còn khóa CA, bấm GIA_HAN_CHUNG_CHI.bat.')
+        warnings.append('Không đọc được chứng chỉ HTTPS của máy chủ (thiếu hoặc hỏng). Bấm đúp GIA_HAN_CHUNG_CHI.bat: '
+                        'tự chuyển sang chế độ phục hồi, cấp chứng chỉ mới từ khóa CA hiện có (máy trạm không phải cài lại). '
+                        'Nếu nó báo mất cả ca.key: gọi người hỗ trợ, phải cài lại CA cho mọi máy trạm.')
     days = state.get('cert_days_left')
     if days is not None and days < CERT_WARNING_DAYS:
         warnings.append(f'Chứng chỉ HTTPS của máy chủ còn {days} ngày. Bấm đúp GIA_HAN_CHUNG_CHI.bat '
@@ -137,47 +151,115 @@ VERIFIED_SUFFIX = '.verified'
 MIN_VERIFIED = 3
 
 
+def _sha256(path):
+    import hashlib
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def list_backups(directory):
-    """Backups newest first, with size and whether this job verified them (sidecar)."""
+    """Backups newest first. 'verified' only when the file's ACTUAL SHA-256 equals the
+    SHA-256 recorded in its .verified marker (written right after the decrypt check).
+    A marker whose size or hash no longer matches means the file changed after it was
+    checked: 'corrupt' (never counted as verified, deleted before any good backup)."""
     items = []
     for path in Path(directory).glob('minhduc-*.mdbackup'):
         stat = path.stat()
         marker = path.with_name(path.name + VERIFIED_SUFFIX)
-        verified = False
+        verified = corrupt = False
         if marker.exists():
             try:
-                verified = json.loads(marker.read_text(encoding='utf-8')).get('size') == stat.st_size
+                recorded = json.loads(marker.read_text(encoding='utf-8'))
             except (OSError, ValueError):
-                verified = False
-        items.append({'path': path, 'name': path.name, 'size': stat.st_size, 'mtime': stat.st_mtime, 'verified': verified})
+                recorded = {}
+            if recorded.get('sha256'):
+                verified = recorded.get('size') == stat.st_size and _sha256(path) == recorded['sha256']
+                corrupt = not verified
+        items.append({'path': path, 'name': path.name, 'size': stat.st_size, 'mtime': stat.st_mtime,
+                      'verified': verified, 'corrupt': corrupt})
     return sorted(items, key=lambda i: (i['mtime'], i['name']), reverse=True)
+
+
+def _deletion_order(items, protect_newest):
+    """Candidates to delete: corrupt backups first (oldest first), then every other backup
+    oldest first. A corrupt backup is therefore never kept while a good one is removed."""
+    pool = items[1:] if protect_newest else list(items)
+    oldest_first = list(reversed(pool))
+    return [i for i in oldest_first if i.get('corrupt')] + [i for i in oldest_first if not i.get('corrupt')]
+
+
+def _can_drop(candidate, remaining, min_verified):
+    """Keep at least `min_verified` verified backups; with fewer than that, keep them all."""
+    if not candidate['verified']:
+        return True
+    return sum(1 for i in remaining if i['verified']) - 1 >= min_verified
 
 
 def plan_prune(items, keep, budget_bytes, min_verified=MIN_VERIFIED):
     """Pure retention decision, run only AFTER the newest backup (items[0]) is verified.
 
-    Oldest first: drop backups beyond `keep`, then while the total exceeds the
-    budget. Never drops the newest one and never lets the number of verified
-    backups fall below `min_verified`. Returns (to_delete, still_over_budget).
+    Drops (corrupt first, then oldest) backups beyond `keep`, then while the total
+    exceeds the budget. Never drops the newest one; never lets the number of verified
+    backups fall below `min_verified` (with fewer verified, none of them is dropped).
+    Returns (to_delete, still_over_budget).
     """
     remaining = list(items)
     deleted = []
 
-    def drop_oldest():
-        verified_left = sum(1 for i in remaining if i['verified'])
-        for index in range(len(remaining) - 1, 0, -1):
-            candidate = remaining[index]
-            if candidate['verified'] and verified_left - 1 < min_verified:
-                continue
-            deleted.append(remaining.pop(index))
-            return True
+    def drop_one():
+        for candidate in _deletion_order(remaining, protect_newest=True):
+            if _can_drop(candidate, remaining, min_verified):
+                remaining.remove(candidate)
+                deleted.append(candidate)
+                return True
         return False
 
-    while len(remaining) > keep and drop_oldest():
+    while len(remaining) > keep and drop_one():
         pass
-    while sum(i['size'] for i in remaining) > budget_bytes and drop_oldest():
+    while sum(i['size'] for i in remaining) > budget_bytes and drop_one():
         pass
     return deleted, sum(i['size'] for i in remaining) > budget_bytes
+
+
+def plan_space(items, deficit_bytes, min_verified=MIN_VERIFIED):
+    """Disk too full to CREATE the new backup: which old backups to delete first.
+
+    Same order and the same floor as plan_prune (corrupt first, then oldest; at least
+    `min_verified` verified backups stay, all of them when fewer exist). Returns the list
+    to delete, or None when even the allowed deletions would not free enough space:
+    then nothing at all is deleted.
+    """
+    if deficit_bytes <= 0:
+        return []
+    remaining = list(items)
+    chosen = []
+    freed = 0
+    for candidate in _deletion_order(remaining, protect_newest=False):
+        if freed >= deficit_bytes:
+            break
+        if _can_drop(candidate, remaining, min_verified):
+            remaining.remove(candidate)
+            chosen.append(candidate)
+            freed += candidate['size']
+    return chosen if freed >= deficit_bytes else None
+
+
+def disk_free(path):
+    from app.storage import free_bytes
+    return free_bytes(path)
+
+
+def space_required(directory):
+    from scripts.backup_lan import space_required as required
+    return required(directory)
+
+
+def _delete(item):
+    item['path'].unlink(missing_ok=True)
+    item['path'].with_name(item['name'] + VERIFIED_SUFFIX).unlink(missing_ok=True)
 
 
 def external_enabled(external_config):
@@ -206,9 +288,29 @@ def run(args, now=None):
         external = None
     code = 0
     target = None
-    for key in ('external_error', 'over_budget', 'pruned'):
+    items = None
+    corrupt = set()
+    for key in ('external_error', 'over_budget', 'pruned', 'freed_for_space', 'space_error'):
         state.pop(key, None)
     try:
+        # 0. Disk too full for the new backup: delete old ones (corrupt first, then oldest)
+        #    only if that frees enough while keeping >= 3 verified; otherwise stop, delete nothing.
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        need = space_required(directory)
+        free = disk_free(directory)
+        if free < need:
+            listed = list_backups(directory)
+            corrupt.update(i['name'] for i in listed if i['corrupt'])
+            plan = plan_space(listed, need - free)
+            if plan is None:
+                state['space_error'] = True
+                raise RuntimeError(
+                    f'Ổ đĩa không đủ chỗ tạo bản sao lưu mới (cần {need / GIB:.1f} GB trống, còn {free / GIB:.1f} GB). '
+                    f'Xóa bớt bản cũ vẫn không đủ mà phải giữ tối thiểu {MIN_VERIFIED} bản đã kiểm, nên KHÔNG xóa bản nào. '
+                    'Báo người hỗ trợ dọn ổ đĩa; không tự xóa thư mục backups.')
+            for item in plan:
+                _delete(item)
+            state['freed_for_space'] = [i['name'] for i in plan]
         # 1. New backup WITHOUT deleting anything and without the budget stop.
         target = backup(directory, args.key, prune=False, enforce_budget=False)
         # 2. Verify it (decrypt + SHA-256 of every file). A bad file is removed; old ones stay.
@@ -228,10 +330,12 @@ def run(args, now=None):
         state.pop('last_error', None)
         # 3. Only now: retention (CLINIC_BACKUP_KEEP) and size budget, keeping >= 3 verified.
         keep = int(os.getenv('CLINIC_BACKUP_KEEP', '14'))
-        to_delete, over = plan_prune(list_backups(directory), keep, LIMITS.backup_total_bytes)
+        listed = list_backups(directory)
+        corrupt.update(i['name'] for i in listed if i['corrupt'])
+        to_delete, over = plan_prune(listed, keep, LIMITS.backup_total_bytes)
         for item in to_delete:
-            item['path'].unlink(missing_ok=True)
-            item['path'].with_name(item['name'] + VERIFIED_SUFFIX).unlink(missing_ok=True)
+            _delete(item)
+        items = [i for i in listed if i not in to_delete]
         state['pruned'] = [i['name'] for i in to_delete]
         if over:
             state['over_budget'] = True
@@ -239,9 +343,13 @@ def run(args, now=None):
         state['last_error'] = _error_text(error) if not isinstance(error, RuntimeError) else str(error)[:400]
         state['last_failure_utc'] = now.isoformat()
         code = 1
-    items = list_backups(directory)
+    if items is None:
+        items = list_backups(directory) if directory.exists() else []
+    corrupt.update(i['name'] for i in items if i['corrupt'])
     state['backup_count'] = len(items)
     state['verified_count'] = sum(1 for i in items if i['verified'])
+    # Every corrupt backup seen in this run (kept or already deleted first) is reported.
+    state['corrupt'] = sorted(corrupt)
     if external and code == 0:
         folder = find_external(candidate_roots(), external['id'], os.environ.get('CLINIC_DATA_DIR', args.directory))
         if folder is None:
