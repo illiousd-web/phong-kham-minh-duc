@@ -1,6 +1,7 @@
 """Operator-only LAN setup, never creates demo users or inventory."""
 import argparse
 import getpass
+import os
 import warnings
 from app.config import LAN
 from app.database import db, migrate
@@ -16,6 +17,8 @@ def main():
     user = sub.add_parser('create-admin')
     user.add_argument('--username', required=True)
     user.add_argument('--name', required=True)
+    user.add_argument('--password-env', help='Unattended install only: read the password from this '
+                      'environment variable (removed immediately), never from the command line')
     args = parser.parse_args()
     if not LAN:
         parser.error('This command requires CLINIC_MODE=lan')
@@ -23,11 +26,16 @@ def main():
         migrate()
         print('Schema migration complete; no demo data created.')
         return
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', getpass.GetPassWarning)
-        password = getpass.getpass('Mat khau rieng (>=12 ky tu): ')
-        if password != getpass.getpass('Nhap lai: '):
-            parser.error('Passwords do not match')
+    if args.password_env:
+        password = os.environ.pop(args.password_env, '')
+        if not password:
+            parser.error('Password environment variable is empty')
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', getpass.GetPassWarning)
+            password = getpass.getpass('Mat khau rieng (>=12 ky tu): ')
+            if password != getpass.getpass('Nhap lai: '):
+                parser.error('Passwords do not match')
     data = AccountInput(username=args.username, full_name=args.name, password=password, roles=['admin'])
     with db(True) as c:
         uid = create_account(c, data, pw_hash)

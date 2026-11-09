@@ -249,3 +249,11 @@ secrets*.json
 *.tar
 *.crt
 !deploy/clinic.env.example
+# Windows installer state: never commit generated configuration or secrets
+clinic.env
+owner.env
+postgres.env
+*.options
+o-sao-luu-ngoai.json
+backup-status.json
+deploy/windows/taive/
