@@ -978,6 +978,8 @@ init_db()
 
 from .catalog import install_catalog
 install_catalog(app, db, principal, require, audit)
+from .price_import import install_price_import
+install_price_import(app, db, principal, require, audit)
 install_workflows(app, db, principal, require, audit, visit_access, NOW)
 from .workflows_v050 import install_v050
 install_v050(app,db,principal,require,audit,visit_access,NOW)

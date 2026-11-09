@@ -72,12 +72,25 @@ Nhận tiền ứng trước chỉ hiện khi quản trị bật chức năng n�
 
 ## Quản lý — menu Quản lý
 
-Có bốn thẻ:
+Có năm thẻ:
 
 - **Cần duyệt**: giảm phí/hoàn tiền, hủy chỉ định, trả thuốc, phụ lục hồ sơ, nhập thuốc kiểm soát. Người duyệt phải khác người đề nghị.
 - **Lượt khám**: xem bảng kê một lượt, điều chỉnh giá có lý do, hoàn tác giảm phí, hủy lượt. Chỉ hủy lượt khi chỉ định đã hủy, y lệnh đã xử lý và thuốc đã đối soát. Tiền đã thu vẫn giữ; tiền cần hoàn hiện riêng.
 - **Danh mục**: dịch vụ và giá, thuốc và giá bán, đơn vị quy đổi (ví dụ vỉ = 10 viên). Ngừng dùng một dịch vụ chỉ chặn chỉ định mới, chứng từ cũ giữ nguyên.
+- **Nhập bảng giá**: tải tệp Excel, xem trước rồi xác nhận nhập theo hướng dẫn dưới đây.
 - **Báo cáo**: tổng phải thu, đã thu, công nợ từng lượt, tồn kho. Số liệu chỉ để kiểm thử, không dùng kế toán hay khai thuế.
+
+### Nhập bảng giá dịch vụ từ Excel
+
+Chỉ **quản trị** và **quản lý** dùng được: mở **Quản lý → Nhập bảng giá**. Quản trị có thêm menu **Quản lý** bên cạnh menu Quản trị.
+
+1. Bấm **Tải tệp mẫu** để lấy `BANG_GIA.xlsx` (bản gốc: `templates/nhap_lieu/BANG_GIA.xlsx`). Giữ một trang tính, dòng hướng dẫn và bốn tiêu đề. Điền từ dòng 3, mỗi dịch vụ một dòng; tối đa 2.000 dòng và 2 MB.
+2. Điền **Tên dịch vụ**, chọn **Nhóm**, điền **Giá** bằng ô số nguyên từ 0 đến 2.000.000.000 đồng (giới hạn tiền hiện có của phần mềm). Không nhập giá dạng chữ, không dùng công thức; nếu sao chép từ tệp khác thì dán **giá trị**. Khi đổi giá dịch vụ đã có, điền đúng mã trong thẻ **Danh mục**, giữ đúng tên và nhóm. Dịch vụ mới có thể bỏ trống mã để phần mềm cấp mã. Không lặp mã hoặc tên trong cùng tệp.
+3. Nhóm theo danh mục hiện có: **Khám, Xét nghiệm, Siêu âm, X-quang, Điện tim**. Hiện chưa có nhóm Thủ thuật; không tự đổi nhóm khác sang Thủ thuật.
+4. Bấm **Chọn tệp Excel**, chọn tệp `.xlsx`, bấm **Xem trước**. Kiểm từng dòng **THÊM MỚI / ĐỔI GIÁ / KHÔNG ĐỔI / LỖI**, giá cũ → giá mới và lý do lỗi. Mở danh sách **Dịch vụ trong hệ thống không có trong tệp** để kiểm tra; các dịch vụ đó được giữ nguyên.
+5. Có dòng lỗi: sửa tệp rồi tải lại, chưa nhập dòng nào. Đúng hết thì bấm **Xác nhận nhập bảng giá**. Phần mềm nhập toàn bộ và ghi nhật ký người nhập, số dòng, từng dịch vụ đổi giá trong một giao dịch. Nếu bảng giá đã thay đổi sau bước xem trước, phải xem trước lại. Tệp được xử lý trong bộ nhớ, không lưu tệp tải lên ra đĩa.
+
+Giá mới áp dụng cho khoản phát sinh mới. Khoản phải thu, phiếu thu, chỉ định đã lập (kể cả chỉ định nháp) giữ giá cũ. Không có dịch vụ nào bị xóa hoặc tự bật lại nếu đã ngừng dùng.
 
 ## Quản trị — menu Quản trị và Cài đặt
 

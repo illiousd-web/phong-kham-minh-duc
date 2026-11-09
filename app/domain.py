@@ -42,14 +42,15 @@ def authorize_order(c,oid,u,audit,now):
     ensure_open(v)
     if o['status'] not in ('requested','ordered'):raise HTTPException(409,'Chỉ định không còn chờ duyệt')
     s=c.execute('SELECT * FROM service_catalog WHERE id=?',(o['service_id'],)).fetchone()
-    if not s or not s['active'] or s['price']<=0:raise HTTPException(409,'Dịch vụ chưa có giá/không còn hiệu lực')
-    c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',(o['visit_id'],o['name'],s['price'],now()))
+    if not s or not s['active'] or o['proposed_price']<=0:raise HTTPException(409,'Dịch vụ chưa có giá/không còn hiệu lực')
+    price=o['proposed_price']  # Giá chụp khi lập chỉ định, kể cả nháp trước khi nhập bảng giá.
+    c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',(o['visit_id'],o['name'],price,now()))
     cid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
     c.execute("INSERT INTO charge_sources(charge_id,source_type,source_id) VALUES(?,'order',?)",(cid,oid))
-    c.execute('INSERT INTO order_authorizations(order_id,service_id,unit_price,authorized_by,authorized_at) VALUES(?,?,?,?,?)',(oid,s['id'],s['price'],u['id'],now()))
+    c.execute('INSERT INTO order_authorizations(order_id,service_id,unit_price,authorized_by,authorized_at) VALUES(?,?,?,?,?)',(oid,s['id'],price,u['id'],now()))
     c.execute("UPDATE orders SET status='ordered' WHERE id=?",(oid,))
-    status_refresh(c,o['visit_id']);audit(c,u,'order_authorized','order',oid,str(s['price']))
-    return {'id':oid,'charge_amount':s['price'],'status':'ordered'}
+    status_refresh(c,o['visit_id']);audit(c,u,'order_authorized','order',oid,str(price))
+    return {'id':oid,'charge_amount':price,'status':'ordered'}
 
 
 def dispense_rx(c,rid,u,audit,now):

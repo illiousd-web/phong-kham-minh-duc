@@ -13,11 +13,12 @@ const menus={
  pharmacy:[['pharmacy','Nhà thuốc']],
  cashier:[['cashier','Thu ngân']],
  manager:[['manager','Quản lý']],
- admin:[['admin','Quản trị'],['settings','Cài đặt']]
+ admin:[['admin','Quản trị'],['price-management','Quản lý'],['settings','Cài đặt']]
 };
 let serverMode='demo',selectedRole=null,auditOffset=0;
 const pendingOrderKeys=new Map();
 let auth=null,active=null,patientList=[],orderList=[],dueList=[],accountList=[];
+let priceFile=null,pricePreview=null,priceResult=null;
 // Lựa chọn đang mở trên từng màn hình (lượt khám, chỉ định, phiếu cấp...).
 const sel={visit:null,patient:null,patientQuery:'',nurseVisit:null,order:null,dispense:null,cashVisit:null,mgrVisit:null,account:null,mgrTab:'approve',adminTab:'accounts'};
 // Cài đặt bật/tắt chức năng phụ, đọc từ máy chủ sau khi đăng nhập.
@@ -45,6 +46,7 @@ const cap=r=>!!auth?.user.roles.includes(r);
 // Nhãn tiếng Việt cho mã trạng thái lưu trong CSDL; không để mã tiếng Anh lọt ra màn hình.
 const LABEL={restricted:'Theo phân quyền',requested:'Chờ bác sĩ duyệt chỉ định',waiting_results:'Chờ kết quả',returned:'Đã trả thuốc',partially_returned:'Đã trả một phần',not_prescribed:'Chưa kê đơn',not_dispensed:'Chưa cấp thuốc',waiting:'Chờ khám',in_progress:'Đang khám',completed:'Đã hoàn tất',dispensed:'Đã cấp phát',done:'Đã khám xong',cancelled:'Đã hủy',booked:'Đã đặt lịch',arrived:'Đã đến khám',
  ordered:'Chờ thực hiện',pending_review:'Chờ duyệt kết quả',approved:'Đã duyệt',draft:'Đơn nháp',pending:'Chờ quản lý duyệt',rejected:'Bị từ chối',
+ consultation:'Khám',service:'Dịch vụ',service_import:'Lần nhập bảng giá',service_price_imported:'Đổi giá từ Excel',service_prices_imported:'Nhập bảng giá từ Excel',
  lab:'Xét nghiệm',ultrasound:'Siêu âm',xray:'X-quang',ecg:'Điện tim',cash:'Tiền mặt',transfer:'Chuyển khoản',discount:'Giảm phí',refund:'Hoàn tiền'};
 const vi=code=>code==null?'—':(LABEL[code]||String(code));
 const TONE={waiting:'warn',ordered:'warn',pending_review:'warn',pending:'warn',rejected:'error',cancelled:'error'};
@@ -129,13 +131,13 @@ function scheduleCounts(){clearInterval(countTimer);countTimer=setInterval(()=>{
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&auth)refreshCounts()});
 scheduleCounts();
 let renderEpoch=0;
-const SCREENS={reception:receptionScreen,prices:pricesScreen,doctor:doctorScreen,nurse:nurseScreen,lab:labScreen,pharmacy:pharmacyScreen,cashier:cashierScreen,manager:managerScreen,admin:adminScreen,settings:settingsScreen,password:passwordPage};
+const SCREENS={reception:receptionScreen,prices:pricesScreen,doctor:doctorScreen,nurse:nurseScreen,lab:labScreen,pharmacy:pharmacyScreen,cashier:cashierScreen,manager:managerScreen,'price-management':priceManagementScreen,admin:adminScreen,settings:settingsScreen,password:passwordPage};
 async function render(){if(!auth){renderLogin();return}viewInit();const page=active,epoch=++renderEpoch;$('workspace').setAttribute('aria-busy','true');$('workspace').dataset.page=page;$('workspace').innerHTML=card('Đang tải dữ liệu ...');try{
  if(!uiLoaded)await loadUi();
  const out=await SCREENS[page]();if(epoch!==renderEpoch)return;
  const html=typeof out==='string'?out:out.html;$('workspace').innerHTML=html;labelTables($('workspace'));if(out&&out.after)out.after();
  }catch(e){if(epoch!==renderEpoch)return;$('workspace').innerHTML=card(`<div class="empty">Không thể tải trang: ${esc(e.message)}</div>`)}finally{if(epoch===renderEpoch){$('workspace').setAttribute('aria-busy','false');refreshCounts()}}}
-function renderLogin(){auth=null;uiLoaded=false;for(const k in lastCounts)delete lastCounts[k];$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');$('change-password').classList.add('hidden');$('workspace').setAttribute('aria-busy','false');
+function renderLogin(){priceFile=null;pricePreview=null;priceResult=null;auth=null;uiLoaded=false;for(const k in lastCounts)delete lastCounts[k];$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');$('change-password').classList.add('hidden');$('workspace').setAttribute('aria-busy','false');
  const users=[['letan','Lễ tân'],['bs_noi','Bác sĩ Nội'],['bs_san','Bác sĩ Sản'],['kythuat','Kỹ thuật viên'],['duoc','Nhân viên dược'],['thungan','Thu ngân'],['quanly','Quản lý'],['quantri','Quản trị viên'],['dieuduong','Điều dưỡng']];
  $('workspace').innerHTML=card(`<form data-form="login" class="fields">${serverMode==='lan'?field('Tài khoản nhân viên','username','text','',true):selectField('Tài khoản mô phỏng','username',users)}${field('Mật khẩu','password','password','',true)}<div class="field full"><button class="btn" type="submit">Đăng nhập</button><p class="hint">${serverMode==='lan'?'Dùng tài khoản riêng do quản trị cấp. Phiên kết thúc sau 20 phút không hoạt động hoặc tối đa 8 giờ.':'Nhập mật khẩu đã chọn khi khởi động bản demo cục bộ.'}</p></div></form>`,'Đăng nhập theo vai trò');}
 
@@ -284,9 +286,27 @@ async function catalogSection(){
  if(manager&&ui.controlled_drugs&&cap('controlled_reviewer')){const cm=data.medicines.filter(m=>m.controlled);
   html+=details('Thuốc kiểm soát đặc biệt',`<form data-form="controlled-medicine" class="fields">${field('Mã thuốc kiểm soát','code','text','',true)}${field('Tên thuốc','name','text','',true)}${field('Đơn vị cơ sở','base_unit','text','viên',true)}<div class="wide"><button class="btn">Thêm thuốc kiểm soát</button></div></form><form data-form="controlled-price" class="fields">${selectField('Thuốc kiểm soát','medicine_id',cm.map(m=>[m.id,m.name]))}${field('Giá mỗi đơn vị cơ sở','unit_price','number','',true)}${field('Lý do phê duyệt giá','reason','text','',true)}<div class="wide"><button class="btn">Duyệt giá</button></div></form>`)}
  return html}
+function priceManagementScreen(){return tabs('import',[['import','Nhập bảng giá']],'mgr')+priceImportSection()}
+function priceImportSection(){
+ let html=stepCard(1,'Tải tệp bảng giá',`<p>Chỉ nhận .xlsx, tối đa 2 MB và 2.000 dòng. Nhóm: Khám, Xét nghiệm, Siêu âm, X-quang, Điện tim. Điền giá trị, không dùng công thức.</p>${btn('Tải tệp mẫu','price-template','','ghost')}<form data-form="price-preview" class="fields"><div class="field full"><span>Tệp bảng giá (.xlsx)</span><label for="price-file" class="price-file-picker"><span class="ghost">Chọn tệp Excel</span><input id="price-file" name="price_file" type="file" accept=".xlsx" aria-label="Chọn tệp Excel"></label><span id="price-file-name" class="muted">${esc(priceFile?.name||'Chưa chọn tệp')}</span></div><div class="wide"><button class="btn">Xem trước</button></div></form>`);
+ if(priceResult)html+=card(`<p role="status">Đã nhập ${priceResult.rows} dòng: ${priceResult.added} thêm mới, ${priceResult.changed} đổi giá, ${priceResult.unchanged} không đổi.</p>`,'Kết quả nhập bảng giá');
+ if(!pricePreview)return html;
+ const p=pricePreview;
+ html+='<div id="price-review">'+stepCard(2,'Xem trước từng dòng',`<p>${esc(priceFile.name)} · ${p.rows.length} dòng. ${p.can_confirm?'Đã kiểm tra, có thể xác nhận.':'Có dòng lỗi: chưa nhập dòng nào. Sửa tệp rồi tải lại.'}</p>`+t(p.rows.map(r=>`<tr><td>${r.row}</td><td>${esc(r.code||'Tự cấp mã')}</td><td>${esc(r.name)}</td><td>${esc(r.group)}</td><td>${r.old_price==null?'—':money(r.old_price)} → ${r.price==null?'—':money(r.price)}</td><td><b>${esc(r.status)}</b><div>${r.errors.map(esc).join('; ')}</div></td></tr>`),['Dòng','Mã','Tên dịch vụ','Nhóm','Giá cũ → giá mới','Kết quả / lý do']));
+ html+=details('Dịch vụ trong hệ thống không có trong tệp ('+p.missing.length+')',`<p>Các dịch vụ này được giữ nguyên.</p>`+t(p.missing.map(s=>`<tr><td>${esc(s.code||'')}</td><td>${esc(s.name)}</td><td>${money(s.price)}</td></tr>`),['Mã','Dịch vụ','Giá hiện có']));
+ if(p.can_confirm)html+=stepCard(3,'Xác nhận nhập',`<p>Nhập toàn bộ trong một lần. Giá mới chỉ áp dụng cho khoản phát sinh mới; khoản phải thu, phiếu thu và chỉ định đã có giữ giá cũ. Không xóa dịch vụ.</p>${btn('Xác nhận nhập bảng giá','price-confirm','','btn')}`);
+ return html+'</div>';
+}
+async function uploadPriceFile(confirm=false){
+ const headers={...authHeader(),'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','X-File-Name':encodeURIComponent(priceFile.name)};
+ if(confirm)headers['X-Preview-Id']=pricePreview.preview_id;
+ const r=await fetch('/api/catalog/services/import/'+(confirm?'confirm':'preview'),{method:'POST',headers,body:priceFile});
+ const result=await r.json();if(!r.ok)throw new Error(result.detail||'Không nhập được bảng giá');return result;
+}
 async function managerScreen(){
  const p=await pendingApprovals();
- const head=tabs(sel.mgrTab,[['approve',`Cần duyệt (${p.total})`],['visits','Lượt khám'],['catalog','Danh mục'],['report','Báo cáo']],'mgr');
+ const head=tabs(sel.mgrTab,[['approve',`Cần duyệt (${p.total})`],['visits','Lượt khám'],['catalog','Danh mục'],['import','Nhập bảng giá'],['report','Báo cáo']],'mgr');
+ if(sel.mgrTab==='import')return head+priceImportSection();
  if(sel.mgrTab==='catalog')return head+await catalogSection();
  if(sel.mgrTab==='report'){const [o,stockList,dues]=await Promise.all([api('/overview'),api('/stock'),api('/dues')]);
   return head+stats([['Lượt khám',o.visits],['Phải thu',money(o.charged)],['Đã thu',money(o.paid)],['Còn phải thu',money(o.outstanding)],['Lô thuốc cần chú ý',o.stock_warning]])+
@@ -311,10 +331,14 @@ async function managerScreen(){
  return html}
 
 // ---------- Quản trị và cài đặt ----------
+function auditDetails(entry){
+ if(!['service_price_imported','service_prices_imported'].includes(entry.event))return entry.details;
+ try{const d=JSON.parse(entry.details);return entry.event==='service_price_imported'?`Dòng ${d.row}: ${d.code} — ${d.name}; ${money(d.old_price)} → ${money(d.new_price)}`:`${d.rows} dòng: ${d.added} thêm mới, ${d.changed} đổi giá, ${d.unchanged} không đổi`;}catch{return entry.details}
+}
 async function adminScreen(){
  const head=tabs(sel.adminTab,[['accounts','Tài khoản'],['audit','Nhật ký'],['catalog','Danh mục']],'admin');
  if(sel.adminTab==='catalog')return head+await catalogSection();
- if(sel.adminTab==='audit'){const entries=await api('/audit?offset='+auditOffset+'&limit=100');return head+card(t(entries.map(x=>`<tr><td>${x.id}</td><td>${esc(x.username||x.user_id||'Hệ thống')}</td><td>${esc(x.event)}</td><td>${esc(x.object_type)} #${esc(x.object_id??'')}</td><td>${esc(x.details)}</td><td>${esc(x.created_at)}</td></tr>`),['ID','Nhân viên','Sự kiện','Đối tượng','Chi tiết','Thời gian UTC'])+`<div class="toolbar-actions"><button class="ghost" data-action="audit-prev" ${auditOffset===0?'disabled':''}>Trang trước</button><span>Từ dòng ${auditOffset+1}</span><button class="ghost" data-action="audit-next" ${entries.length<100?'disabled':''}>Trang sau</button></div>`,'Nhật ký sự kiện')}
+ if(sel.adminTab==='audit'){const entries=await api('/audit?offset='+auditOffset+'&limit=100');return head+card(t(entries.map(x=>`<tr><td>${x.id}</td><td>${esc(x.username||x.user_id||'Hệ thống')}</td><td>${esc(vi(x.event))}</td><td>${esc(vi(x.object_type))} #${esc(x.object_id??'')}</td><td>${esc(auditDetails(x))}</td><td>${showDay(x.created_at)}</td></tr>`),['ID','Nhân viên','Sự kiện','Đối tượng','Chi tiết','Thời gian (giờ Việt Nam)'])+`<div class="toolbar-actions"><button class="ghost" data-action="audit-prev" ${auditOffset===0?'disabled':''}>Trang trước</button><span>Từ dòng ${auditOffset+1}</span><button class="ghost" data-action="audit-next" ${entries.length<100?'disabled':''}>Trang sau</button></div>`,'Nhật ký sự kiện')}
  const users=accountList=await api('/accounts');
  if(!users.some(u=>u.id===sel.account))sel.account=null;
  const u=users.find(x=>x.id===sel.account);
@@ -356,6 +380,13 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
   const res=await api('/login',{method:'POST',body:{username:value('username'),password:value('password')}});auth={token:res.access_token,user:res.user};selectedRole=null;uiLoaded=false;if(res.access_token)sessionStorage.setItem('md_token',res.access_token);active=null;await render();notify('Đăng nhập thành công');return;}
  if(kind==='password'){await api('/password',{method:'POST',body:{current_password:value('current_password'),new_password:value('new_password')}});sessionStorage.removeItem('md_token');selectedRole=null;renderLogin();notify('Đã đổi mật khẩu. Hãy đăng nhập lại');return;}
  if(kind==='patient-search'){sel.patientQuery=value('q');await render();return;}
+ if(kind==='price-preview'){
+  pricePreview=null;priceResult=null;const picked=f.get('price_file');priceFile=picked?.name?picked:priceFile;
+  if(!priceFile||!priceFile.name.toLowerCase().endsWith('.xlsx'))throw new Error('Chỉ nhận tệp .xlsx');
+  if(priceFile.size>2*1024*1024)throw new Error('Tệp vượt giới hạn 2 MB');
+  const selected=priceFile,preview=await uploadPriceFile();if(priceFile!==selected)return;
+  pricePreview=preview;await render();notify('Đã kiểm tra tệp; hãy xem từng dòng');return;
+ }
  if(kind==='service'){await api('/catalog/services',{method:'POST',body:{name:value('name'),price:num('price'),category:value('category')}});msg='Đã thêm dịch vụ';}
  else if(kind==='medicine-price'){await api('/medicines/'+num('medicine_id')+'/price',{method:'PUT',body:{unit_price:num('unit_price')}});msg='Đã đặt giá thuốc';}
  else if(kind==='medicine'){await api('/catalog/medicines',{method:'POST',body:{name:value('name'),base_unit:value('base_unit')}});msg='Đã thêm thuốc/vật tư';}
@@ -412,6 +443,16 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
 async function downloadPdfReceipt(id){const r=await fetch(`/api/print/receipt/${id}`,{headers:authHeader()});if(!r.ok){const m=await r.json().catch(()=>({detail:'Lỗi xuất chứng từ'}));throw new Error(m.detail)}const blob=await r.blob();if(blob.type!=='application/pdf')throw new Error('Không nhận được PDF');const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`MinhDuc_PhieuThu_${id}.pdf`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);notify('Đã tạo phiếu thu PDF');}
 const PICK={visit:'visit','nurse-visit':'nurseVisit',order:'order',dispense:'dispense',cash:'cashVisit',patient:'patient'};
 async function handleClick(element){const action=element.dataset.action,id=Number(element.dataset.id),approve=element.dataset.value==='approve';let msg='';
+ if(action==='price-template'){
+  const r=await fetch('/api/catalog/services/import/template',{headers:authHeader()});if(!r.ok)throw new Error('Không tải được tệp mẫu');
+  const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download='BANG_GIA.xlsx';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);return;
+ }
+ if(action==='price-confirm'){
+  if(!pricePreview?.can_confirm||!priceFile)throw new Error('Cần xem trước tệp trước khi xác nhận');
+  element.disabled=true;$('price-file').disabled=true;
+  try{priceResult=await uploadPriceFile(true);pricePreview=null;priceFile=null;await render();notify('Đã nhập bảng giá');}
+  catch(e){pricePreview=null;priceFile=null;await render();throw e}return;
+ }
  if(action==='navigate'){active=element.dataset.page;uiLoaded=false;await render();return}
  if(action==='pick'){sel[PICK[element.dataset.kind]]=id;await render();if(element.dataset.kind==='patient')$('visit-step')?.scrollIntoView({block:'start'});return}
  if(action==='tab'){sel[element.dataset.kind==='mgr'?'mgrTab':'adminTab']=element.dataset.tab;await render();return}
@@ -441,6 +482,7 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
 document.addEventListener('submit',async ev=>{const form=ev.target.closest('[data-form]');if(!form)return;ev.preventDefault();if(form.dataset.busy)return;form.dataset.busy='1';const buttons=[...form.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);try{await handleForm(form)}catch(err){notify(err.message,true)}finally{delete form.dataset.busy;buttons.forEach(b=>b.disabled=false)}});
 document.addEventListener('click',async ev=>{const b=ev.target.closest('[data-action]');if(!b||b.disabled)return;if(b.dataset.busy)return;b.dataset.busy='1';try{await handleClick(b)}catch(err){notify(err.message,true)}finally{delete b.dataset.busy}});
 document.addEventListener('change',async ev=>{const el=ev.target;
+ if(el.id==='price-file'){pricePreview=null;priceFile=null;priceResult=null;$('price-review')?.remove();$('price-file-name').textContent=el.files[0]?.name||'Chưa chọn tệp';return;}
  if(el.closest('.rx-line')&&el.name==='medicine_id'){const unit=el.closest('.rx-line').querySelector('[name="unit_id"]');if(unit)unit.disabled=true;try{const med=(await api('/dispensable-medicines')).find(m=>m.id===Number(el.value));if(unit)unit.innerHTML='<option value="">Đơn vị cơ sở</option>'+(med?.units||[]).map(u=>`<option value="${u.id}">${esc(u.name)} = ${u.base_factor}</option>`).join('');}catch(e){notify(e.message,true)}finally{if(unit)unit.disabled=false;}return;}
  try{
   if(el.id==='role_switch'){selectedRole=el.value;active=null;await render();}

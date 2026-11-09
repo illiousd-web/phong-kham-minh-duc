@@ -26,8 +26,10 @@ from .conftest import ROOT
 
 
 @pytest.fixture(scope='module')
-def https_server():
-    certdir = ROOT / 'certs-tls-compat'
+def https_server(request):
+    # The import-browser tests reuse this fixture in a separate module. Each
+    # module must get new certificates: the generator refuses to overwrite keys.
+    certdir = ROOT / ('certs-tls-compat-' + request.module.__name__.rsplit('.', 1)[-1])
     subprocess.run([sys.executable, '-m', 'scripts.create_lan_certificate', '--name', 'minhduc.internal',
                     '--ip', '127.0.0.1', '--output', str(certdir)], check=True)
     env = os.environ.copy()

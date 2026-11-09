@@ -71,3 +71,6 @@ fieldset.roles legend{font-size:12px;font-weight:700;padding:0 4px}
 .field .check input,.approve-box .check input{width:20px;height:20px;min-height:0;padding:0;flex:none}
 fieldset.roles .check{min-width:150px}
 fieldset.roles.field{flex-direction:row;align-items:center}
+
+/* Ô chọn tệp có nhãn tiếng Việt ngay cả khi trình duyệt dùng tiếng Anh. */
+.price-file-picker{position:relative;align-self:flex-start;display:inline-block;overflow:hidden;border-radius:8px}.price-file-picker .ghost{display:block;font-size:14px}.price-file-picker input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;padding:0}.price-file-picker:focus-within{outline:2px solid var(--primary);outline-offset:2px}#price-file-name{overflow-wrap:anywhere}
