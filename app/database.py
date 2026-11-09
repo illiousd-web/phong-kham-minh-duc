@@ -15,6 +15,8 @@ from .resources import LIMITS
 ROOT = Path(__file__).resolve().parents[1]
 DB = Path(os.getenv('CLINIC_DB_PATH', str(ROOT / 'data' / 'minh_duc_demo.sqlite3'))).resolve()
 LOCK_ID = 764209431
+ID_TABLES=set(re.findall(r'CREATE TABLE IF NOT EXISTS (\w+)\s*\(\s*id\b',
+    (ROOT/'schema.postgresql.sql').read_text()+(ROOT/'migrations/003_v050.sql').read_text(),re.I))
 _pool = None
 
 
@@ -42,7 +44,7 @@ class PGConnection:
         # LIKE patterns are parameters; psycopg sees only placeholders here.
         sql = sql.replace('?', '%s')
         match = re.match(r'\s*INSERT INTO\s+(\w+)', sql, re.I)
-        has_id = match and match[1] not in ('sessions', 'user_roles', 'login_attempts', 'schema_migrations')
+        has_id = match and match[1] in ID_TABLES
         if has_id:
             sql += ' RETURNING id'
         cur = self.connection.execute(sql, params)
@@ -113,6 +115,8 @@ def migrate():
     if not LAN:
         return
     import psycopg
-    with psycopg.connect(DATABASE_URL) as con:
+    with psycopg.connect(DATABASE_URL,row_factory=record_factory) as con:
         con.execute('SELECT pg_advisory_xact_lock(%s)', (LOCK_ID,))
         con.execute((ROOT / 'schema.postgresql.sql').read_text())
+        from .migrations import migrate_v050
+        migrate_v050(PGConnection(con),postgres=True)

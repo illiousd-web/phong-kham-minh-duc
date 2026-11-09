@@ -10,3 +10,12 @@ REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM clinic_app;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON schema_migrations FROM clinic_app;
 -- Reapply after each schema migration; application role must NOT own the tables
 -- and must not be superuser, CREATEDB, CREATEROLE or BYPASSRLS.
+-- v0.5: append-only evidence. Apply after owner migration version 3.
+REVOKE UPDATE, DELETE, TRUNCATE ON clinical_revisions, nursing_notes,
+ nursing_executions, nursing_task_cancellations, charge_price_history,
+ charge_credits, controlled_ledger, controlled_approvals,
+ prescription_cancellations, visit_cancellations, adjustment_reversals FROM clinic_app;
+
+REVOKE UPDATE, DELETE, TRUNCATE ON order_authorizations, charge_sources,
+ dispensation_items, dispensations, payments, charges, stock_movements,
+ charge_voids, visit_closures, medicine_units FROM clinic_app;

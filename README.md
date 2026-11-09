@@ -1,3 +1,14 @@
+# Minh Đức LAN v0.5.0 — A, B, C, D
+
+Danh mục/chỉ định và công nợ; đơn thuốc cấu trúc, quy đổi, cấp/trả và kiểm soát riêng; điều dưỡng được phân công; hoàn tất, khóa và phụ lục có phiên bản. Chỉ dùng dữ liệu giả lập. Giữ profile Windows 11 / i3 / 8 GB / SSD 256 GB.
+
+- [Nguồn main và đối chiếu ZIP v0.4.1](docs/V050_SOURCE.md)
+- [Hướng dẫn A–D](docs/V050_USAGE.md)
+- [Cài và nâng cấp, backup/rollback](docs/V050_UPGRADE.md)
+- [Kết quả kiểm thử và giới hạn](docs/V050_VALIDATION.md)
+
+Các phần bên dưới ghi lại những phiên bản trước.
+
 > **Profile máy 8 GB (Issue #3):** mặc định mới 1 worker/pool4, backup7bản và ngưỡng dung lượng. Xem [hướng dẫn Windows ngắn](docs/WINDOWS_8GB_QUICKSTART.md) và [cấu hình tài nguyên](docs/RESOURCE_LIGHT.md); các con số 2worker/pool16/backup30 trong phần v0.4 cũ bên dưới là thông tin lịch sử.
 
 # Minh Đức v0.4 — thử nghiệm máy chủ LAN

@@ -39,7 +39,7 @@ def main():
                 workers=LIMITS.workers, proxy_headers=False, server_header=False, access_log=False,
                 ssl_certfile=str(cert), ssl_keyfile=str(key), ssl_version=ssl.PROTOCOL_TLS_SERVER,
                 ssl_ciphers='ECDHE+AESGCM:ECDHE+CHACHA20',
-                limit_concurrency=LIMITS.concurrency, timeout_keep_alive=5,
+                limit_concurrency=LIMITS.concurrency, timeout_keep_alive=2,
                 log_config=server_logging())
 
 

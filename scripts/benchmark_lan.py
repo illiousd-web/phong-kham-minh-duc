@@ -39,9 +39,11 @@ def docker(*args):
     return result.stdout.strip()
 
 
-def pg_options():
+def pg_options(source=ROOT):
     result=[]
-    for line in (ROOT/'deploy/postgresql/minhduc-8gb.conf').read_text().splitlines():
+    profile=source/'deploy/postgresql/minhduc-8gb.conf'
+    if not profile.exists():return result
+    for line in profile.read_text().splitlines():
         if line.strip() and not line.lstrip().startswith('#'):
             name,value=line.split('=',1)
             # Container must listen on its bridge to reach the localhost-only
@@ -53,9 +55,12 @@ def pg_options():
 
 def seed(url):
     from app.auth import pw_hash
+    from app.database import PGConnection,record_factory
+    from app.migrations import migrate_v050
     passwords={role:secrets.token_urlsafe(24) for role in ('reception','doctor','cashier','doctor2')}
-    with psycopg.connect(url) as c:
+    with psycopg.connect(url,row_factory=record_factory) as c:
         c.execute((ROOT/'schema.postgresql.sql').read_text())
+        migrate_v050(PGConnection(c),postgres=True)
         for i,(role,password) in enumerate(passwords.items(),1):
             salt=secrets.token_hex(16)
             c.execute('INSERT INTO users(id,username,full_name,salt,password_hash) VALUES(%s,%s,%s,%s,%s)',(i,'fake_'+role,'Nhân viên giả lập '+role,salt,pw_hash(password,salt)))
@@ -157,7 +162,7 @@ def run_server(source,env,root,passwords,iterations,container):
             def worker(role):
                 for i in range(iterations):
                     if role=='reception':
-                        p=request(role,'POST','/api/patients',{'full_name':'Người giả lập tải đồng thời'},expected=201).json()['id']
+                        p=request(role,'POST','/api/patients',{'full_name':'Người giả lập tải đồng thời','date_of_birth':'1990-01-01','sex':'Nữ','phone':'0900000000'},expected=201).json()['id']
                         request(role,'POST','/api/visits',{'patient_id':p,'doctor_id':2,'service_id':1},expected=201)
                         request(role,'GET','/api/visits')
                     elif role=='doctor':
@@ -221,7 +226,7 @@ def main():
             for i in range(16):(uploads/(str(i)+'.pdf')).write_bytes(b'%PDF-1.5\n'+secrets.token_bytes(MIB-9))
             password=secrets.token_urlsafe(32);name='minhduc-bench-'+secrets.token_hex(6)
             try:
-                docker('run','-d','--name',name,'--cpus','2','--memory','1536m','-e','POSTGRES_PASSWORD='+password,'-e','POSTGRES_USER=clinic','-e','POSTGRES_DB=clinic_bench','-p','127.0.0.1::5432',IMAGE,*(pg_options() if label=='resource_light' else []))
+                docker('run','-d','--name',name,'--cpus','2','--memory','1536m','-e','POSTGRES_PASSWORD='+password,'-e','POSTGRES_USER=clinic','-e','POSTGRES_DB=clinic_bench','-p','127.0.0.1::5432',IMAGE,*pg_options(source))
                 port=int(json.loads(docker('inspect','--format','{{json .NetworkSettings.Ports}}',name))['5432/tcp'][0]['HostPort'])
                 url=f'postgresql://clinic:{password}@127.0.0.1:{port}/clinic_bench'
                 for _ in range(100):

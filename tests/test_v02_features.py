@@ -8,7 +8,7 @@ from docx import Document
 
 def test_local_health_and_logo():
     r=client.get('/api/health')
-    assert r.status_code==200 and r.json()['version']=='0.4.0'
+    assert r.status_code==200 and r.json()['version']=='0.5.0'
     logo=client.get('/assets/logo_minh_duc.png')
     assert logo.status_code==200 and logo.content.startswith(b'\x89PNG')
     ui=client.get('/assets/app.js')
@@ -66,9 +66,12 @@ def test_orders_result_requires_approved_state_for_pdf():
 def test_rx_is_only_draft_and_print_scoped():
     _,visit=prepare_visit('bs_noi')
     doctor=token('bs_noi')
-    p=client.post('/api/prescriptions',headers=doctor,json={
-        'visit_id':visit,'drug_lines':'Thuốc giả lập A | 5 viên | không sử dụng điều trị',
-        'instructions':'Nháp, chỉ thử nghiệm','follow_up':'2026-11-21'})
+    body={'visit_id':visit,'drug_lines':'Thuốc giả lập A | 5 viên | không sử dụng điều trị',
+        'instructions':'Nháp, chỉ thử nghiệm','follow_up':'2026-11-21'}
+    blocked=client.post('/api/prescriptions',headers=doctor,json=body)
+    assert blocked.status_code==409 and 'chẩn đoán' in blocked.json()['detail']
+    assert client.put(f'/api/visits/{visit}/clinical',headers=doctor,json={'version':0,'diagnosis':'Chẩn đoán giả lập'}).status_code==200
+    p=client.post('/api/prescriptions',headers=doctor,json=body)
     assert p.status_code==201
     pdf=client.get(f"/api/print/rx/{p.json()['id']}",headers=doctor)
     assert pdf.status_code==200

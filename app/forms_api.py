@@ -32,7 +32,7 @@ def mount_forms(app, db, principal, require, audit):
         visit={key:ctx.get(key) for key in ('chief_complaint','history','vitals','diagnosis','treatment','follow_up','created_at')}
         visit.update(id=ctx['visit_id'],doctor_id=ctx['doctor_id'],status=ctx['visit_status'])
         payload={'patient':patient,'visit':visit,'doctor_name':ctx['doctor_name'],
-                 'service_label':'Khám ngoại trú (mô phỏng)','orders':ctx.get('orders',[])}
+                 'service_label':'Khám ngoại trú (mô phỏng)','orders':ctx.get('orders',[]),'addenda':ctx.get('addenda',[])}
         if 'order_id' in ctx:
             payload['order']={'id':ctx['order_id'],'name':ctx['order_name'],'category':ctx['category'],
                               'status':ctx['order_status'],'result_text':ctx['result_text'],
@@ -65,6 +65,7 @@ def mount_forms(app, db, principal, require, audit):
                 ctx=ensure_assigned(u,c,visit_id)
             if kind=='followup' and not ctx.get('follow_up'):
                 raise HTTPException(409,'Chưa có ngày hẹn tái khám')
+            if kind=='clinical':ctx['addenda']=[dict(x) for x in c.execute("SELECT * FROM visit_addenda WHERE visit_id=? AND status='approved' ORDER BY id",(visit_id,))]
             result=response(kind,ctx,format)
             audit(c,u,'demo_form_exported','visit',visit_id,f'{kind}.{format}')
             return result

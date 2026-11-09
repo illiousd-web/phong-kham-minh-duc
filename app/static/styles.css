@@ -11,3 +11,10 @@
 .actual-logo{background:#fff;border:1px solid var(--line);width:54px;height:50px;overflow:hidden;padding:2px}.actual-logo img{max-width:100%;max-height:100%;object-fit:contain}.multi-actions{display:flex;gap:6px;flex-wrap:wrap}.approve-box{border-left:4px solid var(--primary);padding:9px;margin:8px 0;background:#f4faf9}.helper{background:#f6faf9;border-radius:9px;padding:12px;margin-top:12px}.role-tag{font-size:11px;border-radius:12px;padding:2px 8px;background:var(--primary-soft);color:var(--primary-dark)}
 
 .multi-actions{display:flex;gap:5px;flex-wrap:wrap}
+/* v0.4.1: thông tin người bệnh trên phiếu khám, sinh hiệu có cấu trúc */
+.patient-head{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;justify-content:space-between;background:var(--primary-soft);border-radius:10px;padding:11px 14px;margin:14px 0}
+.patient-head b{font-size:16px}
+.vitals{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px 12px}
+.vitals .field label{font-weight:600}
+.vitals-flags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;min-height:4px}
+.date-vn{font-variant-numeric:tabular-nums}
