@@ -100,7 +100,7 @@ def publish_alert(alert_file, warnings, now):
     text += ['', 'Việc cần làm: bấm đúp KIEM_TRA.bat trong thư mục C:\\MinhDuc\\deploy\\windows và gửi tệp kết quả cho người hỗ trợ.',
              'Tệp này tự biến mất khi sao lưu bình thường trở lại.']
     try:
-        alert_file.write_text('\r\n'.join(text) + '\r\n', encoding='utf-8-sig')
+        alert_file.write_text('\n'.join(text) + '\n', encoding='utf-8-sig', newline='\r\n')
     except OSError:
         pass
     if os.name == 'nt':

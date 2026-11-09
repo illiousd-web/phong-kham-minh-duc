@@ -159,7 +159,7 @@ def render(rows, facts, title='KẾT QUẢ KIỂM TRA SỨC KHỎE', now=None):
     if passed < len(rows):
         lines.append('Có mục KHÔNG ĐẠT: gửi tệp này cho người hỗ trợ. Không tắt tường lửa hay phần mềm diệt virus để thử.')
     lines.append('Báo cáo không chứa mật khẩu hay thông tin bệnh nhân.')
-    return '\r\n'.join(lines) + '\r\n'
+    return '\n'.join(lines) + '\n'
 
 
 def main(argv=None):
@@ -176,7 +176,7 @@ def main(argv=None):
     rows = evaluate(facts)
     text = render(rows, facts, args.title)
     if args.output:
-        Path(args.output).write_text(text, encoding='utf-8-sig')
+        Path(args.output).write_text(text, encoding='utf-8-sig', newline='\r\n')  # Notepad-friendly
     sys.stdout.buffer.write(text.encode('utf-8'))
     sys.stdout.flush()
     return 0 if all(r['dat'] for r in rows) else 1

@@ -445,16 +445,20 @@ function Get-WindowsFacts {
     $task = Get-ScheduledTask -TaskName $script:Names.BackupTask -ErrorAction SilentlyContinue
     if ($task) {
         $info = $task | Get-ScheduledTaskInfo
-        $facts['backup_task'] = [ordered]@{ exists = $true; enabled = ([string]$task.State -ne 'Disabled'); last_result = $info.LastTaskResult
+        $last = switch ([int64]$info.LastTaskResult) { 0 { 'thành công' } 267011 { 'chưa chạy lần nào' } 267009 { 'đang chạy' } default { 'lỗi mã ' + $info.LastTaskResult } }
+        $facts['backup_task'] = [ordered]@{ exists = $true; enabled = ([string]$task.State -ne 'Disabled'); last_result = $last
                                             next_run = $(if ($info.NextRunTime) { $info.NextRunTime.ToString('dd/MM/yyyy HH:mm') } else { '-' }) }
     } else { $facts['backup_task'] = [ordered]@{ exists = $false } }
     $os = Get-CimInstance Win32_OperatingSystem
     $facts['memory'] = [ordered]@{ total_mib = [int]($os.TotalVisibleMemorySize / 1024); available_mib = [int]($os.FreePhysicalMemory / 1024) }
     $cs = Get-CimInstance Win32_ComputerSystem
-    $max = 0
-    try { $max = [int](@(Get-CimInstance Win32_PageFileSetting | Measure-Object MaximumSize -Maximum)[0].Maximum) } catch { }
-    $facts['pagefile'] = [ordered]@{ auto = [bool]$cs.AutomaticManagedPagefile
-                                     detail = $(if ($cs.AutomaticManagedPagefile) { 'Windows tự quản lý' } else { 'Cố định, tối đa ' + $max + ' MB' }) }
+    $settings = @(Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue)
+    $fixed = @($settings | Where-Object { [int]$_.MaximumSize -gt 0 })
+    if ($cs.AutomaticManagedPagefile) { $pf = [ordered]@{ auto = $true; detail = 'Windows tự quản lý cho mọi ổ' } }
+    elseif ($settings.Count -gt 0 -and $fixed.Count -eq 0) { $pf = [ordered]@{ auto = $true; detail = 'Windows tự quản lý kích thước (System managed size)' } }
+    elseif ($settings.Count -eq 0) { $pf = [ordered]@{ auto = $false; detail = 'Không có tệp hoán đổi' } }
+    else { $pf = [ordered]@{ auto = $false; detail = ('Cố định, tối đa ' + (($fixed | Measure-Object MaximumSize -Sum).Sum) + ' MB') } }
+    $facts['pagefile'] = $pf
     $aclOk = $true; $details = @()
     foreach ($p in @($Paths.ClinicEnv, $Paths.Admin, (Join-Path $Paths.Tls 'server.key'))) {
         $t = Test-SecureAcl -Path $p

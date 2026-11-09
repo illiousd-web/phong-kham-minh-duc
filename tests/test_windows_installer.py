@@ -324,3 +324,13 @@ def test_runtime_text_io_declares_utf8():
             continue  # Linux-only developer harness
         for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
             assert not pattern.search(line), f'{path.name}:{number} thiếu encoding="utf-8"'
+
+
+def test_report_file_has_single_crlf_line_endings(tmp_path, monkeypatch):
+    facts_file = tmp_path / 'facts.json'
+    facts_file.write_text(json.dumps(_good_facts()), encoding='utf-8')
+    monkeypatch.setattr(install_health, 'collect', lambda env, state=None: {})
+    out = tmp_path / 'bao-cao.txt'
+    install_health.main(['--windows-facts', str(facts_file), '--output', str(out)])
+    data = out.read_bytes()
+    assert data.startswith(b'\xef\xbb\xbf') and b'\r\n' in data and b'\r\r\n' not in data
