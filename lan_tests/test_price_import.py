@@ -134,6 +134,29 @@ def test_price_import_browser(https_server, clients, width, role):
         expect(page.locator('#workspace')).to_contain_text('LỖI')
         assert page.get_by_role('button', name='Xác nhận nhập bảng giá', exact=True).count() == 0
         no_horizontal_scroll(page)
+        # An empty fixed-price field must never silently become a free service.
+        if role == 'admin':
+            page.locator('#navigation [data-page="admin"]').click(); settle(page)
+        page.get_by_role('tab', name='Danh mục', exact=True).click(); settle(page)
+        catalogue_form = page.locator('[data-form="service"]')
+        catalogue_name = 'Giá nhập tay danh mục ' + secrets.token_hex(5)
+        catalogue_form.locator('[name="name"]').fill(catalogue_name)
+        catalogue_form.locator('button').click()
+        expect(page.locator('#toast')).to_contain_text('Giá cố định không được để trống')
+        assert not any(s['name'] == catalogue_name for s in clients['manager'].get('/api/catalog').json()['services'])
+        catalogue_form.locator('[name="price_at_collection"]').select_option('1')
+        with page.expect_response(lambda r: r.url.endswith('/api/catalog/services') and r.request.method == 'POST') as saved:
+            catalogue_form.locator('button').click()
+        assert saved.value.status == 201; settle(page)
+        assert next(s for s in clients['manager'].get('/api/catalog').json()['services'] if s['name'] == catalogue_name)['price_at_collection'] == 1
+        catalogue_form = page.locator('[data-form="service"]')
+        catalogue_form.locator('[name="name"]').fill(catalogue_name + ' giá 0')
+        catalogue_form.locator('[name="price"]').fill('0')
+        with page.expect_response(lambda r: r.url.endswith('/api/catalog/services') and r.request.method == 'POST') as saved:
+            catalogue_form.locator('button').click()
+        assert saved.value.status == 201; settle(page)
+        fixed = next(s for s in clients['manager'].get('/api/catalog').json()['services'] if s['name'] == catalogue_name + ' giá 0')
+        assert fixed['price'] == 0 and fixed['price_at_collection'] == 0
         (evidence / f'browser-{role}-{width}.json').write_text(json.dumps({'version': browser.version, 'width': width, 'errors': errors}))
         assert not errors
         context.close(); browser.close()

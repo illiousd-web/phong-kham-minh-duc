@@ -405,6 +405,7 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
   pricePreview=preview;await render();notify('Đã kiểm tra tệp; hãy xem từng dòng');return;
  }
  if(kind==='manual-price'||kind==='manual-price-change'){await keyed(kind,'/charges/'+num('charge_id')+(kind==='manual-price'?'/manual-price':'/manual-price-requests'),{amount:num('amount'),description:value('description'),...(kind==='manual-price-change'?{reason:value('reason')}:{})});await render();notify(kind==='manual-price'?'Đã nhập giá khoản phải thu':'Đã gửi đề nghị sửa giá, chờ quản lý duyệt');return;}
+ if((kind==='service'||kind==='service-update')&&value('price_at_collection')!=='1'&&!value('price'))throw new Error('Giá cố định không được để trống; nhập 0 nếu giá bằng 0 hoặc chọn Giá nhập khi thu');
  if(kind==='service'){await api('/catalog/services',{method:'POST',body:{name:value('name'),price:value('price_at_collection')==='1'?null:num('price'),price_at_collection:value('price_at_collection')==='1',category:value('category')}});msg='Đã thêm dịch vụ';}
  else if(kind==='medicine-price'){await api('/medicines/'+num('medicine_id')+'/price',{method:'PUT',body:{unit_price:num('unit_price')}});msg='Đã đặt giá thuốc';}
  else if(kind==='medicine'){await api('/catalog/medicines',{method:'POST',body:{name:value('name'),base_unit:value('base_unit')}});msg='Đã thêm thuốc/vật tư';}
