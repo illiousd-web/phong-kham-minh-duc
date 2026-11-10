@@ -380,6 +380,24 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
         since=datetime.now(timezone(timedelta(hours=7))).replace(hour=0,minute=0,second=0,microsecond=0).astimezone(timezone.utc).isoformat(timespec='seconds')
         report['query_probes']=query_probes(url,since,args.output.parent/'query-probes.json')
         for label,source in [('before',baseline),('after',ROOT)]:
+            if label == 'after':
+                # M0 migration is deliberately applied only AFTER the old-code profile.
+                # Same populated C5 database, no regenerated or reduced dataset.
+                from app.m0_migration import migrate_m0
+                from app.database import PGConnection, record_factory
+                old_state = database_state(url)
+                with psycopg.connect(url, row_factory=record_factory) as con:
+                    started = time.perf_counter()
+                    migrate_m0(PGConnection(con))
+                    migrate_m0(PGConnection(con))
+                    migration_seconds = time.perf_counter() - started
+                    assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
+                new_state = database_state(url)
+                expected_state = {**old_state, 'tables': dict(old_state['tables'])}
+                expected_state['tables']['schema_migrations'] += 1
+                assert new_state == expected_state, 'Migration M0 làm đổi dữ liệu C5'
+                report['m0_migration'] = {'seconds': migration_seconds, 'preserved': True,
+                    'visits': new_state['tables']['visits'], 'patients': new_state['tables']['patients']}
             print('C5 profile: '+label,flush=True)
             report['profiles'][label]=run_profile(source,label,env,data,manifest,pg_pid,args.output.parent/(label+'.json'))
             value=report['profiles'][label]
