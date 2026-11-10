@@ -9,6 +9,7 @@ import uuid
 import json
 from .domain import authorize_order, revision, status_refresh, invoice
 from .charge_queries import DUES_SQL,orders_sql
+from .work_queues import visit_predicate, ACTIVE_ORDERS, approval_predicate, history_limit
 from contextlib import asynccontextmanager
 from starlette.concurrency import run_in_threadpool
 from .resources import LIMITS, export_slot
@@ -342,29 +343,18 @@ def services(u=Depends(principal)):
     with db() as c:return [dict(x) for x in c.execute('SELECT * FROM service_catalog WHERE active=1')]
 
 @app.get('/api/visits')
-def list_visits(u=Depends(principal)):
+def list_visits(u=Depends(principal),history:bool=False):
     require(u,'reception','doctor','nurse','technician','cashier','pharmacy','manager','admin')
+    predicate,args=visit_predicate(u,history)
+    roles=set(u['roles'])
+    if roles & {'manager','admin'}:
+        fields='v.id,v.status,v.created_at'
+    elif 'doctor' in roles or ('reception' in roles and 'technician' not in roles):
+        fields='v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name'
+    else:
+        fields='v.id,v.status,p.code AS patient_code,p.full_name AS patient_name'
     with db() as c:
-        if 'manager' in u['roles'] or 'admin' in u['roles']:
-            return [{'id':x['id'],'status':x['status'],'created_at':x['created_at']} for x in c.execute('SELECT id,status,created_at FROM visits ORDER BY id DESC LIMIT 100')]
-        if 'doctor' in u['roles']:
-            sql='SELECT v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id WHERE v.doctor_id=? ORDER BY v.id DESC LIMIT 100'
-            return [dict(x) for x in c.execute(sql,(u['id'],))]
-        if 'technician' in u['roles']:
-            sql='SELECT DISTINCT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN orders o ON o.visit_id=v.id JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
-            return [dict(x) for x in c.execute(sql)]
-        if 'reception' in u['roles']:
-            sql='SELECT v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
-            return [dict(x) for x in c.execute(sql)]
-        if 'cashier' in u['roles'] or 'pharmacy' in u['roles']:
-            sql='SELECT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
-            return [dict(x) for x in c.execute(sql)]
-        if 'nurse' in u['roles']:
-            sql='''SELECT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name
-            FROM visits v JOIN patients p ON p.id=v.patient_id
-            JOIN visit_nurses n ON n.visit_id=v.id WHERE n.nurse_id=? AND n.active=1 ORDER BY v.id DESC LIMIT 100'''
-            return [dict(x) for x in c.execute(sql,(u['id'],))]
-        return []
+        return [dict(x) for x in c.execute('SELECT '+fields+' FROM visits v JOIN patients p ON p.id=v.patient_id WHERE '+predicate+' ORDER BY v.id DESC'+history_limit(history),args)]
 
 @app.get('/api/visits/{visit_id}')
 def visit_detail(visit_id:int,u=Depends(principal)):
@@ -462,7 +452,7 @@ def add_order(data:OrderInput,u=Depends(principal)):
         return {'id':oid,'charge_amount':0,'status':'requested' if service else 'ordered'}
 
 @app.get('/api/orders')
-def list_orders(u=Depends(principal),visit_id:int|None=None):
+def list_orders(u=Depends(principal),visit_id:int|None=None,history:bool=False):
     require(u,'doctor','nurse','technician')
     with db() as c:
         args=[];where=[];hide_results=False
@@ -472,7 +462,8 @@ def list_orders(u=Depends(principal),visit_id:int|None=None):
         elif 'doctor' in u['roles'] and 'technician' not in u['roles']:
             where.append('v.doctor_id=?');args=[u['id']]
         if visit_id is not None:where.append('o.visit_id=?');args.append(visit_id)
-        return [dict(x) for x in c.execute(orders_sql(' AND '.join(where),hide_results),args)]
+        if visit_id is None:where.append('NOT ('+ACTIVE_ORDERS+')' if history else ACTIVE_ORDERS)
+        return [dict(x) for x in c.execute(orders_sql(' AND '.join(where),hide_results,limit=100 if history else None),args)]
 
 class ResultInput(BaseModel):
     result_text:str=Field(min_length=1,max_length=10000)
@@ -841,7 +832,7 @@ def propose_adjustment(data:AdjustmentInput,u=Depends(principal)):
         return {'id':id,'status':'pending'}
 
 @app.get('/api/adjustments')
-def adjustments_list(u=Depends(principal)):
+def adjustments_list(u=Depends(principal),history:bool=False):
     require(u,'cashier','manager')
     with db() as c:
         sql='''SELECT a.id,a.visit_id,a.payment_id,a.kind,a.amount,a.reason,a.status,a.proposed_at,a.reviewed_at,
@@ -849,8 +840,10 @@ def adjustments_list(u=Depends(principal)):
           JOIN visits v ON v.id=a.visit_id JOIN patients p ON p.id=v.patient_id JOIN users ON users.id=a.proposed_by'''
         args=()
         if 'manager' not in u['roles']:
-            sql+=' WHERE a.proposed_by=?';args=(u['id'],)
-        return [dict(x) for x in c.execute(sql+' ORDER BY a.id DESC LIMIT 100',args)]
+            sql+=' WHERE a.proposed_by=? AND ';args=(u['id'],)
+        else:sql+=' WHERE '
+        sql+=approval_predicate('a',history)
+        return [dict(x) for x in c.execute(sql+' ORDER BY a.id DESC'+history_limit(history),args)]
 
 class AdjustmentReview(BaseModel):
     approve:bool

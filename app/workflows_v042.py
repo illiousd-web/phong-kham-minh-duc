@@ -4,6 +4,7 @@ Các thao tác thay đổi số dư/tồn kho dùng chung db(True) advisory lock
 v0.5 gọi quy trình thuốc kiểm soát riêng với phân quyền và phê duyệt độc lập.
 """
 from datetime import date
+from .work_queues import approval_predicate,history_limit
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Literal
@@ -89,15 +90,17 @@ def install_workflows(app, db, principal, require, audit, visit_access, now):
             return {'id':rid,'status':'pending'}
 
     @app.get('/api/orders/cancellation-requests')
-    def cancellation_requests(u=Depends(principal)):
+    def cancellation_requests(u=Depends(principal),history:bool=False):
         require(u,'manager','admin','doctor')
         with db() as c:
             sql='''SELECT r.*,o.visit_id,o.name AS order_name FROM order_cancel_requests r
                 JOIN orders o ON o.id=r.order_id'''
             args=[]
             if 'manager' not in u['roles'] and 'admin' not in u['roles']:
-                sql+=' JOIN visits v ON v.id=o.visit_id WHERE v.doctor_id=?';args=[u['id']]
-            return [dict(x) for x in c.execute(sql+' ORDER BY r.id DESC LIMIT 100',args)]
+                sql+=' JOIN visits v ON v.id=o.visit_id WHERE v.doctor_id=? AND ';args=[u['id']]
+            else:sql+=' WHERE '
+            sql+=approval_predicate('r',history)
+            return [dict(x) for x in c.execute(sql+' ORDER BY r.id DESC'+history_limit(history),args)]
 
     @app.post('/api/orders/cancellation-requests/{request_id}/review')
     def review_order_cancel(request_id: int, data: Review, u=Depends(principal)):
@@ -266,7 +269,7 @@ def install_workflows(app, db, principal, require, audit, visit_access, now):
             return [dict(x) for x in c.execute('''SELECT a.*,p.code AS patient_code
                 FROM visit_addenda a JOIN visits v ON v.id=a.visit_id
                 JOIN patients p ON p.id=v.patient_id
-                WHERE a.status='pending' ORDER BY a.id DESC LIMIT 100''')]
+                WHERE a.status='pending' ORDER BY a.id DESC''')]
 
     @app.post('/api/visits/addenda/{addendum_id}/review')
     def review_addendum(addendum_id:int,data:Review,u=Depends(principal)):

@@ -32,7 +32,7 @@ Chạy toàn bộ phép đo:
 
 ```powershell
 python -m scripts.do_hieu_nang --pg-bin "C:\Program Files\PostgreSQL\17\bin" `
-  --baseline-ref 76f5628 --output test_evidence/c5/windows.json
+  --baseline-ref 2fd1e9c9f811cd0d62f689ef7b18355c3f738113 --output test_evidence/c5/windows.json
 ```
 
 Trình đo tạo cụm PostgreSQL riêng có SCRAM, chỉ nghe loopback. CSDL khôi phục
@@ -224,3 +224,60 @@ Các bài bảo vệ: `test_tu_choi_ten_csdl_khong_phai_dich_c5`,
 `test_price_query_covers_every_input_of_effective_view`,
 `test_price_query_matches_view_and_expected_amounts_sqlite`,
 `test_price_query_matches_view_and_expected_amounts_postgresql`, cùng toàn bộ C4 và phân quyền.
+
+
+## Sửa tiếp PR #14: không cắt mất việc đang chờ
+
+Nguyên nhân: lấy 100 dòng mới nhất rồi JavaScript mới bỏ việc đã xong.
+Vì vậy tốc độ đo cũ của kỹ thuật viên chỉ gồm 100/120 chỉ định còn chờ.
+Không dùng số đo đó để kết luận hàng chờ đầy đủ.
+
+Hàng chờ mới lọc trạng thái trong SQL, trả đủ việc còn chờ, không có LIMIT.
+Giao diện không cần chuyển trang ở các hàng chờ này. COUNT(*) dùng cùng
+phạm vi bác sĩ phụ trách/điều dưỡng đang được phân công và điều kiện trạng thái.
+Giữ thứ tự ưu tiên vai trò hiện có của tài khoản kiêm nhiệm. Không đổi quyền,
+không đổi schema, không thêm chỉ mục. Không đổi tính tiền hoặc trừ kho.
+
+| Danh sách đã rà | Xử lý và lý do |
+| --- | --- |
+| `/api/orders`, kỹ thuật viên | SQL lấy đủ requested/ordered/pending_review; bảng chờ làm dùng ordered, mục đã gửi dùng pending_review. COUNT lab đếm ordered, không đếm danh sách đã cắt. Khi mở đúng lượt, đọc đủ chỉ định trong phạm vi quyền. Lịch sử tách bằng `history=true`, tối đa 100 việc đã kết thúc. |
+| `/api/visits`, lễ tân/bác sĩ/điều dưỡng và các vai trò được phép đọc trước đây | SQL loại completed/cancelled trước khi trả danh sách. Bác sĩ vẫn chỉ lượt phụ trách, điều dưỡng vẫn chỉ phân công active. COUNT dùng chung `visit_predicate`. Lịch sử `history=true` chỉ completed/cancelled, giới hạn 100; bác sĩ có ô mở lịch sử riêng. |
+| Điều chỉnh, hủy chỉ định, trả thuốc | Mặc định chỉ pending, không cắt; `history=true` chỉ việc đã xử lý, 100 dòng. Giữ phạm vi người đề nghị/bác sĩ như trước. COUNT manager trực tiếp trong SQL. |
+| Phụ lục chờ duyệt | Đã lọc pending trong SQL nhưng còn cắt 100; bỏ giới hạn, COUNT cùng pending và các JOIN. |
+| Phiếu nhập thuốc kiểm soát | Tách pending đầy đủ khỏi lịch sử 100, giữ các vai trò controlled_pharmacy/controlled_reviewer; manager chỉ cộng khi có controlled_reviewer và giao diện bật chức năng. |
+| Đơn thuốc kiểm soát chờ bác sĩ thứ hai | Đã lọc SQL đúng nhưng cắt 100 việc thực sự còn chờ; bỏ giới hạn. Giữ cả hai quyền doctor + controlled_reviewer. |
+| Sửa giá nhập tay | Giữ lọc trạng thái SQL và COUNT có cùng scope; sửa giao diện để tải đủ tất cả các trang 200 dòng theo tổng số. Thu ngân cũng xem đủ đề nghị pending của mình, lịch sử tách riêng. |
+| Nhà thuốc — đơn draft | Giữ lọc SQL trước LIMIT, COUNT draft trực tiếp; đủ Trang trước/Trang sau 100 dòng, tổng số trên menu. Không có mẫu cắt trước rồi lọc. |
+| Thu ngân — công nợ | Giữ đầy đủ nợ/chưa có giá và phân trang giao diện có tổng số; đổi số menu sang COUNT trực tiếp trên cùng phép tính SQL. Phiếu thu chỉ là lịch sử 100 dòng. |
+| Quản lý — tra cứu lượt khám, nhật ký | Giữ phân trang SQL có tổng số của tra cứu; nhật ký là lịch sử limit/offset, không phải việc chờ. |
+| Cấp thuốc, sổ thuốc kiểm soát | Giữ lịch sử 100/200; không được dùng làm hàng chờ duyệt hoặc cấp thuốc. |
+| Bệnh nhân, lịch hẹn, danh mục | Giữ tìm kiếm/danh sách gần nhất 100 của bệnh nhân/lịch hẹn; giao diện không lọc các dòng này thành hàng chờ trạng thái. Danh mục đang hoạt động không bị cắt. |
+| In phiếu, migration, truy vấn một bản ghi | Giữ giới hạn phục vụ in/đọc lô/một kết quả; không dùng để xây hàng chờ hoặc badge. |
+
+Kiểm thử mới dùng cùng dữ liệu trên SQLite và PostgreSQL: 120 ordered xen kẽ
+việc đã duyệt rồi thêm 150 việc đã duyệt mới hơn; một lượt chờ trước 150 lượt
+completed, đều phân công cùng bác sĩ/điều dưỡng; mỗi loại trong bốn loại duyệt
+có một pending trước 150 approved. Đối chiếu cả ID, không trùng, COUNT, lịch sử
+và các phản hồi 401/403/phạm vi bác sĩ khác. Sau đó đổi cả 151 yêu cầu mỗi loại
+thành pending để chứng minh chính hàng chờ duyệt cũng không còn trần 100.
+Chromium 109/390px mở đủ năm màn hình và chọn được chỉ định cũ.
+
+Tên kiểm thử: `test_pending_queues_sqlite_keep_old_work_counts_and_permissions`,
+`test_pending_queues_postgresql_keep_old_work_counts_and_permissions`,
+`test_pending_queues_chromium109_show_all_old_work`;
+`test_known_render_count_skips_only_duplicate_query_and_poll_remains_complete`
+kiểm COUNT SQL và việc bỏ phép đếm trùng, không gọi danh sách cắt ngắn.
+
+Đo lại Windows dùng baseline trước sửa `2fd1e9c` và mã sửa trên cùng VM,
+1 lần làm nóng + 20 mẫu, giữ nguyên ngưỡng trung vị/P95. Trình đo đối chiếu
+thêm đủ 120 chỉ định và 30 lượt cho lễ tân/bác sĩ/điều dưỡng, không trùng;
+thiếu việc thì bản sau không đạt dù nhanh. Kết quả lần đo sửa tiếp sẽ ghi
+ở đây sau khi job Windows hoàn tất; số ở bảng run 60 phía trên là lịch sử C5.
+
+## Hoãn
+
+- Ô chọn thu ngân tìm phía máy chủ.
+- Bỏ quét tên khi từ khóa là mã hoặc số điện thoại.
+
+Hai việc này chưa thực hiện trong lần sửa hàng chờ, không dùng để giải thích
+hoặc thay thế kết quả đo lại.

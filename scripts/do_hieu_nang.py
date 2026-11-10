@@ -252,6 +252,17 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
                     page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for()
                     where={'technician':'lab'}.get(role,role)
                     result['screens']['hang_cho_'+role]=measure('Hàng chờ '+role,lambda page=page,where=where:go(page,where))
+                # Ngoài khoảng đo: chứng minh tốc độ không đến từ việc cắt mất hàng chờ.
+                result['queue_coverage']={}
+                for role in ('technician','reception','doctor','nurse'):
+                    path='/orders' if role=='technician' else '/visits'
+                    rows=pages[role].evaluate("async path=>await api(path)",path)
+                    status='ordered' if role=='technician' else None
+                    ids=[row['id'] for row in rows if row['status']==status or (status is None and row['status'] not in ('completed','cancelled'))]
+                    expected=manifest['active_visits']*(4 if role=='technician' else 1)
+                    result['queue_coverage'][role]={'actual':len(ids),'expected':expected,'unique':len(set(ids))==len(ids)}
+                    if label=='after' and (len(ids)!=expected or len(set(ids))!=len(ids)):
+                        result['errors'].append('Hàng chờ '+role+' thiếu hoặc trùng việc')
                 doctor=pages['doctor'];visit=manifest['doctor_visit']
                 def clinical():
                     doctor.locator(f'[data-action="pick"][data-kind="visit"][data-id="{visit}"]').click();settled(doctor)
@@ -371,7 +382,7 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
             report['profiles'][label]=run_profile(source,label,env,data,manifest,pg_pid,args.output.parent/(label+'.json'))
             value=report['profiles'][label]
             print('C5 '+label+' tổng kết: '+json.dumps({k:value[k] for k in
-                  ('backup_seconds','verify_seconds','backup_verify_seconds','restore_seconds','service_peak_mb','postgres_peak_mb','backup_verified','restored_exact','passed')
+                  ('backup_seconds','verify_seconds','backup_verify_seconds','restore_seconds','service_peak_mb','postgres_peak_mb','backup_verified','restored_exact','queue_coverage','passed')
                   if k in value},ensure_ascii=False),flush=True)
             args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
         return 0 if report['profiles']['after']['passed'] else 1
@@ -383,7 +394,7 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
 def main():
     parser=argparse.ArgumentParser(description='Đo C5 trên PostgreSQL giả lập mới, HTTPS và Chromium')
     parser.add_argument('--output',type=Path,required=True)
-    parser.add_argument('--baseline-ref',default='76f5628')
+    parser.add_argument('--baseline-ref',default='2fd1e9c9f811cd0d62f689ef7b18355c3f738113')
     parser.add_argument('--pg-bin',type=Path)
     parser.add_argument('--pg-pid',type=int)
     parser.add_argument('--worker',choices=['backup','restore'])

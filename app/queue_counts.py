@@ -1,63 +1,39 @@
-"""Số việc đang chờ của từng màn hình, để hiện trên menu và tự cập nhật.
+"""COUNT trực tiếp bằng điều kiện hàng chờ; peek không gia hạn phiên.
 
-- Chỉ trả về con số, không trả tên hay mã người bệnh.
-- Chỉ trả số của các màn hình ứng với vai trò của người gọi.
-- Đếm bằng chính các API danh sách mà màn hình đó dùng (cùng phạm vi phân quyền,
-  cùng điều kiện lọc), nên số trên menu khớp với hàng chờ hiển thị.
-  Công nợ: mọi lượt còn nợ hoặc còn khoản chưa có giá, không giới hạn số lượt.
-  Đề nghị sửa giá: COUNT trực tiếp, không tải danh sách.
-- Xác thực bằng principal.peek: KHÔNG gia hạn phiên. Hỏi định kỳ mỗi 60 giây
-  không làm mất tự đăng xuất sau 20 phút không thao tác.
-- known chỉ bỏ tính lại số của danh sách màn hình vừa tải; không nhận số đếm
-  từ client. Không truyền known (định kỳ/quay lại tab) vẫn đếm đủ mọi vai trò.
+known bỏ phép đếm của danh sách đầy đủ vừa tải, không nhận số từ client.
+Lần hỏi định kỳ/quay lại tab không có known vẫn đếm tất cả.
 """
 from fastapi import Depends
 from typing import Literal
-
-OPEN = lambda v: v['status'] not in ('completed', 'cancelled')
+from .work_queues import visit_predicate,approval_predicate
+from .charge_queries import DUES_COUNT_SQL
 
 
 def install_queue_counts(app, peek, load_ui, db):
-    cache = {}
-
-    def get(path, u, **kw):
-        if path not in cache:
-            cache[path] = next(r.endpoint for r in app.routes
-                               if getattr(r, 'path', None) == path and 'GET' in getattr(r, 'methods', ()))
-        return cache[path](u=u, **kw)
-
     @app.get('/api/queue-counts')
     def queue_counts(u=Depends(peek),known:Literal['lab','cashier']|None=None):
-        roles = set(u['roles'])
-        ui = load_ui()
-        out = {}
-        if roles & {'reception', 'doctor', 'nurse'}:
-            visits = get('/api/visits', u)
-            if 'reception' in roles:
-                # Cùng điều kiện với hàng chờ màn hình Tiếp đón: mọi lượt chưa hoàn tất/chưa hủy.
-                out['reception'] = sum(map(OPEN, visits))
-            if 'doctor' in roles:
-                out['doctor'] = sum(map(OPEN, visits))
-            if 'nurse' in roles:
-                out['nurse'] = sum(map(OPEN, visits))
-        if 'technician' in roles and known!='lab':
-            out['lab'] = sum(o['status'] == 'ordered' for o in get('/api/orders', u))
-        if 'pharmacy' in roles:
-            # Cùng tập đơn nháp của API/giao diện, không tải mọi đơn và dòng
-            # thuốc trong hai năm chỉ để đếm một số. Bao gồm đủ các trang.
-            with db() as c:
-                out['pharmacy'] = c.execute("SELECT COUNT(*) FROM prescriptions WHERE status='draft'").fetchone()[0]
-        if 'cashier' in roles and known!='cashier':
-            out['cashier'] = sum(d['charged'] - d['paid'] > 0 or d['unpriced_count'] > 0 for d in get('/api/dues', u))
-        if 'manager' in roles:
-            total = sum(x['status'] == 'pending' for x in get('/api/adjustments', u))
-            total += sum(x['status'] == 'pending' for x in get('/api/orders/cancellation-requests', u))
-            total += sum(x['status'] == 'pending' for x in get('/api/medication-returns', u))
-            # Đề nghị sửa giá: COUNT trực tiếp, không tải danh sách.
-            total += get('/api/manual-price-requests/count', u, status='pending')['count']
-            if ui['addendum']:
-                total += len(get('/api/visits/addenda/pending', u))
-            if ui['controlled_drugs'] and 'controlled_reviewer' in roles:
-                total += sum(x['status'] == 'pending' for x in get('/api/controlled-receipts', u))
-            out['manager'] = total
+        roles=set(u['roles']);ui=load_ui();out={}
+        with db() as c:
+            def count(sql,args=()):
+                return c.execute('SELECT COUNT(*) FROM '+sql,args).fetchone()[0]
+            if roles & {'reception','doctor','nurse'}:
+                predicate,args=visit_predicate(u)
+                total=count('visits v JOIN patients p ON p.id=v.patient_id WHERE '+predicate,args)
+                for role in roles & {'reception','doctor','nurse'}:out[role]=total
+            if 'technician' in roles and known!='lab':
+                out['lab']=count("orders o JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id WHERE o.status='ordered'")
+            if 'pharmacy' in roles:
+                out['pharmacy']=count("prescriptions WHERE status='draft'")
+            if 'cashier' in roles and known!='cashier':
+                out['cashier']=c.execute(DUES_COUNT_SQL).fetchone()[0]
+            if 'manager' in roles:
+                total=count('adjustments a JOIN visits v ON v.id=a.visit_id JOIN patients p ON p.id=v.patient_id JOIN users u ON u.id=a.proposed_by WHERE '+approval_predicate('a'))
+                total+=count('order_cancel_requests r JOIN orders o ON o.id=r.order_id WHERE '+approval_predicate('r'))
+                total+=count('medication_returns r JOIN dispensations d ON d.id=r.dispensation_id WHERE '+approval_predicate('r'))
+                total+=count("manual_price_requests r WHERE "+approval_predicate('r'))
+                if ui['addendum']:
+                    total+=count('visit_addenda a JOIN visits v ON v.id=a.visit_id JOIN patients p ON p.id=v.patient_id WHERE '+approval_predicate('a'))
+                if ui['controlled_drugs'] and 'controlled_reviewer' in roles:
+                    total+=count('controlled_receipts r WHERE '+approval_predicate('r'))
+                out['manager']=total
         return out

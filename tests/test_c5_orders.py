@@ -34,5 +34,5 @@ def test_orders_visit_filter_keeps_doctor_scope_and_old_visit_results():
     assert [x['id'] for x in care]==list(reversed(orders[0]))
     assert all(x['result_text'] is None and x['file_name'] is None for x in care)
     assert client.get(f'/api/orders?visit_id={visits[1]}',headers=nurse).json()==[]
-    # Không truyền bộ lọc: hợp đồng 100 chỉ định gần nhất giữ nguyên.
-    assert [x['id'] for x in client.get('/api/orders',headers=doctor).json()]==list(reversed(orders[1]))[:100]
+    # Lịch sử đọc riêng, vẫn giới hạn 100; không trộn vào hàng chờ.
+    assert [x['id'] for x in client.get('/api/orders?history=true',headers=doctor).json()]==list(reversed(orders[1]))[:100]

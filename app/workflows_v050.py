@@ -1,5 +1,6 @@
 """v0.5 routes for billing, returns, controlled custody, care and immutable history."""
 from datetime import date
+from .work_queues import approval_predicate,history_limit
 import json
 from typing import Literal
 from fastapi import Depends,HTTPException
@@ -154,9 +155,9 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
             return {'id':rid,'status':'pending'}
 
     @app.get('/api/medication-returns')
-    def returns(u=Depends(principal)):
+    def returns(u=Depends(principal),history:bool=False):
         require(u,'pharmacy','manager','cashier')
-        with db() as c:return [dict(x) for x in c.execute('SELECT r.*,d.visit_id FROM medication_returns r JOIN dispensations d ON d.id=r.dispensation_id ORDER BY r.id DESC LIMIT 100')]
+        with db() as c:return [dict(x) for x in c.execute('SELECT r.*,d.visit_id FROM medication_returns r JOIN dispensations d ON d.id=r.dispensation_id WHERE '+approval_predicate('r',history)+' ORDER BY r.id DESC'+history_limit(history))]
 
     @app.post('/api/medication-returns/{rid}/review')
     def review_return(rid:int,data:Review,u=Depends(principal)):
@@ -220,9 +221,9 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
             audit(c,u,'controlled_receipt_requested','medicine',data.medicine_id,data.reason);return {'id':rid,'status':'pending'}
 
     @app.get('/api/controlled-receipts')
-    def controlled_receipts(u=Depends(principal)):
+    def controlled_receipts(u=Depends(principal),history:bool=False):
         require(u,'controlled_pharmacy','controlled_reviewer')
-        with db() as c:return [dict(x) for x in c.execute('SELECT * FROM controlled_receipts ORDER BY id DESC LIMIT 100')]
+        with db() as c:return [dict(x) for x in c.execute('SELECT r.* FROM controlled_receipts r WHERE '+approval_predicate('r',history)+' ORDER BY id DESC'+history_limit(history))]
 
     @app.post('/api/controlled-receipts/{rid}/review')
     def review_controlled_receipt(rid:int,data:Review,u=Depends(principal)):
@@ -346,6 +347,6 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
     def controlled_queue(u=Depends(principal)):
         require(u,'doctor');require(u,'controlled_reviewer')
         with db(True) as c:
-            rows=[dict(x) for x in c.execute("SELECT rx.id,rx.visit_id,rx.doctor_id,rx.drug_lines,rx.instructions,v.diagnosis,p.code AS patient_code FROM prescriptions rx JOIN visits v ON v.id=rx.visit_id JOIN patients p ON p.id=v.patient_id WHERE rx.status='draft' AND v.status NOT IN ('completed','cancelled') AND EXISTS(SELECT 1 FROM prescription_items i JOIN medicines m ON m.id=i.medicine_id WHERE i.prescription_id=rx.id AND m.controlled=1) AND NOT EXISTS(SELECT 1 FROM controlled_approvals a WHERE a.prescription_id=rx.id) ORDER BY rx.id DESC LIMIT 100")]
+            rows=[dict(x) for x in c.execute("SELECT rx.id,rx.visit_id,rx.doctor_id,rx.drug_lines,rx.instructions,v.diagnosis,p.code AS patient_code FROM prescriptions rx JOIN visits v ON v.id=rx.visit_id JOIN patients p ON p.id=v.patient_id WHERE rx.status='draft' AND v.status NOT IN ('completed','cancelled') AND EXISTS(SELECT 1 FROM prescription_items i JOIN medicines m ON m.id=i.medicine_id WHERE i.prescription_id=rx.id AND m.controlled=1) AND NOT EXISTS(SELECT 1 FROM controlled_approvals a WHERE a.prescription_id=rx.id) ORDER BY rx.id DESC")]
             audit(c,u,'controlled_queue_viewed','prescription',None)
             return rows

@@ -46,19 +46,23 @@ def test_known_render_count_skips_only_duplicate_query_and_poll_remains_complete
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.queue_counts import install_queue_counts
+    from contextlib import contextmanager
     app=FastAPI();calls=[]
-    @app.get('/api/visits')
-    def visits(u=None):calls.append('visits');return []
-    @app.get('/api/orders')
-    def orders(u=None):calls.append('orders');return [{'status':'ordered'}]
-    @app.get('/api/dues')
-    def dues(u=None):calls.append('dues');return [{'charged':1000,'paid':0,'unpriced_count':0}]
-    install_queue_counts(app,lambda:{'roles':['reception','technician','cashier']},lambda:{},None)
+    class Connection:
+        def execute(self,sql,args=()):
+            assert 'COUNT(*)' in sql
+            kind='cashier' if 'WITH charge_changes' in sql else 'lab' if "o.status='ordered'" in sql else 'visits'
+            calls.append(kind)
+            return self
+        def fetchone(self):return (1,)
+    @contextmanager
+    def database():yield Connection()
+    install_queue_counts(app,lambda:{'id':1,'roles':['reception','technician','cashier']},lambda:{},database)
     c=TestClient(app)
-    assert c.get('/api/queue-counts?known=lab').json()=={'reception':0,'cashier':1}
-    assert calls==['visits','dues'];calls.clear()
-    assert c.get('/api/queue-counts?known=cashier').json()=={'reception':0,'lab':1}
-    assert calls==['visits','orders'];calls.clear()
-    assert c.get('/api/queue-counts').json()=={'reception':0,'lab':1,'cashier':1}
-    assert calls==['visits','orders','dues']
+    assert c.get('/api/queue-counts?known=lab').json()=={'reception':1,'cashier':1}
+    assert calls==['visits','cashier'];calls.clear()
+    assert c.get('/api/queue-counts?known=cashier').json()=={'reception':1,'lab':1}
+    assert calls==['visits','lab'];calls.clear()
+    assert c.get('/api/queue-counts').json()=={'reception':1,'lab':1,'cashier':1}
+    assert calls==['visits','lab','cashier']
     assert c.get('/api/queue-counts?known=doctor').status_code==422
