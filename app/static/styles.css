@@ -88,3 +88,6 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 @media(max-width:899px){.doctor-layout{grid-template-columns:minmax(0,1fr)}.doctor-patient{top:0}.doctor-tabs button{flex:1 1 140px;min-height:44px}.doctor-section{scroll-margin-top:190px}}
 
 .doctor-waiting .status.results-pending{background:#ffe0ca;color:#853d09}
+
+/* Long allergy histories must leave room for the clinical form on narrow screens. */
+.doctor-patient .allergy-warning{max-height:6em;overflow-y:auto}

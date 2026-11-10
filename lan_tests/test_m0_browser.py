@@ -60,10 +60,21 @@ def test_m0_six_sections_keyboard_allergies_and_responsive_evidence(https_server
                 page.keyboard.press('Escape'); expect(page.locator('#m0-dialog')).not_to_be_visible()
                 page.locator('[data-action="edit-allergies"]').click()
                 page.locator('[name="allergy_state"]').select_option('known')
+                page.locator('[name="allergy_text"]').fill('Thuốc A: phát ban '+('giả lập dài '*140))
+                with page.expect_response(lambda r: '/allergies' in r.url and r.request.method == 'PUT'):
+                    page.locator('[data-form="allergies"] button.btn').click()
+                settle(page)
+                page.set_viewport_size({'width': 390, 'height': 844})
+                warning = page.locator('.doctor-patient .allergy-warning')
+                assert warning.evaluate('el=>el.scrollHeight>el.clientHeight')
+                assert warning.bounding_box()['height'] < 180
+                no_horizontal_scroll(page)
+                page.locator('[data-action="edit-allergies"]').click()
                 page.locator('[name="allergy_text"]').fill('Thuốc A: phát ban')
                 with page.expect_response(lambda r: '/allergies' in r.url and r.request.method == 'PUT'):
                     page.locator('[data-form="allergies"] button.btn').click()
                 settle(page)
+                page.set_viewport_size({'width': width, 'height': 900})
             page.locator('[data-form="clinical"] [name="diagnosis"]').fill('Chẩn đoán giả lập M0')
             with page.expect_response(lambda r: '/clinical' in r.url and r.request.method == 'PUT') as saved:
                 page.keyboard.press('F2')
