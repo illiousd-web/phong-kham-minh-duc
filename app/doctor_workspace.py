@@ -1,13 +1,14 @@
 """Read models and strictly guarded M0 mutations. Existing billing stays untouched."""
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from .database import PGConnection
 from .domain import ensure_open, invoice, revision
-from .labels import VN_TZ, parse_day
+from .labels import parse_day
 from .manager_visits import fold_name, _utc_start
 
 
@@ -32,14 +33,20 @@ class CloseInput(BaseModel):
 
 def doctor_queue(c, uid, day='', q=''):
     try:
-        day = parse_day(day) or datetime.now(VN_TZ).date().isoformat()
-        end = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
+        day = parse_day(day) or ''
+        end = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat() if day else ''
     except ValueError:
         raise HTTPException(422, 'Ngày phải có thật, dạng dd/mm/yyyy')
-    # Number BEFORE filtering doctor/name/status, so the daily reception order is stable.
-    rows = c.execute('''WITH daily AS (
-        SELECT v.*,ROW_NUMBER() OVER (ORDER BY v.created_at,v.id) AS daily_number
-        FROM visits v WHERE v.created_at>=? AND v.created_at<?)
+    # Default keeps EVERY unfinished visit, including previous days (same as /visits).
+    # An explicit date also includes completed visits on that date.
+    bounds = 'v.created_at>=? AND v.created_at<?' if day else '1=1'
+    args = [_utc_start(day), _utc_start(end)] if day else []
+    local_date = "(v.created_at::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh')::date" if isinstance(c, PGConnection) else "date(v.created_at,'+7 hours')"
+    status = "v.status<>'cancelled'" if day else "v.status NOT IN ('completed','cancelled')"
+    # Number before doctor/name/status filters. No daily sequence column is stored.
+    rows = c.execute(f'''WITH daily AS (
+        SELECT v.*,ROW_NUMBER() OVER (PARTITION BY {local_date} ORDER BY v.created_at,v.id) AS daily_number
+        FROM visits v WHERE {bounds})
         SELECT v.id,v.patient_id,v.status,v.created_at,v.daily_number,
         p.full_name AS patient_name,p.date_of_birth,p.sex,
         CASE WHEN v.status IN ('completed','cancelled') THEN v.status
@@ -48,8 +55,8 @@ def doctor_queue(c, uid, day='', q=''):
           WHEN EXISTS(SELECT 1 FROM orders o WHERE o.visit_id=v.id AND o.status='approved') THEN 'results_ready'
           ELSE v.status END AS queue_status
         FROM daily v JOIN patients p ON p.id=v.patient_id
-        WHERE v.doctor_id=? AND v.status<>'cancelled' ORDER BY v.daily_number''',
-        (_utc_start(day), _utc_start(end), uid)).fetchall()
+        WHERE v.doctor_id=? AND {status} ORDER BY v.created_at,v.id''',
+        (*args, uid)).fetchall()
     needle = fold_name(q[:100])
     return {'day': day, 'visits': [dict(r) for r in rows if needle in fold_name(r['patient_name'])]}
 
@@ -104,8 +111,7 @@ def install_doctor_workspace(app, db, principal, require, audit, visit_access, n
         with db() as c:
             visit_access(c, u, vid, clinical=True)
             state = invoice(c, vid)
-            provisional = c.execute("SELECT 1 FROM payments WHERE visit_id=? AND kind='provisional'", (vid,)).fetchone()
-            return {'status': 'Thu tạm' if state['unpriced_count'] or provisional else 'Còn nợ' if state['due'] else 'Đã thu'}
+            return {'status': 'Thu tạm' if state['unpriced_count'] else 'Còn nợ' if state['due'] else 'Đã thu'}
 
     @app.post('/api/visits/{vid}/close-abandoned')
     def close_abandoned(vid: int, data: CloseInput, u=Depends(principal)):

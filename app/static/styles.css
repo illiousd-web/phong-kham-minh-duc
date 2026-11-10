@@ -86,3 +86,5 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 #m0-dialog{width:min(640px,calc(100% - 24px));max-height:90vh;overflow:auto;border:1px solid var(--line);border-radius:12px;color:var(--ink)}
 #m0-dialog::backdrop{background:rgba(0,0,0,.35)}
 @media(max-width:899px){.doctor-layout{grid-template-columns:minmax(0,1fr)}.doctor-patient{top:0}.doctor-tabs button{flex:1 1 140px;min-height:44px}.doctor-section{scroll-margin-top:190px}}
+
+.doctor-waiting .status.results-pending{background:#ffe0ca;color:#853d09}

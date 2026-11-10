@@ -54,7 +54,7 @@ LABEL.results_ready='Đã có kết quả';
 LABEL.patient_allergies_updated='Sửa dị ứng thuốc';
 LABEL.patient_history_viewed='Xem lịch sử khám';
 const vi=code=>code==null?'—':(LABEL[code]||String(code));
-const TONE={results_ready:'ready',in_progress:'progress',waiting_results:'warn',completed:'complete',waiting:'warn',ordered:'warn',pending_review:'warn',pending:'warn',rejected:'error',cancelled:'error'};
+const TONE={waiting:'warn',ordered:'warn',pending_review:'warn',pending:'warn',rejected:'error',cancelled:'error'};
 const pill=code=>`<span class="status ${TONE[code]||''}">${esc(vi(code))}</span>`;
 // Ngày hiển thị và nhập theo dd/mm/yyyy; gửi máy chủ theo ISO yyyy-mm-dd.
 function showDay(v){const raw=String(v||'');if(/T\d{2}:\d{2}(:\d{2})?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})$/.test(raw)){const parsed=new Date(raw);if(!isNaN(parsed)){const d=new Date(parsed.getTime()+7*60*60*1000),z=n=>String(n).padStart(2,'0');return `${z(d.getUTCDate())}/${z(d.getUTCMonth()+1)}/${d.getUTCFullYear()} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())}`}}const m=String(v||'').match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);return m?`${m[3]}/${m[2]}/${m[1]}${m[4]?' '+m[4]+':'+m[5]:''}`:esc(v||'')}
@@ -183,8 +183,9 @@ async function doctorScreen(){
  const visits=[...open,...visitHistory,...daily.visits];
  if(!visits.some(v=>v.id===sel.visit))sel.visit=open[0]?.id??null;
  const review=await controlledReviewCard();
- const filter=`<form data-form="doctor-filter" class="fields">${dateField('Ngày tiếp đón','doctor_day',true,daily.day)}${field('Tìm tên không dấu','doctor_query')}<div class="wide"><button class="btn">Tìm người bệnh</button></div></form>`;
- const head=card(filter+queue(daily.visits.map(v=>({id:v.id,main:`${v.daily_number}. ${esc(v.patient_name)}`,sub:`${esc(ageOf(v.date_of_birth)||'Chưa rõ tuổi')} tuổi · ${esc(v.sex||'')} · ${pill(v.queue_status)}`})),{kind:'visit',current:sel.visit,emptyText:'Không có lượt trong ngày đã chọn.'}),`Danh sách khám · ${open.length} lượt chưa hoàn tất`)+
+ const filter=`<form data-form="doctor-filter" class="fields">${dateField('Ngày tiếp đón (bỏ trống: mọi lượt chờ)','doctor_day',false,daily.day)}${field('Tìm tên không dấu','doctor_query')}<div class="wide"><button class="btn">Tìm người bệnh</button></div></form>`;
+ const doctorStatus=s=>`<span class="status ${({waiting_results:'results-pending',results_ready:'ready',in_progress:'progress',completed:'complete'})[s]||TONE[s]||''}">${esc(s==='waiting_results'?'Chờ kết quả cận lâm sàng':vi(s))}</span>`;
+ const head=card(filter+queue(daily.visits.map(v=>({id:v.id,main:`${v.daily_number}. ${esc(v.patient_name)}`,sub:`${esc(v.date_of_birth?ageOf(v.date_of_birth):'Chưa rõ')} tuổi · ${esc(v.sex||'')} · ${doctorStatus(v.queue_status)} · ${showDay(v.created_at)}`})),{kind:'visit',current:sel.visit,emptyText:'Không có lượt trong ngày đã chọn.'}),`Danh sách khám · ${open.length} lượt chưa hoàn tất`)+
   details('Lượt đã kết thúc (100 gần nhất)',(visitHistory.length?`<div class="toolbar-actions">${selectField('Mở lượt khác (đã xong)','visit_choose',[['','— Chọn —'],...visitHistory.map(v=>[v.id,`#${v.id} – ${v.patient_name} (${vi(v.status)})`])])}</div>`:empty('Chưa có lượt đã kết thúc.')));
  if(!sel.visit)return {html:review+head,after(){if($('doctor_query'))$('doctor_query').value=sel.doctorQuery||''}};
  const vid=sel.visit;
@@ -205,7 +206,7 @@ async function doctorScreen(){
  const finish=done?(ui.addendum&&v.status==='completed'?`<p class="hint">Hồ sơ đã khóa. Bổ sung hoặc đính chính phải lập phụ lục, quản lý khác duyệt.</p>${addenda.length?t(addenda.map(a=>`<tr><td>${esc(a.reason)}</td><td>${esc(a.content)}</td><td>${pill(a.status)}</td></tr>`),['Lý do','Nội dung','Duyệt']):''}<form data-form="addendum" class="fields">${hidden('visit_id',vid)}${field('Lý do bổ sung/đính chính','reason','text','',true)}${textarea('Nội dung bổ sung','content')}<div class="wide"><button class="btn">Gửi phụ lục chờ duyệt</button></div></form>`:'<p class="hint">Hồ sơ đã khóa.</p>'):
   `<button type="button" class="btn" data-action="complete-visit" data-id="${vid}" data-version="${v.version}">Hoàn tất và khóa phiếu khám (F8)</button><p class="hint">Cần có chẩn đoán, không còn chỉ định hoặc y lệnh đang chờ. Hoàn tất khám không có nghĩa đã thu tiền hay đã cấp thuốc.</p>`;
  const hist=details('Lịch sử sửa phiếu khám',t(history.map(r=>{let old={};try{old=JSON.parse(r.snapshot)}catch(e){}return `<tr><td>${r.version}</td><td>${esc(r.reason)}</td><td>${esc(old.diagnosis||'')}</td><td>${showDay(r.created_at)}</td></tr>`}),['Phiên bản','Thao tác','Chẩn đoán','Thời gian']));
- const banner=`<div class="doctor-patient patient-head"><div><b>${esc(v.patient_name)}</b> · ${esc(v.patient_code)} · ${esc(ageOf(v.patient_dob)||'Chưa rõ')} tuổi · ${esc(v.patient_sex)} · ${esc(v.patient_phone||'Chưa có điện thoại')}</div><div class="allergy-warning"><b>DỊ ỨNG THUỐC:</b> ${esc(v.patient_allergies||'Chưa khai thác')}</div>${btn('Sửa dị ứng','edit-allergies',`data-id="${v.patient_id}"`)}</div>`;
+ const banner=`<div class="doctor-patient patient-head"><div><b>${esc(v.patient_name)}</b> · ${esc(v.patient_code)} · ${esc(v.patient_dob?ageOf(v.patient_dob):'Chưa rõ')} tuổi · ${esc(v.patient_sex)} · ${esc(v.patient_phone||'Chưa có điện thoại')}</div><div class="allergy-warning"><b>DỊ ỨNG THUỐC:</b> ${esc(v.patient_allergies||'Chưa khai thác')}</div>${btn('Sửa dị ứng','edit-allergies',`data-id="${v.patient_id}"`)}</div>`;
  const parts=[['exam','Khám',stepCard(1,'Phiếu khám',exam)+details('Điều dưỡng',nursing,true)+card(finish,done?'Hồ sơ đã khóa':'Hoàn tất khám')+(!done?btn('Đóng lượt bỏ dở','close-abandoned',`data-id="${vid}"`):'')+hist],
  ['orders','Chỉ định',stepCard(2,`Chỉ định cận lâm sàng (${mine.length})`,orders)],
  ['rx','Đơn thuốc',`<div class="allergy-warning notice" role="note"><b>DỊ ỨNG THUỐC:</b> ${esc(v.patient_allergies||'Chưa khai thác')}<br>Cảnh báo để bác sĩ kiểm tra trước khi kê đơn.</div>`+stepCard(3,'Đơn thuốc',rxHtml)],

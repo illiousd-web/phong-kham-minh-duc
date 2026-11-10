@@ -32,6 +32,7 @@ def check_m0(clients, ids, db):
     assert doctor.post(close, json={'reason': 'Người bệnh bỏ về'}).status_code == 200
     assert doctor.get('/api/queue-counts').json()['doctor'] == before - 1
     assert vid not in [r['id'] for r in doctor.get('/api/visits').json()]
+    assert {r['id'] for r in doctor.get('/api/doctor/queue').json()['visits']} == {r['id'] for r in doctor.get('/api/visits').json()}
     assert reception.post(close, json={'reason': 'Tạo nhầm'}).status_code == 409
     with db() as c:
         assert not doctor_queue(c, ids['doctor'], '10/11/2026', 'dang thi m0')['visits']
