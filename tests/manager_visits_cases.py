@@ -83,7 +83,10 @@ def old_settled_visit_is_found(get, post, service_id, doctor_id):
     assert min(newer) > target and len(newer) > 150
     # Hồi quy sau PR #11: /api/dues (không đổi) không có lượt cũ đã thu đủ, và nằm ngoài "100 lượt mới nhất".
     assert target not in {d['visit_id'] for d in get('cashier', '/api/dues').json()}
-    assert target not in {x['id'] for x in get('manager', '/api/visits').json()}
+    with db() as c:
+        assert target not in {x['id'] for x in c.execute('SELECT id FROM visits ORDER BY id DESC LIMIT 100')}
+    # Đã thu đủ vẫn có thể chưa hoàn tất khám: hàng chờ mới phải giữ lượt này.
+    assert target in {x['id'] for x in get('manager', '/api/visits').json()}
     assert target not in {x['visit_id'] for x in get('manager', '/api/payments').json()}
 
     # Mặc định 7 ngày gần nhất theo giờ Việt Nam: lượt 30 ngày trước không nằm trong đó.

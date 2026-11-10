@@ -40,3 +40,29 @@ def test_dues_not_readable_by_reception_but_by_cashier_role():
     both = {'Authorization': 'Bearer ' + client.post('/api/login', json={'username': name, 'password': password}).json()['access_token']}
     assert client.get('/api/dues', headers=both).status_code == 200
     assert set(client.get('/api/queue-counts', headers=both).json()) == {'reception', 'cashier'}
+
+
+def test_queue_counts_always_count_sql_and_ignore_legacy_known_hint():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.queue_counts import install_queue_counts
+    from contextlib import contextmanager
+    app=FastAPI();calls=[]
+    class Connection:
+        def execute(self,sql,args=()):
+            assert 'COUNT(*)' in sql
+            kind='cashier' if 'WITH charge_changes' in sql else 'lab' if "o.status='ordered'" in sql else 'visits'
+            calls.append(kind)
+            return self
+        def fetchone(self):return (1,)
+    @contextmanager
+    def database():yield Connection()
+    install_queue_counts(app,lambda:{'id':1,'roles':['reception','technician','cashier']},lambda:{},database)
+    c=TestClient(app)
+    assert c.get('/api/queue-counts?known=lab').json()=={'reception':1,'lab':1,'cashier':1}
+    assert calls==['visits','lab','cashier'];calls.clear()
+    assert c.get('/api/queue-counts?known=cashier').json()=={'reception':1,'lab':1,'cashier':1}
+    assert calls==['visits','lab','cashier'];calls.clear()
+    assert c.get('/api/queue-counts').json()=={'reception':1,'lab':1,'cashier':1}
+    assert calls==['visits','lab','cashier']
+    assert c.get('/api/queue-counts?known=doctor').status_code==422

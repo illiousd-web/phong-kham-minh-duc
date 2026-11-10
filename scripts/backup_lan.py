@@ -175,7 +175,7 @@ def backup(destination, key_path, prune=True, enforce_budget=True):
             if uploads.exists():
                 for path in uploads.rglob('*'):
                     if path.is_symlink():raise ValueError('Attachment storage must not contain symlinks')
-                    if path.is_file():files['attachments/'+str(path.relative_to(uploads)).replace(os.sep,'/')]=checksum(path)
+                    if path.is_file():files['attachments/'+path.relative_to(uploads).as_posix()]=checksum(path)
             # Cài đặt giao diện đang có hiệu lực (tệp thiếu/hỏng thì là mặc định, đã ghi cảnh báo).
             settings,settings_source=load_settings(settings_path(uploads))
             (root/SETTINGS_NAME).write_bytes(serialize(settings))
@@ -216,7 +216,7 @@ def unpack_verified(source, key_path, root):
                 raise ValueError('Unexpected archive member')
         tar.extractall(root, filter='data')
     manifest=json.loads((root/'manifest.json').read_text(encoding='utf-8'))
-    actual={str(p.relative_to(root)) for p in root.rglob('*') if p.is_file()}-{'payload.tar','manifest.json'}
+    actual={p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()}-{'payload.tar','manifest.json'}
     if manifest['format'] != 1 or actual != set(manifest['files']):
         raise ValueError('Backup manifest mismatch')
     for name, digest in manifest['files'].items():

@@ -27,13 +27,16 @@ DEFAULT_DAYS = 7
 MIN_DAY, MAX_DAY = '2000-01-01', '2100-12-31'
 
 # Tính tiền chỉ cho các lượt đã lọc (base), cùng công thức với domain.invoice và DUES_SQL.
+from .charge_queries import priced_ctes
+
 SEARCH_SQL = '''WITH base AS (
   SELECT v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name
   FROM visits v JOIN patients p ON p.id=v.patient_id
   WHERE {where}),
+'''+priced_ctes('visit_id IN (SELECT id FROM base)',materialized='{materialized}')+''',
 ch AS (SELECT visit_id,COALESCE(SUM(amount),0) AS total,
   SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS unpriced
-  FROM effective_charges WHERE visit_id IN (SELECT id FROM base) GROUP BY visit_id),
+  FROM priced GROUP BY visit_id),
 adj AS (SELECT visit_id,SUM(CASE WHEN kind='discount' THEN amount ELSE 0 END) AS discount,
   SUM(CASE WHEN kind='refund' THEN amount ELSE 0 END) AS refund
   FROM effective_adjustments WHERE status='approved' AND visit_id IN (SELECT id FROM base) GROUP BY visit_id),
@@ -42,8 +45,11 @@ t AS {materialized}(SELECT b.*,COALESCE(ch.total,0)-COALESCE(adj.discount,0) AS 
   COALESCE(pay.total,0)-COALESCE(adj.refund,0) AS paid,COALESCE(ch.unpriced,0) AS unpriced_count
   FROM base b LEFT JOIN ch ON ch.visit_id=b.id LEFT JOIN adj ON adj.visit_id=b.id LEFT JOIN pay ON pay.visit_id=b.id),
 m AS (SELECT t.*,CASE WHEN unpriced_count>0 THEN 'unpriced' WHEN charged>paid THEN 'owing'
-  WHEN paid>charged THEN 'refund' ELSE 'settled' END AS money_status FROM t)
-SELECT {select} FROM m {money}'''
+  WHEN paid>charged THEN 'refund' ELSE 'settled' END AS money_status FROM t),
+matched AS {materialized}(SELECT * FROM m {money})
+SELECT page.*,totals.total_rows FROM (SELECT COUNT(*) AS total_rows FROM matched) totals
+LEFT JOIN (SELECT id AS visit_id,created_at,status,patient_code,patient_name,charged,paid,unpriced_count,
+  money_status FROM matched ORDER BY id DESC LIMIT ? OFFSET ?) page ON 1=1'''
 
 
 def _day(value, label):
@@ -126,17 +132,17 @@ def search_visits(c, date_from='', date_to='', q='', status='', money='', page_n
     if postgres:
         # Chỉ cho giao dịch đọc này: biên dịch JIT tốn hơn chính truy vấn (đo với 22.000 lượt).
         c.execute('SET LOCAL jit = off')
-    # Tính tiền một lần cho các lượt đã lọc (PostgreSQL: giữ kết quả, không lồng lại vào điều kiện lọc),
-    # đếm tổng và lấy trang trong cùng một câu lệnh.
-    sql = lambda select: SEARCH_SQL.format(where=where, select=select, money=money_sql,
-                                           materialized='MATERIALIZED ' if postgres else '')
-    rows = c.execute(sql('id AS visit_id,created_at,status,patient_code,patient_name,charged,paid,unpriced_count,'
-                         'money_status,COUNT(*) OVER() AS total_rows')
-                     + ' ORDER BY id DESC LIMIT ? OFFSET ?', (*args, *margs, PAGE_SIZE, (page_no - 1) * PAGE_SIZE)).fetchall()
-    # Trang vượt quá cuối danh sách không có dòng nào để mang tổng: đếm riêng.
-    total = rows[0]['total_rows'] if rows else (c.execute(sql('COUNT(*)'), (*args, *margs)).fetchone()[0] if page_no > 1 else 0)
+    # Giữ số tiền hiệu lực một lần để SUM và đếm khoản chưa giá không lặp các
+    # truy vấn con của view. LEFT JOIN giữ dòng tổng kể cả trang trống: không
+    # chạy lại phép tính tiền chỉ để đếm khi vượt quá trang cuối.
+    query = SEARCH_SQL.format(where=where, money=money_sql,
+                              materialized='MATERIALIZED ' if postgres else '')
+    rows = c.execute(query, (*args, *margs, PAGE_SIZE, (page_no - 1) * PAGE_SIZE)).fetchall()
+    total = rows[0]['total_rows']
     items = []
     for r in rows:
+        if r['visit_id'] is None:
+            continue
         x = dict(r)
         del x['total_rows']
         unpriced = x['unpriced_count'] > 0

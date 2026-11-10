@@ -8,15 +8,17 @@ import secrets
 import uuid
 import json
 from .domain import authorize_order, revision, status_refresh, invoice
+from .charge_queries import DUES_SQL,orders_sql
+from .work_queues import visit_predicate, ACTIVE_ORDERS, approval_predicate, history_limit
 from contextlib import asynccontextmanager
 from starlette.concurrency import run_in_threadpool
 from .resources import LIMITS, export_slot
 from .storage import check_upload, StorageLimitError
 from datetime import datetime, timedelta, timezone, date
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -341,29 +343,18 @@ def services(u=Depends(principal)):
     with db() as c:return [dict(x) for x in c.execute('SELECT * FROM service_catalog WHERE active=1')]
 
 @app.get('/api/visits')
-def list_visits(u=Depends(principal)):
+def list_visits(u=Depends(principal),history:bool=False):
     require(u,'reception','doctor','nurse','technician','cashier','pharmacy','manager','admin')
+    predicate,args=visit_predicate(u,history)
+    roles=set(u['roles'])
+    if roles & {'manager','admin'}:
+        fields='v.id,v.status,v.created_at'
+    elif 'doctor' in roles or ('reception' in roles and 'technician' not in roles):
+        fields='v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name'
+    else:
+        fields='v.id,v.status,p.code AS patient_code,p.full_name AS patient_name'
     with db() as c:
-        if 'manager' in u['roles'] or 'admin' in u['roles']:
-            return [{'id':x['id'],'status':x['status'],'created_at':x['created_at']} for x in c.execute('SELECT id,status,created_at FROM visits ORDER BY id DESC LIMIT 100')]
-        if 'doctor' in u['roles']:
-            sql='SELECT v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id WHERE v.doctor_id=? ORDER BY v.id DESC LIMIT 100'
-            return [dict(x) for x in c.execute(sql,(u['id'],))]
-        if 'technician' in u['roles']:
-            sql='SELECT DISTINCT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN orders o ON o.visit_id=v.id JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
-            return [dict(x) for x in c.execute(sql)]
-        if 'reception' in u['roles']:
-            sql='SELECT v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
-            return [dict(x) for x in c.execute(sql)]
-        if 'cashier' in u['roles'] or 'pharmacy' in u['roles']:
-            sql='SELECT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id ORDER BY v.id DESC LIMIT 100'
-            return [dict(x) for x in c.execute(sql)]
-        if 'nurse' in u['roles']:
-            sql='''SELECT v.id,v.status,p.code AS patient_code,p.full_name AS patient_name
-            FROM visits v JOIN patients p ON p.id=v.patient_id
-            JOIN visit_nurses n ON n.visit_id=v.id WHERE n.nurse_id=? AND n.active=1 ORDER BY v.id DESC LIMIT 100'''
-            return [dict(x) for x in c.execute(sql,(u['id'],))]
-        return []
+        return [dict(x) for x in c.execute('SELECT '+fields+' FROM visits v JOIN patients p ON p.id=v.patient_id WHERE '+predicate+' ORDER BY v.id DESC'+history_limit(history),args)]
 
 @app.get('/api/visits/{visit_id}')
 def visit_detail(visit_id:int,u=Depends(principal)):
@@ -461,21 +452,18 @@ def add_order(data:OrderInput,u=Depends(principal)):
         return {'id':oid,'charge_amount':0,'status':'requested' if service else 'ordered'}
 
 @app.get('/api/orders')
-def list_orders(u=Depends(principal)):
+def list_orders(u=Depends(principal),visit_id:int|None=None,history:bool=False):
     require(u,'doctor','nurse','technician')
     with db() as c:
-        sql='''SELECT o.id,o.visit_id,o.category,o.name,o.status,o.service_id,o.proposed_price,o.result_text,o.file_name,o.created_at,
-            CASE WHEN o.status='requested' AND o.proposed_price IS NULL THEN 1
-            WHEN EXISTS(SELECT 1 FROM effective_charges ch JOIN charge_sources cs ON cs.charge_id=ch.id
-                WHERE cs.source_type='order' AND cs.source_id=o.id AND ch.amount IS NULL) THEN 1 ELSE 0 END AS unpriced,
-            p.code AS patient_code,p.full_name AS patient_name FROM orders o JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id'''
-        args=[]
+        args=[];where=[];hide_results=False
         if 'nurse' in u['roles'] and 'doctor' not in u['roles'] and 'technician' not in u['roles']:
-            sql=sql.replace('o.result_text,o.file_name,','NULL AS result_text,NULL AS file_name,')
-            sql+=' WHERE EXISTS(SELECT 1 FROM visit_nurses n WHERE n.visit_id=v.id AND n.nurse_id=? AND n.active=1)';args=[u['id']]
+            hide_results=True
+            where.append('EXISTS(SELECT 1 FROM visit_nurses n WHERE n.visit_id=v.id AND n.nurse_id=? AND n.active=1)');args=[u['id']]
         elif 'doctor' in u['roles'] and 'technician' not in u['roles']:
-            sql+=' WHERE v.doctor_id=?';args=[u['id']]
-        return [dict(x) for x in c.execute(sql+' ORDER BY o.id DESC LIMIT 100',args)]
+            where.append('v.doctor_id=?');args=[u['id']]
+        if visit_id is not None:where.append('o.visit_id=?');args.append(visit_id)
+        if visit_id is None:where.append('NOT ('+ACTIVE_ORDERS+')' if history else ACTIVE_ORDERS)
+        return [dict(x) for x in c.execute(orders_sql(' AND '.join(where),hide_results,limit=100 if history else None),args)]
 
 class ResultInput(BaseModel):
     result_text:str=Field(min_length=1,max_length=10000)
@@ -620,38 +608,39 @@ def create_rx(data:PrescriptionInput,u=Depends(principal)):
         return {'id':rid,'status':'draft','structured_items':len(data.items)}
 
 @app.get('/api/prescriptions')
-def get_rx(u=Depends(principal)):
+def get_rx(u=Depends(principal), visit_id:int|None=None,
+           status:Literal['draft','dispensed','cancelled']|None=None,
+           limit:Annotated[int|None,Query(ge=1,le=200)]=None,
+           offset:Annotated[int,Query(ge=0,le=1000000)]=0):
     require(u,'doctor','pharmacy')
     with db() as c:
         sql="SELECT rx.*,v.patient_id,p.full_name AS patient_name,p.code AS patient_code FROM prescriptions rx JOIN visits v ON v.id=rx.visit_id JOIN patients p ON p.id=v.patient_id"
-        args=[]
+        args=[];where=[]
         if 'doctor' in u['roles'] and 'pharmacy' not in u['roles']:
-            sql+=' WHERE rx.doctor_id=?';args=[u['id']]
-        rows=[dict(x) for x in c.execute(sql+' ORDER BY rx.id DESC',args)]
-        for rx in rows:
-            rx['items']=[dict(x) for x in c.execute('''SELECT pi.id,pi.medicine_id,pi.quantity,pi.directions,pi.unit_name,pi.unit_quantity,pi.unit_factor,m.name,m.base_unit
-                FROM prescription_items pi JOIN medicines m ON m.id=pi.medicine_id
-                WHERE pi.prescription_id=? ORDER BY pi.id''',(rx['id'],))]
+            where.append('rx.doctor_id=?');args.append(u['id'])
+        if visit_id is not None:where.append('rx.visit_id=?');args.append(visit_id)
+        if status:where.append('rx.status=?');args.append(status)
+        if where:sql+=' WHERE '+' AND '.join(where)
+        sql+=' ORDER BY rx.id DESC'
+        if limit is not None:sql+=' LIMIT ? OFFSET ?';args.extend((limit,offset))
+        rows=[dict(x) for x in c.execute(sql,args)]
+        by_id={rx['id']:rx for rx in rows}
+        for rx in rows:rx['items']=[]
+        if rows:
+            # Một lần lấy các dòng thuốc của đúng các đơn đã được lọc quyền;
+            # không thêm một lượt đi/về PostgreSQL cho mỗi đơn trong lịch sử.
+            selected=list(by_id)
+            for start in range(0,len(selected),500):
+                batch=selected[start:start+500];marks=','.join('?' for _ in batch)
+                for item in c.execute('''SELECT pi.prescription_id,pi.id,pi.medicine_id,pi.quantity,pi.directions,pi.unit_name,pi.unit_quantity,pi.unit_factor,m.name,m.base_unit
+                    FROM prescription_items pi JOIN medicines m ON m.id=pi.medicine_id
+                    WHERE pi.prescription_id IN ('''+marks+''') ORDER BY pi.id''',batch):
+                    value=dict(item);rid=value.pop('prescription_id');by_id[rid]['items'].append(value)
         return rows
 
 # Hàng chờ thu ngân: KHÔNG cắt theo "100 lượt mới nhất". Trả mọi lượt còn nợ, còn khoản
 # chưa có giá, cần hoàn tiền (đã thu > phải thu), cộng mọi lượt tạo trong ngày hôm nay (giờ VN).
 # Tính tổng một lần bằng GROUP BY (không truy vấn con theo từng lượt) để đủ nhanh với vài chục nghìn lượt.
-DUES_SQL='''WITH ch AS (SELECT visit_id,COALESCE(SUM(amount),0) AS total,
-          SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS unpriced FROM effective_charges GROUP BY visit_id),
-     adj AS (SELECT visit_id,SUM(CASE WHEN kind='discount' THEN amount ELSE 0 END) AS discount,
-          SUM(CASE WHEN kind='refund' THEN amount ELSE 0 END) AS refund
-          FROM effective_adjustments WHERE status='approved' GROUP BY visit_id),
-     pay AS (SELECT visit_id,SUM(amount) AS total FROM payments GROUP BY visit_id),
-     t AS (SELECT v.id,v.patient_id,v.created_at,COALESCE(ch.total,0)-COALESCE(adj.discount,0) AS charged,
-          COALESCE(pay.total,0)-COALESCE(adj.refund,0) AS paid,COALESCE(ch.unpriced,0) AS unpriced_count
-          FROM visits v LEFT JOIN ch ON ch.visit_id=v.id LEFT JOIN adj ON adj.visit_id=v.id LEFT JOIN pay ON pay.visit_id=v.id)
-SELECT t.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,t.charged,t.paid,t.unpriced_count
-FROM t JOIN patients p ON p.id=t.patient_id
-WHERE t.charged<>t.paid OR t.unpriced_count>0 OR t.created_at>=?
-ORDER BY t.id DESC'''
-
-
 def today_start_utc():
     """0 giờ hôm nay theo giờ Việt Nam, dạng chuỗi UTC như cột created_at."""
     vn=timezone(timedelta(hours=7))
@@ -843,7 +832,7 @@ def propose_adjustment(data:AdjustmentInput,u=Depends(principal)):
         return {'id':id,'status':'pending'}
 
 @app.get('/api/adjustments')
-def adjustments_list(u=Depends(principal)):
+def adjustments_list(u=Depends(principal),history:bool=False):
     require(u,'cashier','manager')
     with db() as c:
         sql='''SELECT a.id,a.visit_id,a.payment_id,a.kind,a.amount,a.reason,a.status,a.proposed_at,a.reviewed_at,
@@ -851,8 +840,10 @@ def adjustments_list(u=Depends(principal)):
           JOIN visits v ON v.id=a.visit_id JOIN patients p ON p.id=v.patient_id JOIN users ON users.id=a.proposed_by'''
         args=()
         if 'manager' not in u['roles']:
-            sql+=' WHERE a.proposed_by=?';args=(u['id'],)
-        return [dict(x) for x in c.execute(sql+' ORDER BY a.id DESC LIMIT 100',args)]
+            sql+=' WHERE a.proposed_by=? AND ';args=(u['id'],)
+        else:sql+=' WHERE '
+        sql+=approval_predicate('a',history)
+        return [dict(x) for x in c.execute(sql+' ORDER BY a.id DESC'+history_limit(history),args)]
 
 class AdjustmentReview(BaseModel):
     approve:bool
@@ -1056,7 +1047,7 @@ from .ui_settings import install_ui_settings
 install_ui_settings(app,db,principal,require,audit,FILES)
 from .ui_settings import settings_path, read_settings
 from .queue_counts import install_queue_counts
-install_queue_counts(app,principal.peek,lambda:read_settings(settings_path(FILES)))
+install_queue_counts(app,principal.peek,lambda:read_settings(settings_path(FILES)),db)
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
