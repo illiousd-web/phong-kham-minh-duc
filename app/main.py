@@ -14,9 +14,9 @@ from .resources import LIMITS, export_slot
 from .storage import check_upload, StorageLimitError
 from datetime import datetime, timedelta, timezone, date
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -620,25 +620,42 @@ def create_rx(data:PrescriptionInput,u=Depends(principal)):
         return {'id':rid,'status':'draft','structured_items':len(data.items)}
 
 @app.get('/api/prescriptions')
-def get_rx(u=Depends(principal)):
+def get_rx(u=Depends(principal), visit_id:int|None=None,
+           status:Literal['draft','dispensed','cancelled']|None=None,
+           limit:Annotated[int|None,Query(ge=1,le=200)]=None,
+           offset:Annotated[int,Query(ge=0,le=1000000)]=0):
     require(u,'doctor','pharmacy')
     with db() as c:
         sql="SELECT rx.*,v.patient_id,p.full_name AS patient_name,p.code AS patient_code FROM prescriptions rx JOIN visits v ON v.id=rx.visit_id JOIN patients p ON p.id=v.patient_id"
-        args=[]
+        args=[];where=[]
         if 'doctor' in u['roles'] and 'pharmacy' not in u['roles']:
-            sql+=' WHERE rx.doctor_id=?';args=[u['id']]
-        rows=[dict(x) for x in c.execute(sql+' ORDER BY rx.id DESC',args)]
-        for rx in rows:
-            rx['items']=[dict(x) for x in c.execute('''SELECT pi.id,pi.medicine_id,pi.quantity,pi.directions,pi.unit_name,pi.unit_quantity,pi.unit_factor,m.name,m.base_unit
-                FROM prescription_items pi JOIN medicines m ON m.id=pi.medicine_id
-                WHERE pi.prescription_id=? ORDER BY pi.id''',(rx['id'],))]
+            where.append('rx.doctor_id=?');args.append(u['id'])
+        if visit_id is not None:where.append('rx.visit_id=?');args.append(visit_id)
+        if status:where.append('rx.status=?');args.append(status)
+        if where:sql+=' WHERE '+' AND '.join(where)
+        sql+=' ORDER BY rx.id DESC'
+        if limit is not None:sql+=' LIMIT ? OFFSET ?';args.extend((limit,offset))
+        rows=[dict(x) for x in c.execute(sql,args)]
+        by_id={rx['id']:rx for rx in rows}
+        for rx in rows:rx['items']=[]
+        if rows:
+            # Một lần lấy các dòng thuốc của đúng các đơn đã được lọc quyền;
+            # không thêm một lượt đi/về PostgreSQL cho mỗi đơn trong lịch sử.
+            selected=list(by_id)
+            for start in range(0,len(selected),500):
+                batch=selected[start:start+500];marks=','.join('?' for _ in batch)
+                for item in c.execute('''SELECT pi.prescription_id,pi.id,pi.medicine_id,pi.quantity,pi.directions,pi.unit_name,pi.unit_quantity,pi.unit_factor,m.name,m.base_unit
+                    FROM prescription_items pi JOIN medicines m ON m.id=pi.medicine_id
+                    WHERE pi.prescription_id IN ('''+marks+''') ORDER BY pi.id''',batch):
+                    value=dict(item);rid=value.pop('prescription_id');by_id[rid]['items'].append(value)
         return rows
 
 # Hàng chờ thu ngân: KHÔNG cắt theo "100 lượt mới nhất". Trả mọi lượt còn nợ, còn khoản
 # chưa có giá, cần hoàn tiền (đã thu > phải thu), cộng mọi lượt tạo trong ngày hôm nay (giờ VN).
 # Tính tổng một lần bằng GROUP BY (không truy vấn con theo từng lượt) để đủ nhanh với vài chục nghìn lượt.
-DUES_SQL='''WITH ch AS (SELECT visit_id,COALESCE(SUM(amount),0) AS total,
-          SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS unpriced FROM effective_charges GROUP BY visit_id),
+DUES_SQL='''WITH priced AS MATERIALIZED (SELECT visit_id,amount FROM effective_charges),
+     ch AS (SELECT visit_id,COALESCE(SUM(amount),0) AS total,
+          SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS unpriced FROM priced GROUP BY visit_id),
      adj AS (SELECT visit_id,SUM(CASE WHEN kind='discount' THEN amount ELSE 0 END) AS discount,
           SUM(CASE WHEN kind='refund' THEN amount ELSE 0 END) AS refund
           FROM effective_adjustments WHERE status='approved' GROUP BY visit_id),
@@ -1056,7 +1073,7 @@ from .ui_settings import install_ui_settings
 install_ui_settings(app,db,principal,require,audit,FILES)
 from .ui_settings import settings_path, read_settings
 from .queue_counts import install_queue_counts
-install_queue_counts(app,principal.peek,lambda:read_settings(settings_path(FILES)))
+install_queue_counts(app,principal.peek,lambda:read_settings(settings_path(FILES)),db)
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse

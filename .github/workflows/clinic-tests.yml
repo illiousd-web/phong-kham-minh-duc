@@ -21,6 +21,8 @@ jobs:
           --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -164,6 +166,8 @@ jobs:
         shell: powershell
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Installer logic checks (PowerShell 5.1)
         run: .\deploy\windows\Test-Installer.ps1
       - name: Synthetic CI administrator credential (masked, never committed)
@@ -444,6 +448,30 @@ jobs:
             $row = ($text -split "`n") | Where-Object { $_ -match '^\[.*ui_settings\.json' } | Select-Object -First 1
             if (-not $row -or $row -match '^\[KH') { throw "KIEM_TRA: settings row missing or failing: $row" }
           }
+      - name: C5 — two-year performance on disposable PostgreSQL, 2 logical CPUs and 8 GiB job
+        run: |
+          $py = 'C:\MinhDuc\.venv\Scripts\python.exe'
+          & $py -m pip install -r requirements-test.lock
+          if ($LASTEXITCODE) { throw 'C5 test dependencies' }
+          & $py -m playwright install chromium
+          if ($LASTEXITCODE) { throw 'C5 Chromium' }
+          $pgServices = @(Get-Service -Name 'postgresql*' | Where-Object { $_.Status -eq 'Running' })
+          Stop-Service MinhDuc
+          $pgServices | Stop-Service -Force
+          try {
+            $result = Join-Path $env:GITHUB_WORKSPACE 'test_evidence\c5\windows.json'
+            & $py -m scripts.do_hieu_nang --pg-bin 'C:\Program Files\PostgreSQL\17\bin' --baseline-ref 76f5628 --output $result
+            if ($LASTEXITCODE) { throw "C5 performance failed: $LASTEXITCODE; see test_evidence/c5" }
+          } finally {
+            $pgServices | Start-Service
+            Start-Service MinhDuc
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: c5-windows-performance
+          path: test_evidence/c5/
+          retention-days: 7
       - name: Collect logs (no secrets)
         if: always()
         run: |

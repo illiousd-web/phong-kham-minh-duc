@@ -179,7 +179,7 @@ async function doctorScreen(){
   (visits.length>open.length?`<div class="toolbar-actions">${selectField('Mở lượt khác (đã xong)','visit_choose',[['','— Chọn —'],...visits.filter(v=>!OPEN(v)).map(v=>[v.id,`#${v.id} – ${v.patient_name} (${vi(v.status)})`])])}</div>`:''),`Hàng chờ khám (${open.length})`);
  if(!sel.visit)return review+head;
  const vid=sel.visit;
- const [v,ords,rxs,cls,meds,care]=await Promise.all([api('/visits/'+vid),api('/orders'),api('/prescriptions'),api('/cls-services'),api('/dispensable-medicines'),api('/visits/'+vid+'/care')]);
+ const [v,ords,rxs,cls,meds,care]=await Promise.all([api('/visits/'+vid),api('/orders'),api('/prescriptions?visit_id='+vid),api('/cls-services'),api('/dispensable-medicines'),api('/visits/'+vid+'/care')]);
  const done=!OPEN(v);
  const [nurses,assigned,history,addenda]=await Promise.all([done?[]:api('/nurses'),done?[]:api('/visits/'+vid+'/nurses'),api('/visits/'+vid+'/revisions'),done&&ui.addendum?api('/visits/'+vid+'/addenda'):[]]);
  const mine=ords.filter(o=>o.visit_id===vid),rx=rxs.find(x=>x.visit_id===vid&&x.status!=='cancelled')||rxs.find(x=>x.visit_id===vid);
@@ -227,8 +227,11 @@ async function nurseScreen(){
 
 // ---------- Nhà thuốc: đơn chờ cấp → cấp → in ----------
 async function pharmacyScreen(){
- const [rxs,disp,stockList,meds]=await Promise.all([api('/prescriptions'),api('/dispensations'),api('/stock'),api('/medicines')]);
- const waiting=rxs.filter(x=>x.status==='draft');
+ const offset=sel.rxOffset||0;
+ const [rxs,disp,stockList,meds]=await Promise.all([api('/prescriptions?status=draft&limit=101&offset='+offset),api('/dispensations'),api('/stock'),api('/medicines')]);
+ if(!rxs.length&&offset){sel.rxOffset=Math.max(0,offset-100);return pharmacyScreen()}
+ const waiting=rxs.slice(0,100);
+ const pager=`<div class="toolbar-actions"><span>Trang ${1+offset/100}</span>${offset?btn('Trang trước','rx-page',`data-id="${Math.max(0,offset-100)}"`):''}${rxs.length>100?btn('Trang sau','rx-page',`data-id="${offset+100}"`):''}</div>`;
  const rxRow=x=>`<tr><td><b>${esc(x.patient_name)}</b><div class="muted">${esc(x.patient_code)} · đơn #${x.id} · lượt #${x.visit_id}</div></td><td>${esc(x.drug_lines).replace(/\n/g,'<br>')}</td><td><div class="multi-actions">${x.status==='draft'?btn('Cấp thuốc','dispense',`data-id="${x.id}"`,'btn smallbtn'):''}${formButtons('rx',x.id)}${x.status==='draft'?btn('Hủy đơn','cancel-rx',`data-id="${x.id}"`):''}</div></td></tr>`;
  let returnHtml='';
  if(sel.dispense&&disp.some(d=>d.id===sel.dispense)){const items=await api('/dispensations/'+sel.dispense+'/items');const left=items.filter(i=>i.quantity>i.returned);
@@ -243,7 +246,7 @@ async function pharmacyScreen(){
  let controlled='';
  if(ui.controlled_drugs&&cap('controlled_pharmacy')){const cm=meds.filter(m=>m.controlled);const ledger=await api('/controlled-ledger');
   controlled=details('Thuốc kiểm soát đặc biệt',`<form data-form="controlled-receipt" class="fields">${selectField('Thuốc kiểm soát','medicine_id',cm.map(m=>[m.id,m.name]))}${field('Số lô','lot_number','text','',true)}${dateField('Hạn dùng','expiry_date')}${field('Số lượng cơ sở','quantity','number','',true)}${field('Tham chiếu sổ','register_ref','text','',true)}${field('Lý do nhập','reason','text','',true)}<div class="wide"><button class="btn">Đề nghị nhập (quản lý duyệt)</button></div></form>`+t(ledger.map(l=>`<tr><td>${l.id}</td><td>${esc(l.event)}</td><td>${l.quantity}</td><td>${esc(l.register_ref)}</td><td>${showDay(l.created_at)}</td></tr>`),['Dòng sổ','Nghiệp vụ','Số lượng','Tham chiếu','Thời gian']))}
- return card(t(waiting.map(rxRow),['Bệnh nhân','Thuốc','Thao tác']),`Đơn chờ cấp (${waiting.length})`)+
+ return card(t(waiting.map(rxRow),['Bệnh nhân','Thuốc','Thao tác'])+pager,`Đơn chờ cấp — trang ${1+offset/100}`)+
   card(t(recent.map(d=>`<tr><td>#${d.id}</td><td>${esc(d.patient_name)}<div class="muted">${showDay(d.dispensed_at)}</div></td><td><div class="multi-actions">${formButtons('rx',d.prescription_id)}${btn(sel.dispense===d.id?'Đang mở':'Trả thuốc','pick',`data-kind="dispense" data-id="${d.id}"`)}</div></td></tr>`),['Phiếu cấp','Bệnh nhân','In / trả']),'Đã cấp gần đây')+returnHtml+
   details('Kho thuốc',stockHtml)+controlled}
 
@@ -516,6 +519,7 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
  if(action==='tab'){sel[element.dataset.kind==='mgr'?'mgrTab':'adminTab']=element.dataset.tab;await render();return}
  if(action==='clear-search'){sel.patientQuery='';await render();return}
  if(action==='audit-prev'||action==='audit-next'){auditOffset=Math.max(0,auditOffset+(action==='audit-next'?100:-100));await render();return}
+ if(action==='rx-page'){sel.rxOffset=id;await render();return}
  if(action==='export-receipt'){await downloadPdfReceipt(id);return}
  if(action==='export-form'){await exportMedicalForm(element.dataset.kind,element.dataset.id,element.dataset.format||'pdf');return}
  if(action==='file'){const r=await fetch('/api/orders/'+id+'/attachment',{headers:authHeader()});if(!r.ok)throw new Error('Không tải được tệp');const url=URL.createObjectURL(await r.blob());let a=document.createElement('a');a.href=url;a.download='ket_qua_mo_phong';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);return}

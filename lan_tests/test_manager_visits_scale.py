@@ -1,12 +1,15 @@
 """Quản lý → Lượt khám ở quy mô lớn trên PostgreSQL thật: 22.000 lượt, 20.000 bệnh nhân.
 
 - Mỗi truy vấn làm nóng một lần rồi đo năm lần, kiểm kết quả cả sáu lần.
-- Trung vị ≤ 1 giây, lần chậm nhất ≤ 2,5 giây; in đủ hai số vào log CI.
+- C5: trung vị ≤ 0,5 giây, lần chậm nhất ≤ 2,5 giây; in đủ hai số vào log CI.
 Không thêm chỉ mục, không đổi CSDL. Chỉ dữ liệu giả lập.
 """
 import secrets
 from statistics import median
+import json
+import subprocess
 import time
+import types
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -64,13 +67,14 @@ def test_search_with_22000_visits_and_20000_patients_is_fast_and_exact(capsys):
             assert not con.execute("SELECT 1 FROM pg_indexes WHERE tablename='visits' AND indexdef LIKE '%%created_at%%'").fetchone()
             c = PGConnection(con)
 
-            def timed(label, **kw):
+            def timed(label, search=None, **kw):
+                search=search or mv.search_visits
                 # Một lần làm nóng, sau đó đúng năm mẫu; không chọn mẫu tốt nhất.
-                result = mv.search_visits(c, today=TODAY, **kw)
+                result = search(c, today=TODAY, **kw)
                 samples = []
                 for _ in range(5):
                     started = time.perf_counter()
-                    measured = mv.search_visits(c, today=TODAY, **kw)
+                    measured = search(c, today=TODAY, **kw)
                     samples.append(time.perf_counter() - started)
                     assert measured == result, (label, measured, result)
                 timings[label] = {'median': median(samples), 'max': max(samples), 'samples': samples}
@@ -98,6 +102,28 @@ def test_search_with_22000_visits_and_20000_patients_is_fast_and_exact(capsys):
             beyond = timed('1 năm, settled, quá trang cuối', money='settled', page_no=settled['pages'] + 1, **YEAR)
             assert beyond['items'] == [] and beyond['total'] == settled['total']
 
+            # C5: đối chứng cùng dữ liệu/cùng máy, không so hai phần cứng như thể
+            # chúng giống nhau. Mã trước C5 lấy từ main đã hợp nhất PR 13.
+            before=types.ModuleType('app.manager_visits_before_c5')
+            before.__package__='app'
+            source=subprocess.run(['git','show','76f5628:app/manager_visits.py'],cwd=ROOT,capture_output=True,text=True,check=True).stdout
+            exec(compile(source,'manager_visits_before_c5.py','exec'),before.__dict__)
+            old=timed('trước C5, settled, quá trang cuối', search=before.search_visits,
+                      money='settled',page_no=settled['pages']+1,**YEAR)
+            assert old==beyond
+            evidence=Path('test_evidence/c5');evidence.mkdir(parents=True,exist_ok=True)
+            plans={}
+            for label,module in [('before',before),('after',mv)]:
+                _,_,where,args,money=module.search_filters(c,**YEAR,q='',status='',money='settled',today=TODAY)
+                if label=='before':
+                    query=module.SEARCH_SQL.format(where=where,select='id AS visit_id,COUNT(*) OVER() AS total_rows',money='WHERE money_status=?',materialized='MATERIALIZED ')
+                    query+=' ORDER BY id DESC LIMIT ? OFFSET ?'
+                else:
+                    query=module.SEARCH_SQL.format(where=where,money='WHERE money_status=?',materialized='MATERIALIZED ')
+                plans[label]=con.execute('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) '+query.replace('?', '%s'),
+                                         (*args,'settled',50,settled['pages']*50)).fetchone()[0]
+            (evidence/'manager-explain.json').write_text(json.dumps(plans,indent=2),encoding='utf-8')
+
             # Tìm tên với 20.000 bệnh nhân, làm nóng riêng cho mỗi truy vấn.
             mv.fold_name.cache_clear()
             by_family = timed('tên "dang"', q='dang', **YEAR)
@@ -112,8 +138,10 @@ def test_search_with_22000_visits_and_20000_patients_is_fast_and_exact(capsys):
             assert timed('tên "Đạt"', q='Đạt', **YEAR)['total'] == timed('tên "dat"', q='dat', **YEAR)['total'] > 0
             timed('tên "dang", 7 ngày mặc định', q='dang')
         for label, values in timings.items():
-            assert values['median'] <= 1.0, f'{label}: trung vị {values["median"]:.6f} giây > 1 giây; DỪNG LẠI'
+            if label.startswith('trước C5'):continue
+            assert values['median'] <= 0.5, f'{label}: trung vị {values["median"]:.6f} giây > 0,5 giây'
             assert values['max'] <= 2.5, f'{label}: chậm nhất {values["max"]:.6f} giây > 2,5 giây'
+        (evidence/'manager-timings.json').write_text(json.dumps(timings,ensure_ascii=False,indent=2),encoding='utf-8')
     finally:
         with psycopg.connect(SOURCE, autocommit=True) as c:
             c.execute(sql.SQL('DROP DATABASE IF EXISTS {} WITH (FORCE)').format(sql.Identifier(name)))

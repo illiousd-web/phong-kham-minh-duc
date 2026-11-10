@@ -14,7 +14,7 @@ from fastapi import Depends
 OPEN = lambda v: v['status'] not in ('completed', 'cancelled')
 
 
-def install_queue_counts(app, peek, load_ui):
+def install_queue_counts(app, peek, load_ui, db):
     cache = {}
 
     def get(path, u, **kw):
@@ -40,7 +40,10 @@ def install_queue_counts(app, peek, load_ui):
         if 'technician' in roles:
             out['lab'] = sum(o['status'] == 'ordered' for o in get('/api/orders', u))
         if 'pharmacy' in roles:
-            out['pharmacy'] = sum(x['status'] == 'draft' for x in get('/api/prescriptions', u))
+            # Cùng tập đơn nháp của API/giao diện, không tải mọi đơn và dòng
+            # thuốc trong hai năm chỉ để đếm một số. Bao gồm đủ các trang.
+            with db() as c:
+                out['pharmacy'] = c.execute("SELECT COUNT(*) FROM prescriptions WHERE status='draft'").fetchone()[0]
         if 'cashier' in roles:
             out['cashier'] = sum(d['charged'] - d['paid'] > 0 or d['unpriced_count'] > 0 for d in get('/api/dues', u))
         if 'manager' in roles:
