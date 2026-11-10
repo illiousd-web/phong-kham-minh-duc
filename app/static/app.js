@@ -179,7 +179,7 @@ async function doctorScreen(){
   (visits.length>open.length?`<div class="toolbar-actions">${selectField('Mở lượt khác (đã xong)','visit_choose',[['','— Chọn —'],...visits.filter(v=>!OPEN(v)).map(v=>[v.id,`#${v.id} – ${v.patient_name} (${vi(v.status)})`])])}</div>`:''),`Hàng chờ khám (${open.length})`);
  if(!sel.visit)return review+head;
  const vid=sel.visit;
- const [v,ords,rxs,cls,meds,care]=await Promise.all([api('/visits/'+vid),api('/orders'),api('/prescriptions?visit_id='+vid),api('/cls-services'),api('/dispensable-medicines'),api('/visits/'+vid+'/care')]);
+ const [v,ords,rxs,cls,meds,care]=await Promise.all([api('/visits/'+vid),api('/orders?visit_id='+vid),api('/prescriptions?visit_id='+vid),api('/cls-services'),api('/dispensable-medicines'),api('/visits/'+vid+'/care')]);
  const done=!OPEN(v);
  const [nurses,assigned,history,addenda]=await Promise.all([done?[]:api('/nurses'),done?[]:api('/visits/'+vid+'/nurses'),api('/visits/'+vid+'/revisions'),done&&ui.addendum?api('/visits/'+vid+'/addenda'):[]]);
  const mine=ords.filter(o=>o.visit_id===vid),rx=rxs.find(x=>x.visit_id===vid&&x.status!=='cancelled')||rxs.find(x=>x.visit_id===vid);
@@ -216,7 +216,7 @@ async function nurseScreen(){
  if(!visits.some(v=>v.id===sel.nurseVisit))sel.nurseVisit=open[0]?.id??null;
  const head=card(queue(open.map(v=>({id:v.id,main:`#${v.id} · ${esc(v.patient_name)}`,sub:pill(v.status)})),{kind:'nurse-visit',current:sel.nurseVisit,emptyText:'Chưa có lượt nào được bác sĩ phân công.'}),`Lượt được giao (${open.length})`);
  if(!sel.nurseVisit)return head;
- const vid=sel.nurseVisit;const [v,care,cls,orders]=await Promise.all([api('/visits/'+vid),api('/visits/'+vid+'/care'),api('/cls-services'),api('/orders')]);const done=!OPEN(v);
+ const vid=sel.nurseVisit;const [v,care,cls,orders]=await Promise.all([api('/visits/'+vid),api('/visits/'+vid+'/care'),api('/cls-services'),api('/orders?visit_id='+vid)]);const done=!OPEN(v);
  const pending=care.tasks.filter(x=>x.status==='pending');
  const nursingOrders=(done?'':`<form data-form="order" class="fields">${hidden('visit_id',vid)}${selectField('Dịch vụ theo bảng giá','service_id',cls.map(x=>[x.id,`${vi(x.category)} – ${x.name} (${servicePrice(x)})`]))}<div class="wide"><button class="btn" ${cls.length?'':'disabled'}>Thêm chỉ định</button></div></form>`)+t(orders.filter(o=>o.visit_id===vid).map(o=>`<tr><td>${esc(o.name)}</td><td>${pill(o.status)}${o.unpriced?' · CHƯA CÓ GIÁ':''}</td></tr>`),['Chỉ định','Trạng thái']);
  const vitals=`<form class="fields" data-form="nurse-vitals">${hidden('visit_id',vid)}${hidden('version',v.version)}${vitalsFields()}<div class="wide"><button class="btn" ${done?'disabled':''}>Lưu sinh hiệu</button><p class="hint">Điều dưỡng không xem, không sửa chẩn đoán và đơn thuốc.</p></div></form>`;
@@ -271,8 +271,11 @@ function capCheck(form){if(!form||form.dataset.unpriced!=='1')return false;const
 async function cashierScreen(){
  const [dues,pays,adj,manualRequests]=await Promise.all([api('/dues'),api('/payments'),api('/adjustments'),api('/manual-price-requests?limit=50')]);dueList=dues;
  const owing=dues.filter(d=>d.charged-d.paid>0||d.unpriced_count>0);
+ const pages=Math.max(1,Math.ceil(owing.length/100)),page=Math.min(sel.cashPage||1,pages);sel.cashPage=page;
+ const visible=owing.slice((page-1)*100,page*100);
+ const pager=`<div class="toolbar-actions"><span>Trang ${page}/${pages} · ${owing.length} lượt</span>${page>1?btn('Trang trước','cash-page',`data-id="${page-1}"`):''}${page<pages?btn('Trang sau','cash-page',`data-id="${page+1}"`):''}</div>`;
  if(!dues.some(d=>d.visit_id===sel.cashVisit))sel.cashVisit=owing[0]?.visit_id??null;
- const head=card(queue(owing.map(d=>({id:d.visit_id,main:`#${d.visit_id} · ${esc(d.patient_name)}`,sub:`${esc(d.patient_code)} · ${d.unpriced_count?`CHƯA CÓ GIÁ (${d.unpriced_count} khoản)`:'còn '+money(d.charged-d.paid)}`})),{kind:'cash',current:sel.cashVisit,emptyText:'Không còn lượt cần thu tiền.'})+
+ const head=card(queue(visible.map(d=>({id:d.visit_id,main:`#${d.visit_id} · ${esc(d.patient_name)}`,sub:`${esc(d.patient_code)} · ${d.unpriced_count?`CHƯA CÓ GIÁ (${d.unpriced_count} khoản)`:'còn '+money(d.charged-d.paid)}`})),{kind:'cash',current:sel.cashVisit,emptyText:'Không còn lượt cần thu tiền.'})+pager+
   `<div class="toolbar-actions">${selectField('Chọn lượt khác','cash_choose',[['','— Chọn —'],...dues.map(d=>[d.visit_id,`#${d.visit_id} – ${d.patient_name} (${d.unpriced_count?'CHƯA CÓ GIÁ':'còn '+money(d.charged-d.paid)})`])])}</div>`,`Lượt còn nợ (${owing.length})`);
  const payHistory=details('Lịch sử thu',t(pays.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.patient_name)}<div class="muted">lượt #${x.visit_id} · ${showDay(x.created_at)}</div></td><td>${money(x.amount)}<div class="muted">${PAYMENT_KIND[x.kind]||''}</div></td><td>${esc(vi(x.method))}</td><td>${receiptButton(x,true)}</td></tr>`),['Mã thu','Bệnh nhân','Số tiền','Hình thức','']));
  const myRequests=details('Đề nghị giảm phí / hoàn tiền đã gửi',t(adj.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.patient_name)}<div class="muted">lượt #${x.visit_id}</div></td><td>${esc(vi(x.kind))} — ${money(x.amount)}</td><td>${pill(x.status)}</td></tr>`),['Mã','Bệnh nhân','Loại','Trạng thái']))+
@@ -520,6 +523,7 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
  if(action==='clear-search'){sel.patientQuery='';await render();return}
  if(action==='audit-prev'||action==='audit-next'){auditOffset=Math.max(0,auditOffset+(action==='audit-next'?100:-100));await render();return}
  if(action==='rx-page'){sel.rxOffset=id;await render();return}
+ if(action==='cash-page'){sel.cashPage=id;await render();return}
  if(action==='export-receipt'){await downloadPdfReceipt(id);return}
  if(action==='export-form'){await exportMedicalForm(element.dataset.kind,element.dataset.id,element.dataset.format||'pdf');return}
  if(action==='file'){const r=await fetch('/api/orders/'+id+'/attachment',{headers:authHeader()});if(!r.ok)throw new Error('Không tải được tệp');const url=URL.createObjectURL(await r.blob());let a=document.createElement('a');a.href=url;a.download='ket_qua_mo_phong';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);return}

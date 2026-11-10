@@ -51,6 +51,9 @@ của dịch vụ đang vận hành. Bản sao lưu, khóa, tệp đính kèm v�
 - Mỗi thao tác làm nóng một lần, đo 20 lần. Trung vị ≤ 1,5 giây; P95 ≤ 3 giây.
   P95 dùng mẫu thứ 19 trong 20 mẫu đã sắp tăng dần; ghi cả mẫu chậm nhất.
   Timeout/lỗi hoặc thiếu mẫu là không đạt, không thay bằng số 0 hoặc bỏ qua.
+  Mở phiếu đo từ bấm một lượt đến khi phiếu sẵn sàng. In PDF đo từ bấm nút in
+  đến khi tải và mở/đọc PDF xong. Việc vào màn hình trước đó làm ngoài mẫu;
+  nếu chuẩn bị lỗi thì phép đo vẫn không đạt. Áp dụng giống nhau trước/sau.
 - Sao lưu thật bằng pg_dump, mã hóa, giải mã và kiểm SHA-256 toàn bộ; tổng
   sao lưu + kiểm phải ≤ 900 giây. Khôi phục pg_restore thật, so số dòng mọi
   bảng, tổng tiền, từng lô và SHA-256 của toàn bộ 2.000 tệp. Hai khác biệt đúng
@@ -99,6 +102,18 @@ theo lô truy vấn, bác sĩ tải đơn theo lượt đang mở, nhà thuốc 
 nhà thuốc COUNT trực tiếp trên toàn bộ đơn nháp. Đường API cũ vẫn trả đủ lịch
 sử khi không truyền giới hạn. Công nợ dùng cùng giá hiệu lực, chỉ giữ kết quả
 một lần trước cộng/đếm để tránh lặp tính toán.
+
+Lượt đo Windows đầu ở run 55 còn không đạt: thu ngân trung vị 1,754 s,
+phiếu khám 2,212 s, PDF 2,905 s. Thu ngân đang vẽ 2.523 nút lượt còn nợ cùng
+lúc. C5 phân trang 100 dòng, giữ đủ mọi lượt qua Trang trước/Trang sau và
+giữ nguyên dữ liệu API. Phiếu khám chỉ tải chỉ định của lượt đang mở,
+dùng chỉ mục sẵn có và giữ nguyên điều kiện phân quyền.
+
+Hai số phiếu/PDF của run 55 cộng cả việc mở lại màn hình trước đó, nên là
+thời gian nhiều thao tác. Bộ đo đã tách chuẩn bị như phương pháp ở trên;
+giữ nguyên ngưỡng, giữ log cũ và đo lại cả main/bản mới cùng cách. Bản sao
+sau sửa đường dẫn ở run 55 kiểm/khôi phục khớp, RAM dịch vụ 112,001 MB,
+backup + kiểm 10,733 s, restore 12,430 s; các thao tác chưa đạt vẫn phải đo lại.
 
 ## Kết quả đo
 

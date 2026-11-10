@@ -118,11 +118,12 @@ class Memory:
                 for suffix,number in [('_peak_bytes',value),('_peak_mib',round(value/MIB,3)),('_peak_mb',round(value/1000000,3))]}
 
 
-def measure(label, action, *, samples=20):
+def measure(label, action, *, samples=20, prepare=lambda:None):
     values=[];errors=[]
     try:
-        action()  # Một lần làm nóng, không đưa vào mẫu.
+        prepare();action()  # Một lần làm nóng, không đưa vào mẫu.
         for _ in range(samples):
+            prepare()  # Mở màn hình trước đó; không cộng hai thao tác vào một.
             started=time.perf_counter();action();values.append(time.perf_counter()-started)
     except Exception as error:
         # Baseline có thể chậm/hỏng: ghi lại, không biến timeout thành mẫu đạt.
@@ -217,10 +218,9 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
                     result['screens']['hang_cho_'+role]=measure('Hàng chờ '+role,lambda page=page,where=where:go(page,where))
                 doctor=pages['doctor'];visit=manifest['doctor_visit']
                 def clinical():
-                    go(doctor,'doctor')
                     doctor.locator(f'[data-action="pick"][data-kind="visit"][data-id="{visit}"]').click();settled(doctor)
                     expect(doctor.locator('[data-form="clinical"] [name="diagnosis"]')).to_have_value('Chẩn đoán giả lập C5')
-                result['screens']['phieu_kham']=measure('Mở phiếu khám',clinical)
+                result['screens']['phieu_kham']=measure('Mở phiếu khám',clinical,prepare=lambda:go(doctor,'doctor'))
                 reception=pages['reception']
                 def patient_search():
                     go(reception,'reception');reception.locator('#search-patients').fill(manifest['patient_query'])
@@ -237,12 +237,13 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
                     assert response.value.status==200 and response.value.json()['total']>0;settled(manager)
                 result['screens']['tra_cuu_thang']=measure('Tra cứu lượt khám trọn tháng',month)
                 def pdf():
-                    clinical()
                     with doctor.expect_download() as download:doctor.locator('[data-form="clinical"] [data-kind="visit"][data-format="pdf"]').click()
                     path=profile/'phieu-kham.pdf';download.value.save_as(str(path))
                     import pymupdf
                     with pymupdf.open(path) as doc:assert len(doc)>0 and 'Chẩn đoán giả lập C5' in ''.join(p.get_text() for p in doc)
-                result['screens']['in_pdf']=measure('In PDF phiếu khám',pdf)
+                def prepare_pdf():
+                    go(doctor,'doctor');clinical()
+                result['screens']['in_pdf']=measure('In PDF phiếu khám',pdf,prepare=prepare_pdf)
                 browser.close()
             # Đóng phiên đo và dừng app giả lập trước khi chụp trạng thái nguồn.
             # Request GET cũ có thể còn ghi last_seen/nhật ký sau browser.close;

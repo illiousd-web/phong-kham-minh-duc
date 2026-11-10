@@ -20,6 +20,19 @@ def test_timeout_hoac_loi_khong_duoc_coi_la_mau_dat():
     assert 'TimeoutError' in result['errors'][0]
 
 
+def test_chuan_bi_khong_cong_hai_thao_tac_va_loi_chuan_bi_van_khong_dat(monkeypatch):
+    clock=[0.0];prepared=[]
+    def prepare():clock[0]+=10;prepared.append(True)
+    def action():clock[0]+=.1
+    monkeypatch.setattr('scripts.do_hieu_nang.time.perf_counter',lambda:clock[0])
+    result=measure('Một thao tác',action,prepare=prepare)
+    assert len(prepared)==21 and result['sample_count']==20 and result['passed']
+    assert abs(result['median_seconds']-.1)<1e-9
+    def failed_prepare():raise TimeoutError('Không mở được màn hình chuẩn bị')
+    failed=measure('Chuẩn bị lỗi',action,prepare=failed_prepare)
+    assert not failed['passed'] and failed['sample_count']==0 and 'TimeoutError' in failed['errors'][0]
+
+
 def test_loi_manifest_duoc_ghi_la_khong_dat_khong_co_so_khoi_phuc(tmp_path,monkeypatch):
     import json
     from types import SimpleNamespace
