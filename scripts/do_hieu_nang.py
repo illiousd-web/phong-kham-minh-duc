@@ -78,7 +78,7 @@ def postgres_cluster(bin_path, root):
     options=f'-h 127.0.0.1 -p {port} -c shared_buffers=256MB -c work_mem=4MB -c max_connections=32'
     subprocess.run([binary('pg_ctl'),'-D',str(data),'-l',str(root/'postgres.log'),'-o',options,'-w','start'],check=True,stdout=subprocess.DEVNULL)
     try:
-        yield f'postgresql://c5_owner:{password}@127.0.0.1:{port}/postgres',int((data/'postmaster.pid').read_text().splitlines()[0])
+        yield f'postgresql://c5_owner:{password}@127.0.0.1:{port}/postgres',int((data/'postmaster.pid').read_text(encoding='utf-8').splitlines()[0])
     finally:
         subprocess.run([binary('pg_ctl'),'-D',str(data),'-m','fast','-w','stop'],check=True,stdout=subprocess.DEVNULL)
 
@@ -168,7 +168,7 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
     import base64
     from cryptography import x509
     from cryptography.hazmat.primitives import serialization
-    credentials=json.loads((data/'credentials.json').read_text())
+    credentials=json.loads((data/'credentials.json').read_text(encoding='utf-8'))
     result={'screens':{},'source':str(source),'errors':[]}
     profile=data/label;profile.mkdir()
     log=(profile/'service.log').open('w',encoding='utf-8')
@@ -178,7 +178,7 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
     try:
         with Memory(app.pid,pg_pid) as memory:
             for _ in range(150):
-                if app.poll() is not None:raise RuntimeError('Dịch vụ kiểm thử không khởi động: '+(profile/'service.log').read_text()[-1000:])
+                if app.poll() is not None:raise RuntimeError('Dịch vụ kiểm thử không khởi động: '+(profile/'service.log').read_text(encoding='utf-8')[-1000:])
                 try:
                     httpx.get(env['CLINIC_ORIGIN']+'/api/health',verify=ssl.create_default_context(cafile=str(data/'certs/ca.crt')),trust_env=False,timeout=1).raise_for_status();break
                 except (httpx.HTTPError,OSError):time.sleep(.1)
@@ -246,7 +246,7 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
             before=database_state(env['CLINIC_DATABASE_URL']);attachments=files_state(data/'attachments')
             cmd=[sys.executable,str(ROOT/'scripts/do_hieu_nang.py'),'--source',str(source),'--workspace',str(profile)]
             subprocess.run(cmd+['--worker','backup','--output',str(profile/'backup.json')],env=env,check=True,timeout=960)
-            backup=json.loads((profile/'backup.json').read_text());result.update(backup)
+            backup=json.loads((profile/'backup.json').read_text(encoding='utf-8'));result.update(backup)
             assert backup['verified_files']==manifest['attachments']+2
             target=manifest['database_name']+'_restore_'+label
             with psycopg.connect(os.environ['CLINIC_PERF_SOURCE_DATABASE_URL'],autocommit=True) as c:
@@ -255,7 +255,7 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
             try:
                 restore_env={**env,'C5_BACKUP':backup['backup_path'],'C5_RESTORE_URL':restore_url}
                 subprocess.run(cmd+['--worker','restore','--workspace',str(profile/'restored'),'--output',str(profile/'restore.json')],env=restore_env,check=True,timeout=960)
-                result.update(json.loads((profile/'restore.json').read_text()))
+                result.update(json.loads((profile/'restore.json').read_text(encoding='utf-8')))
                 restored=database_state(restore_url)
                 expected={**before,'tables':dict(before['tables'])}
                 # Hợp đồng restore đã có: hủy mọi phiên trình duyệt và ghi
