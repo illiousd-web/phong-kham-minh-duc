@@ -180,7 +180,7 @@ async function controlledReviewCard(){
   `<form data-form="controlled-approve" class="fields">${selectField('Đơn chờ duyệt','prescription_id',list.map(q=>[q.id,'#'+q.id]))}${field('Lý do duyệt','reason','text','',true)}${field('Tham chiếu sổ kiểm soát','register_ref','text','',true)}<div class="wide"><button class="btn" ${list.length?'':'disabled'}>Duyệt đơn kiểm soát</button></div></form>`,`Đơn thuốc kiểm soát chờ bác sĩ thứ hai duyệt (${list.length})`)}
 async function doctorScreen(){
  const [open,visitHistory,daily]=await Promise.all([api('/visits'),api('/visits?history=true'),api('/doctor/queue?'+new URLSearchParams({day:sel.doctorDay||'',q:sel.doctorQuery||''}))]);
- const visits=[...open,...visitHistory];
+ const visits=[...open,...visitHistory,...daily.visits];
  if(!visits.some(v=>v.id===sel.visit))sel.visit=open[0]?.id??null;
  const review=await controlledReviewCard();
  const filter=`<form data-form="doctor-filter" class="fields">${dateField('Ngày tiếp đón','doctor_day',true,daily.day)}${field('Tìm tên không dấu','doctor_query')}<div class="wide"><button class="btn">Tìm người bệnh</button></div></form>`;

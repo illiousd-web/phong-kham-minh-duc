@@ -84,5 +84,18 @@ def test_m0_six_sections_keyboard_allergies_and_responsive_evidence(https_server
                 page.keyboard.press('F8')
             assert completed.value.status == 200; settle(page)
             expect(page.locator('[data-form="clinical"] button.btn')).to_be_disabled()
+        # A date-filtered completed visit remains selectable beyond the legacy
+        # 100-item closed-history picker. No widening of clinical permissions.
+        old_visits = []
+        with db(True) as c:
+            for _ in range(101):
+                c.execute("INSERT INTO visits(patient_id,doctor_id,created_by,created_at,status) VALUES(?,?,?,?,'completed')",
+                          (pid, IDS['doctor'], IDS['reception'], '2020-01-01T00:00:00+00:00'))
+                old_visits.append(c.execute('SELECT last_insert_rowid()').fetchone()[0])
+        page.locator('[name="doctor_day"]').fill('01/01/2020')
+        page.locator('[data-form="doctor-filter"] button').click(); settle(page)
+        pick(page, 'visit', old_visits[0])
+        expect(page.locator('[data-form="clinical"] [name="visit_id"]')).to_have_value(str(old_visits[0]))
+        expect(page.locator('[data-form="clinical"] button.btn')).to_be_disabled()
         assert not errors
         browser.close()
