@@ -260,7 +260,12 @@ completed, đều phân công cùng bác sĩ/điều dưỡng; mỗi loại tron
 có một pending trước 150 approved. Đối chiếu cả ID, không trùng, COUNT, lịch sử
 và các phản hồi 401/403/phạm vi bác sĩ khác. Sau đó đổi cả 151 yêu cầu mỗi loại
 thành pending để chứng minh chính hàng chờ duyệt cũng không còn trần 100.
-Chromium 109/390px mở đủ năm màn hình và chọn được chỉ định cũ.
+Chromium 109/390px mở đủ năm màn hình, chọn được chỉ định cũ và mở riêng
+lượt đã kết thúc ở chế độ chỉ đọc. Lượt kiểm đầy đủ phát hiện tham số lịch sử
+bác sĩ gửi sai tên sau khi tách danh sách; đã sửa về `history=true`. Bài UI
+hoàn tất → lập phụ lục vẫn giữ nguyên kiểm tra, mở ô lịch sử trước khi chọn.
+Ca C4 thủ thuật đọc chỉ định đã duyệt theo `visit_id`, không đọc hàng chờ;
+giữ nguyên mọi khẳng định phí/phiếu thu/tình trạng đã thu đủ.
 
 Tên kiểm thử: `test_pending_queues_sqlite_keep_old_work_counts_and_permissions`,
 `test_pending_queues_postgresql_keep_old_work_counts_and_permissions`,

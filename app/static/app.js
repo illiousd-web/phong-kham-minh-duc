@@ -175,7 +175,7 @@ async function controlledReviewCard(){
  return card(t(list.map(q=>`<tr><td>#${q.id} / ${esc(q.patient_code)}</td><td>${esc(q.diagnosis)}</td><td>${esc(q.drug_lines)}</td></tr>`),['Đơn','Chẩn đoán','Thuốc kiểm soát'])+
   `<form data-form="controlled-approve" class="fields">${selectField('Đơn chờ duyệt','prescription_id',list.map(q=>[q.id,'#'+q.id]))}${field('Lý do duyệt','reason','text','',true)}${field('Tham chiếu sổ kiểm soát','register_ref','text','',true)}<div class="wide"><button class="btn" ${list.length?'':'disabled'}>Duyệt đơn kiểm soát</button></div></form>`,`Đơn thuốc kiểm soát chờ bác sĩ thứ hai duyệt (${list.length})`)}
 async function doctorScreen(){
- const [open,visitHistory]=await Promise.all([api('/visits'),api('/visits?visitHistory=true')]);
+ const [open,visitHistory]=await Promise.all([api('/visits'),api('/visits?history=true')]);
  const visits=[...open,...visitHistory];
  if(!visits.some(v=>v.id===sel.visit))sel.visit=open[0]?.id??null;
  const review=await controlledReviewCard();

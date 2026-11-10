@@ -654,7 +654,7 @@ def test_luot_hom_truoc_nhung_thu_tien_hom_nay(day):
 def test_hai_luot_thu_thuat_chi_dinh_tinh_phi_thu_tien(day):
     for index in (8, 9):
         v = day.visits[index]
-        order = next(x for x in day.call('doctor', 'GET', '/api/orders') if x['id'] == v['procedure_order'])
+        order = next(x for x in day.call('doctor', 'GET', f'/api/orders?visit_id={v["id"]}') if x['id'] == v['procedure_order'])
         assert order['category'] == 'procedure' and order['status'] == 'approved'
         lines = day.call('cashier', 'GET', f'/api/charges/{v["id"]}')
         charge = next(x for x in lines if x['source_type'] == 'order' and x['source_id'] == order['id'])

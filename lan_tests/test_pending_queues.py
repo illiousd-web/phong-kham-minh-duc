@@ -47,6 +47,10 @@ def test_pending_queues_chromium109_show_all_old_work(https_server):
             elif role in ('doctor','nurse'):
                 kind='visit' if role=='doctor' else 'nurse-visit'
                 expect(page.locator(f'[data-action="pick"][data-kind="{kind}"][data-id="{data["visits"][0]}"]')).to_have_count(1)
+                if role=='doctor':
+                    page.locator('summary').filter(has_text='Lượt đã kết thúc (100 gần nhất)').click()
+                    page.locator('#visit_choose').select_option(str(data['visits'][-1]));settle(page)
+                    expect(page.locator('[data-form="clinical"] [name="diagnosis"]')).to_be_disabled()
             else:
                 for path,action in (('/api/adjustments','review-adjustment'),('/api/orders/cancellation-requests','review-cancel'),('/api/medication-returns','review-return'),('/api/visits/addenda/pending','review-addendum')):
                     expect(page.locator(f'[data-action="{action}"][data-id="{data["pending"][path]}"][data-value="approve"]')).to_have_count(1)

@@ -110,7 +110,7 @@ def test_v050_all_workflows_https_browser(clients,visit):
                 assert manager.locator(f'[data-action="review-addendum"][data-id="{aid}"]').count()==0
                 assert clients['admin'].put('/api/ui-settings',json={'addendum':True}).status_code==200
                 manager=go(manager,'manager');send(manager,manager.locator(f'[data-action="review-addendum"][data-id="{aid}"][data-value="approve"]'),'Đã xử lý phụ lục')
-                d=go(d,'doctor');d.locator('#visit_choose').select_option(str(visit));settle(d)
+                d=go(d,'doctor');d.locator('summary').filter(has_text='Lượt đã kết thúc (100 gần nhất)').click();d.locator('#visit_choose').select_option(str(visit));settle(d)
                 expect(d.locator('[data-form="clinical"] [name="diagnosis"]')).to_be_disabled()
                 with d.expect_download() as download:d.locator('[data-kind="visit"][data-format="pdf"]').click()
                 download.value.save_as(str(evidence/'phieu-kham-phu-luc.pdf'))
