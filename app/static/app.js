@@ -181,13 +181,13 @@ async function controlledReviewCard(){
 async function doctorScreen(){
  const [open,visitHistory,daily]=await Promise.all([api('/visits'),api('/visits?history=true'),api('/doctor/queue?'+new URLSearchParams({day:sel.doctorDay||'',q:sel.doctorQuery||''}))]);
  const visits=[...open,...visitHistory,...daily.visits];
- if(!visits.some(v=>v.id===sel.visit))sel.visit=open[0]?.id??null;
+ if(!daily.visits.some(v=>v.id===sel.visit))sel.visit=null;
  const review=await controlledReviewCard();
- const filter=`<form data-form="doctor-filter" class="fields">${dateField('Ngày tiếp đón (bỏ trống: mọi lượt chờ)','doctor_day',false,daily.day)}${field('Tìm tên không dấu','doctor_query')}<div class="wide"><button class="btn">Tìm người bệnh</button></div></form>`;
+ const filter=`<form data-form="doctor-filter" class="fields">${dateField('Ngày tiếp đón (bỏ trống: mọi lượt chờ)','doctor_day',false,daily.day)}${field('Tìm tên không dấu','doctor_query')}<div class="wide"><button class="btn">Tìm người bệnh (F4)</button></div></form>`;
  const doctorStatus=s=>`<span class="status ${({waiting_results:'results-pending',results_ready:'ready',in_progress:'progress',completed:'complete'})[s]||TONE[s]||''}">${esc(s==='waiting_results'?'Chờ kết quả cận lâm sàng':vi(s))}</span>`;
  const head=card(filter+queue(daily.visits.map(v=>({id:v.id,main:`${v.daily_number}. ${esc(v.patient_name)}`,sub:`${esc(v.date_of_birth?ageOf(v.date_of_birth):'Chưa rõ')} tuổi · ${esc(v.sex||'')} · ${doctorStatus(v.queue_status)} · ${showDay(v.created_at)}`})),{kind:'visit',current:sel.visit,emptyText:'Không có lượt trong ngày đã chọn.'}),`Danh sách khám · ${open.length} lượt chưa hoàn tất`)+
   details('Lượt đã kết thúc (100 gần nhất)',(visitHistory.length?`<div class="toolbar-actions">${selectField('Mở lượt khác (đã xong)','visit_choose',[['','— Chọn —'],...visitHistory.map(v=>[v.id,`#${v.id} – ${v.patient_name} (${vi(v.status)})`])])}</div>`:empty('Chưa có lượt đã kết thúc.')));
- if(!sel.visit)return {html:review+head,after(){if($('doctor_query'))$('doctor_query').value=sel.doctorQuery||''}};
+ if(!sel.visit)return {html:review+`<div class="doctor-layout"><aside>${head}</aside><section class="card">Chọn một lượt khám</section></div>`,after(){if($('doctor_query'))$('doctor_query').value=sel.doctorQuery||''}};
  const vid=sel.visit;
  const [v,ords,rxs,cls,meds,care]=await Promise.all([api('/visits/'+vid),api('/orders?visit_id='+vid),api('/prescriptions?visit_id='+vid),api('/cls-services'),api('/dispensable-medicines'),api('/visits/'+vid+'/care')]);
  const done=!OPEN(v);
@@ -462,7 +462,7 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  if(kind==='manual-report'){manualReportDay=value('report_day');parseDay(manualReportDay);await render();return;}
  if(kind==='doctor-filter'){sel.doctorDay=parseDay(value('doctor_day'));sel.doctorQuery=value('doctor_query');await render();return;}
  if(kind==='allergies'){const state=value('allergy_state'),text=value('allergy_text');if(state==='known'&&!text)throw new Error('Cần ghi tên thuốc / phản ứng đã biết');await api('/patients/'+num('patient_id')+'/allergies',{method:'PUT',body:{allergies:state==='none'?'Không dị ứng':state==='unknown'?null:text}});$('m0-dialog')?.close();await render();notify('Đã lưu dị ứng thuốc');return;}
- if(kind==='close-abandoned'){await api('/visits/'+num('visit_id')+'/close-abandoned',{method:'POST',body:{reason:value('close_reason'),note:value('close_note')}});$('m0-dialog')?.close();sel.visit=null;await render();notify('Đã đóng lượt bỏ dở');return;}
+ if(kind==='close-abandoned'){try{await api('/visits/'+num('visit_id')+'/close-abandoned',{method:'POST',body:{reason:value('close_reason'),note:value('close_note')}});}catch(error){if(error.message.includes('hủy/hoàn')){showM0Dialog('<h2>Lượt đã phát sinh phí; hãy gửi yêu cầu hủy lượt cho Quản lý</h2><p>Vai trò hiện tại không có quyền tạo yêu cầu hủy lượt. Liên hệ Quản lý xử lý theo quy trình hiện có.</p>');return;}throw error;}$('m0-dialog')?.close();sel.visit=null;await render();notify('Đã đóng lượt bỏ dở');return;}
  if(kind==='patient-search'){sel.patientQuery=value('q');await render();return;}
  if(kind==='price-preview'){
   pricePreview=null;priceResult=null;const picked=f.get('price_file');priceFile=picked?.name?picked:priceFile;
@@ -546,7 +546,7 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
   if(target==='payment'){
    const payment=await api('/visits/'+vid+'/payment-status');
    if(active!=='doctor'||sel.visit!==vid)return;
-   $('doctor-payment-status').textContent=payment.status;
+   $('doctor-payment-status').textContent=payment.status+' · Phải thu: '+money(payment.charged)+' · Đã thu: '+money(payment.paid)+' · Còn lại: '+money(payment.due);
   }
   const section=document.getElementById('doctor-'+target);
   section.style.scrollMarginTop=(document.querySelector('.doctor-sticky').getBoundingClientRect().height+12)+'px';
@@ -586,7 +586,7 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
  else if(action==='approve'){await api('/orders/'+id+'/approve',{method:'POST'});msg='Đã duyệt kết quả';}
  else if(action==='cancel-rx'){const reason=prompt('Lý do hủy đơn (ít nhất 8 ký tự):');if(!reason)return;await api('/prescriptions/'+id+'/cancel',{method:'POST',body:{reason}});msg='Đã hủy đơn chưa cấp';}
  else if(action==='dispense'){if(!confirm('Cấp thuốc đúng theo đơn? Hệ thống sẽ xuất kho và ghi tiền thuốc.'))return;await api('/prescriptions/'+id+'/dispense',{method:'POST'});msg='Đã cấp thuốc và ghi tiền thuốc. Bấm "Tải PDF" để in đơn.';}
- else if(action==='complete-visit'){if(!confirm('Hoàn tất và khóa phiếu khám?'))return;await api('/visits/'+id+'/complete',{method:'POST',body:{version:Number(element.dataset.version)}});msg='Đã hoàn tất, khóa phiếu khám';}
+ else if(action==='complete-visit'){if(!confirm('Hoàn tất và khóa phiếu khám?'))return;await api('/visits/'+id+'/complete',{method:'POST',body:{version:Number(element.dataset.version)}});if(active==='doctor'){const v=await api('/visits/'+id);sel.doctorDay=parseDay(showDay(v.created_at).split(' ')[0]);}msg='Đã hoàn tất, khóa phiếu khám';}
  else if(action==='cancel-order'){const reason=prompt('Lý do đề nghị hủy chỉ định (ít nhất 8 ký tự):');if(!reason)return;await api('/orders/'+id+'/request-cancel',{method:'POST',body:{reason}});msg='Đã gửi quản lý duyệt hủy chỉ định';}
  else if(action==='execute-task'){const content=prompt('Nội dung, kết quả thực hiện y lệnh:');if(!content)return;await api('/nursing-tasks/'+id+'/execute',{method:'POST',body:{content}});msg='Đã ghi nhận thực hiện y lệnh';}
  else if(action==='cancel-task'){const reason=prompt('Lý do hủy y lệnh (ít nhất 8 ký tự):');if(!reason)return;await api('/nursing-tasks/'+id+'/cancel',{method:'POST',body:{reason}});msg='Đã hủy y lệnh';}
@@ -601,7 +601,7 @@ document.addEventListener('change',async ev=>{const el=ev.target;
  if(el.closest('.rx-line')&&el.name==='medicine_id'){const unit=el.closest('.rx-line').querySelector('[name="unit_id"]');if(unit)unit.disabled=true;try{const med=(await api('/dispensable-medicines')).find(m=>m.id===Number(el.value));if(unit)unit.innerHTML='<option value="">Đơn vị cơ sở</option>'+(med?.units||[]).map(u=>`<option value="${u.id}">${esc(u.name)} = ${u.base_factor}</option>`).join('');}catch(e){notify(e.message,true)}finally{if(unit)unit.disabled=false;}return;}
  try{
   if(el.id==='role_switch'){selectedRole=el.value;active=null;await render();}
-  else if(el.id==='visit_choose'&&el.value){sel.visit=Number(el.value);await render();}
+  else if(el.id==='visit_choose'&&el.value){sel.visit=Number(el.value);const v=await api('/visits/'+sel.visit);sel.doctorDay=parseDay(showDay(v.created_at).split(' ')[0]);sel.doctorQuery='';await render();}
   else if(el.id==='cash_choose'&&el.value){sel.cashVisit=Number(el.value);await render();}
   else if(el.id==='account_choose'){sel.account=el.value?Number(el.value):null;await render();}
   else if(el.name==='roles'&&el.closest('form'))adminChange(el.closest('form'));
@@ -629,6 +629,10 @@ boot();
 document.addEventListener('keydown',event=>{
  if(event.defaultPrevented||event.repeat||event.ctrlKey||event.altKey||event.metaKey||event.shiftKey||event.isComposing)return;
  if(active!=='doctor'||$('workspace')?.getAttribute('aria-busy')==='true'||document.querySelector('dialog[open]'))return;
+ if(event.key==='F4'){event.preventDefault();$('doctor_query')?.focus();return;}
+ if(!document.querySelector('[data-action="pick"][data-kind="visit"][aria-pressed="true"]'))return;
  if(event.key==='F2'){const form=document.querySelector('[data-form="clinical"]');const save=form?.querySelector('button.btn');if(save&&!save.disabled){event.preventDefault();form.requestSubmit(save)}}
  if(event.key==='F8'){const finish=document.querySelector('[data-action="complete-visit"]');if(finish&&!finish.disabled){event.preventDefault();finish.click()}}
 });
+
+window.addEventListener('scroll',()=>{if(active!=='doctor')return;const sections=[...document.querySelectorAll('.doctor-section')];const top=(document.querySelector('.doctor-sticky')?.getBoundingClientRect().height||0)+20;const current=sections.filter(s=>s.getBoundingClientRect().top<=top).pop()||sections[0];document.querySelectorAll('.doctor-tabs button').forEach(b=>b.setAttribute('aria-current',String(current?.id==='doctor-'+b.dataset.target)));},{passive:true});

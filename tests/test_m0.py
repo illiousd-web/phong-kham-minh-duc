@@ -30,3 +30,44 @@ def test_m0_sqlite_upgrade_preserves_existing_data_and_is_idempotent(tmp_path):
     assert c.execute('SELECT id,full_name FROM patients ORDER BY id').fetchall() == before
     assert c.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NULL').fetchone()[0] == 22000
     c.close()
+
+
+def test_historical_doctor_cannot_edit_allergies():
+    from tests.test_workflows import prepare_visit
+    pid, vid = prepare_visit()
+    d = RoleClient('bs_noi')
+    v = d.get(f'/api/visits/{vid}').json()
+    assert d.put(f'/api/visits/{vid}/clinical', json={'version': v['version'], 'diagnosis': 'Giả lập'}).status_code == 200
+    v = d.get(f'/api/visits/{vid}').json()
+    assert d.post(f'/api/visits/{vid}/complete', json={'version': v['version']}).status_code == 200
+    assert d.put(f'/api/patients/{pid}/allergies', json={'allergies': 'Thuốc A'}).status_code == 403
+    assert RoleClient('letan').put(f'/api/patients/{pid}/allergies', json={'allergies': 'Thuốc A'}).status_code == 200
+
+
+def test_300_history_visits_have_constant_query_count_and_are_fast(monkeypatch):
+    import time
+    import statistics
+    from tests.test_workflows import prepare_visit
+    pid, vid = prepare_visit()
+    with db(True) as c:
+        doctor = c.execute('SELECT doctor_id FROM visits WHERE id=?',(vid,)).fetchone()[0]
+        for _ in range(300):
+            c.execute("INSERT INTO visits(patient_id,doctor_id,created_by,created_at,status) VALUES(?,?,?,'2020-01-01T00:00:00+00:00','completed')",(pid,doctor,doctor))
+    original = sqlite3.connect
+    statements = []
+    def traced(*args, **kwargs):
+        connection = original(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+    monkeypatch.setattr(sqlite3, 'connect', traced)
+    d = RoleClient('bs_noi')
+    timings = []
+    for _ in range(6):
+        statements.clear()
+        started = time.perf_counter()
+        response = d.get(f'/api/visits/{vid}/patient-history')
+        timings.append(time.perf_counter()-started)
+        assert response.status_code == 200 and len(response.json()) == 300
+        assert sum('FROM prescriptions WHERE visit_id IN' in q for q in statements) == 1
+        assert sum('FROM orders WHERE visit_id IN' in q for q in statements) == 1
+    assert statistics.median(timings[1:]) <= 1.5

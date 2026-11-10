@@ -67,7 +67,7 @@ def install_doctor_workspace(app, db, principal, require, audit, visit_access, n
         require(u, 'reception', 'doctor')
         with db(True) as c:
             if 'reception' not in u['roles'] and not c.execute(
-                'SELECT 1 FROM visits WHERE patient_id=? AND doctor_id=?', (pid, u['id'])).fetchone():
+                "SELECT 1 FROM visits WHERE patient_id=? AND doctor_id=? AND status NOT IN ('completed','cancelled')", (pid, u['id'])).fetchone():
                 raise HTTPException(403, 'Không được sửa hồ sơ này')
             p = c.execute('SELECT allergies FROM patients WHERE id=?', (pid,)).fetchone()
             if not p:
@@ -94,14 +94,14 @@ def install_doctor_workspace(app, db, principal, require, audit, visit_access, n
             rows = c.execute('''SELECT id,created_at,diagnosis FROM visits
                 WHERE patient_id=? AND doctor_id=? AND (created_at<? OR (created_at=? AND id<?))
                 ORDER BY created_at DESC,id DESC''', (v['patient_id'], u['id'], v['created_at'], v['created_at'], vid)).fetchall()
-            result = []
-            for r in rows:
-                item = dict(r)
-                item['prescriptions'] = [dict(x) for x in c.execute(
-                    'SELECT drug_lines,instructions,status FROM prescriptions WHERE visit_id=?', (r['id'],))]
-                item['results'] = [dict(x) for x in c.execute(
-                    "SELECT name,result_text,status FROM orders WHERE visit_id=? AND result_text IS NOT NULL AND result_text<>''", (r['id'],))]
-                result.append(item)
+            result = [dict(r, prescriptions=[], results=[]) for r in rows]
+            indexed = {r['id']: r for r in result}
+            if indexed:
+                marks = ','.join('?' for _ in indexed)
+                for r in c.execute(f'SELECT visit_id,drug_lines,instructions,status FROM prescriptions WHERE visit_id IN ({marks})', tuple(indexed)):
+                    indexed[r['visit_id']]['prescriptions'].append(dict(r))
+                for r in c.execute(f"SELECT visit_id,name,result_text,status FROM orders WHERE visit_id IN ({marks}) AND result_text IS NOT NULL AND result_text<>''", tuple(indexed)):
+                    indexed[r['visit_id']]['results'].append(dict(r))
             audit(c, u, 'patient_history_viewed', 'visit', vid)
             return result
 
@@ -111,7 +111,19 @@ def install_doctor_workspace(app, db, principal, require, audit, visit_access, n
         with db() as c:
             visit_access(c, u, vid, clinical=True)
             state = invoice(c, vid)
-            return {'status': 'Thu tạm' if state['unpriced_count'] else 'Còn nợ' if state['due'] else 'Đã thu'}
+            receipts = c.execute('SELECT COUNT(*),COALESCE(SUM(amount),0) FROM payments WHERE visit_id=?', (vid,)).fetchone()
+            if state['unpriced_count']:
+                status = 'Thu tạm' if receipts[1] > 0 else 'Chưa xác định phí'
+            elif state['refund_due'] > 0 or state['paid'] > state['charged']:
+                status = 'Cần hoàn'
+            elif state['due'] > 0:
+                status = 'Còn nợ'
+            elif state['charged'] > 0:
+                status = 'Đã thu đủ'
+            else:
+                status = 'Chưa phát sinh thu'
+            return {'status': status, 'charged': state['charged'], 'paid': state['paid'],
+                    'due': state['due'], 'refund_due': state['refund_due'], 'receipt_count': receipts[0]}
 
     @app.post('/api/visits/{vid}/close-abandoned')
     def close_abandoned(vid: int, data: CloseInput, u=Depends(principal)):

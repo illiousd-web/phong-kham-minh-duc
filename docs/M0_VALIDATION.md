@@ -23,6 +23,13 @@ Cả hai dưới ngưỡng trung vị 1,5 giây và p95 3 giây của C5. Migrat
 
 Bài `lan_tests/test_m0_scale.py` còn đối chiếu SHA-256 từng dòng các bảng patients/visits/charges/payments/stock_lots trước/sau migration trên quy mô C5; chỉ bỏ trường allergies mới khi so.
 
-## Điểm chưa chốt
 
-F3 trùng phím Tìm tiếp của Chrome; chưa chiếm phím khi chủ dự án chưa chốt. Sáu nút hiện điều hướng cuộn trong trang, giữ các phần luôn hiện để C4 chạy nguyên vẹn; đang chờ chủ dự án chốt cách chuyển tab. PR giữ trạng thái nháp.
+F4 tìm người bệnh; sáu nút điều hướng cuộn, tô sáng phần đang xem. F2/F8 chỉ hoạt động khi lượt đang mở thuộc danh sách đang hiển thị.
+
+## Sửa tiếp PR 15
+
+- Lọc loại lượt đang mở: đóng chi tiết, F2/F8 không ghi; Chromium kiểm A → lọc B → F2/F8 → A giữ version/lịch sử, chọn B rồi lưu vào B.
+- Thanh toán dựa invoice và phiếu thu thật, kiểm đủ sáu trạng thái; giao diện đối chiếu phiếu thu 200 đ và còn nợ 800 đ.
+- Bác sĩ chỉ sửa dị ứng khi có lượt mở của mình; bác sĩ chỉ có lượt hoàn tất nhận 403.
+- Lịch sử 300 lượt dùng một truy vấn đơn thuốc và một truy vấn kết quả; kiểm thời gian trung vị không quá 1,5 giây.
+- Lỗi đóng lượt có phí hướng dẫn liên hệ Quản lý, không bỏ qua phí. Lễ tân/bác sĩ không có API tạo yêu cầu hủy lượt, nên không hiện nút dẫn đến chức năng không được phân quyền.
