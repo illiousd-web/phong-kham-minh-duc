@@ -71,6 +71,12 @@ def free_port():
 
 @contextmanager
 def postgres_cluster(bin_path, root):
+    if os.name=='nt':
+        # initdb tự bỏ quyền Administrators. Thư mục tempfile của Python khi
+        # chạy elevated có thể chỉ cấp quyền qua nhóm đó; cấp rõ cho đúng
+        # tài khoản đang chạy, chỉ trên thư mục giả lập mới, trước khi tạo con.
+        subprocess.run(['icacls',str(root),'/grant:r',psutil.Process().username()+':(OI)(CI)F','/Q'],
+                       check=True,stdout=subprocess.DEVNULL)
     password=secrets.token_urlsafe(32);pw=root/'pg-password.txt';pw.write_text(password,encoding='utf-8');pw.chmod(0o600)
     binary=lambda name:str(bin_path/(name+('.exe' if os.name=='nt' else '')))
     data=root/'postgres';port=free_port()
