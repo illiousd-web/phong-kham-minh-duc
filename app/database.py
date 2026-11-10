@@ -122,3 +122,6 @@ def migrate():
         migrate_v050(PGConnection(con),postgres=True)
         from .manual_price_migration import migrate_manual_prices
         migrate_manual_prices(PGConnection(con),postgres=True)
+
+        from .m0_migration import migrate_m0
+        migrate_m0(PGConnection(con))

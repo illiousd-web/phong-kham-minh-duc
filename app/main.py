@@ -56,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=4").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=5").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -68,6 +68,9 @@ def init_db():
         migrate_v050(c)
     from .manual_price_migration import migrate_sqlite_manual_prices
     migrate_sqlite_manual_prices(DB)
+    with db(True) as c:
+        from .m0_migration import migrate_m0
+        migrate_m0(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -171,7 +174,8 @@ def audit(c,u,event,typ,obj,details=''):
 
 def visit_access(c,u,vid:int,*,clinical=False):
     v=c.execute('''SELECT visits.*,patients.full_name AS patient_name,patients.code AS patient_code,
-                 patients.sex AS patient_sex,patients.date_of_birth AS patient_dob
+                 patients.sex AS patient_sex,patients.date_of_birth AS patient_dob,
+                 patients.phone AS patient_phone,patients.allergies AS patient_allergies
                  FROM visits JOIN patients ON patients.id=visits.patient_id WHERE visits.id=?''',(vid,)).fetchone()
     if not v:raise HTTPException(404,'Không tìm thấy lượt khám')
     if clinical:
@@ -1043,6 +1047,8 @@ from .workflows_v050 import install_v050
 install_v050(app,db,principal,require,audit,visit_access,NOW)
 from .manager_visits import install_manager_visits
 install_manager_visits(app,db,principal,require)
+from .doctor_workspace import install_doctor_workspace
+install_doctor_workspace(app,db,principal,require,audit,visit_access,NOW)
 from .ui_settings import install_ui_settings
 install_ui_settings(app,db,principal,require,audit,FILES)
 from .ui_settings import settings_path, read_settings

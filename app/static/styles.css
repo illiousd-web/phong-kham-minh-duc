@@ -74,3 +74,15 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 
 /* Ô chọn tệp có nhãn tiếng Việt ngay cả khi trình duyệt dùng tiếng Anh. */
 .price-file-picker{position:relative;align-self:flex-start;display:inline-block;overflow:hidden;border-radius:8px}.price-file-picker .ghost{display:block;font-size:14px}.price-file-picker input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;padding:0}.price-file-picker:focus-within{outline:2px solid var(--primary);outline-offset:2px}#price-file-name{overflow-wrap:anywhere}
+
+/* M0: scoped to doctor workspace; Chrome 109 supports grid, sticky and dialog. */
+.doctor-layout{display:grid;grid-template-columns:minmax(230px,29%) minmax(0,1fr);gap:16px;align-items:start}
+.doctor-waiting,.doctor-record{min-width:0}.doctor-waiting .queue{grid-template-columns:1fr}
+.doctor-sticky{position:sticky;top:0;z-index:5;background:var(--canvas);padding-bottom:1px}.doctor-patient{background:#fff;display:block;border:2px solid var(--primary);overflow-wrap:anywhere}
+.doctor-patient button{margin-top:6px}.allergy-warning{color:#b42318!important;overflow-wrap:anywhere}
+.doctor-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}.doctor-tabs button[aria-current=true]{background:var(--primary);color:white}
+.doctor-section{scroll-margin-top:160px}.doctor-section:empty{display:none}
+.status.ready{background:#e9ddff;color:#573090}.status.progress{background:#dceaff;color:#174b8d}.status.complete{background:#dcf5df;color:#236332}
+#m0-dialog{width:min(640px,calc(100% - 24px));max-height:90vh;overflow:auto;border:1px solid var(--line);border-radius:12px;color:var(--ink)}
+#m0-dialog::backdrop{background:rgba(0,0,0,.35)}
+@media(max-width:899px){.doctor-layout{grid-template-columns:minmax(0,1fr)}.doctor-patient{top:0}.doctor-tabs button{flex:1 1 140px;min-height:44px}.doctor-section{scroll-margin-top:190px}}
