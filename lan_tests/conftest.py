@@ -37,6 +37,10 @@ with db(True) as c:
         IDS[role]=create_account(c,AccountInput(username='test_'+role,full_name='Nhân viên giả lập '+role,password=PASSWORDS[role],roles=[role]),pw_hash)
     PASSWORDS['doctor2']=secrets.token_urlsafe(24)
     IDS['doctor2']=create_account(c,AccountInput(username='test_doctor2',full_name='Bác sĩ giả lập 2',password=PASSWORDS['doctor2'],roles=['doctor']),pw_hash)
+    # Existing C4 result reviewers have declared synthetic scopes. L2 tests explicitly
+    # remove/restore them to exercise missing-scope warnings without changing C4 assertions.
+    for key in ('doctor','doctor2'):
+        c.execute('UPDATE users SET practice_scopes=? WHERE id=?', ('["Xét nghiệm", "Chẩn đoán hình ảnh"]',IDS[key]))
     c.execute('INSERT INTO service_catalog(name,price) VALUES(?,?)',('Khám giả lập',150000))
     SERVICE=c.execute('SELECT last_insert_rowid()').fetchone()[0]
 

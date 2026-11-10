@@ -336,7 +336,7 @@ def test_rollback_failure_at_each_step_keeps_running_system(creds, tmp_path, mon
     report = install_db.rollback_database(super_url, owner_url(creds), APP, backup_file, key, uploads)
     names, files, text = _snapshot(creds, uploads, settings)
     assert marker not in names and files == ['truoc.pdf']
-    assert json.loads(text) == {'advance_payment': True, 'addendum': True, 'controlled_drugs': True}
+    assert json.loads(text) == {'block_practitioner_scope': False, 'advance_payment': True, 'addendum': True, 'controlled_drugs': True}
     assert report['settings'] == 'restored'
     assert json.loads(Path(report['kept_settings']).read_text(encoding='utf-8'))['addendum'] is False
 

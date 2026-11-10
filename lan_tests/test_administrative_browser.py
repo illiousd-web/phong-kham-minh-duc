@@ -16,7 +16,11 @@ from .browser_helpers import settle, pick, go, no_horizontal_scroll
 from app.labels import VN_TZ
 
 
-def test_administrative_practitioner_and_refund_ui(https_server, clients):
+def test_administrative_practitioner_and_refund_ui(https_server, clients, request):
+    from app.practitioners import COLUMNS
+    prior=next(x for x in clients['admin'].get('/api/practitioners').json()['items'] if x['id']==IDS['doctor'])
+    prior={key:prior[key] for key in COLUMNS}
+    request.addfinalizer(lambda: clients['admin'].put(f'/api/practitioners/{IDS["doctor"]}',json=prior))
     r=clients['reception']
     today=datetime.now(VN_TZ).date()
     born=today.replace(year=today.year-5,day=min(today.day,28)).isoformat()
@@ -102,4 +106,4 @@ def test_administrative_practitioner_and_refund_ui(https_server, clients):
         expect(page.locator(f'[data-scope-warning="{oid}"]')).to_contain_text('chưa khai phạm vi Xét nghiệm')
         assert not errors,errors
         browser.close()
-    clients['admin'].put(f'/api/practitioners/{IDS["doctor"]}',json={})
+    clients['admin'].put(f'/api/practitioners/{IDS["doctor"]}',json=prior)

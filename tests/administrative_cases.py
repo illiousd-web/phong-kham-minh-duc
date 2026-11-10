@@ -9,6 +9,9 @@ from docx import Document
 
 def check_administrative(clients, ids, db, service_id):
     r, d, a = (clients[k] for k in ('reception', 'doctor', 'admin'))
+    from app.practitioners import COLUMNS
+    prior=next(x for x in a.get('/api/practitioners').json()['items'] if x['id']==ids['doctor'])
+    prior={key:prior[key] for key in COLUMNS}
     base = {'full_name': 'Hồ sơ hành chính giả lập '+secrets.token_hex(3), 'date_of_birth': '1990-01-01', 'sex': 'Nữ', 'phone': '0900000000'}
     number = '000'+str(secrets.randbelow(10**9)).zfill(9)  # synthetic document, never a real record
     for invalid in ('0'*11, '0'*13, '0'*11+'A'):
@@ -85,6 +88,7 @@ def check_administrative(clients, ids, db, service_id):
     assert a.put(f'/api/practitioners/{ids["doctor"]}', json={}).status_code == 200
     from app.practitioners import printed_name
     with db() as c: assert printed_name(c, ids['doctor']) == old_name
+    a.put(f'/api/practitioners/{ids["doctor"]}',json=prior)
 
 
 def check_catalog(clients, db):
@@ -160,6 +164,10 @@ def check_scopes(clients, ids, db, service_id):
     from app.main import FILES
     settings_file=settings_path(FILES)
     previous=settings_file.read_bytes() if settings_file.exists() else None
+    from app.practitioners import COLUMNS
+    prior=next(x for x in a.get('/api/practitioners').json()['items'] if x['id']==ids['doctor'])
+    prior={key:prior[key] for key in COLUMNS}
+    a.put(f'/api/practitioners/{ids["doctor"]}',json={})
     category_services={}
     with db(True) as c:
         for category in ('lab','ultrasound','xray','ecg'):
@@ -192,6 +200,6 @@ def check_scopes(clients, ids, db, service_id):
         assert d.post(f'/api/orders/{oid}/approve').json()['warnings']==[]
     finally:
         a.put('/api/ui-settings',json={'block_practitioner_scope':False})
-        a.put(f'/api/practitioners/{ids["doctor"]}',json={})
+        a.put(f'/api/practitioners/{ids["doctor"]}',json=prior)
         if previous is None:settings_file.unlink(missing_ok=True)
         else:settings_file.write_bytes(previous)
