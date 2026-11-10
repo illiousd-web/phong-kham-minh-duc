@@ -1,5 +1,6 @@
 """C5: đo trước/sau cùng dữ liệu qua HTTPS và Chromium; không dùng dữ liệu thật."""
 import argparse
+import ast
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -148,6 +149,42 @@ def database_state(url):
 
 def files_state(root):
     return {str(p.relative_to(root)).replace(os.sep,'/'):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
+
+
+def query_probes(url, since, output):
+    """Đối chứng JIT cùng SQL/dữ liệu trên chính máy Windows, không đổi cấu hình DB."""
+    tree=ast.parse((ROOT/'app/main.py').read_text(encoding='utf-8'))
+    dues=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign)
+              and any(isinstance(t,ast.Name) and t.id=='DUES_SQL' for t in n.targets))
+    def query_in(name,prefix):
+        function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name)
+        return next(n.value for n in ast.walk(function) if isinstance(n,ast.Constant) and isinstance(n.value,str) and n.value.startswith(prefix))
+    queries={'dues':(dues,(since,)),
+             'orders':(query_in('list_orders','SELECT o.id,')+' ORDER BY o.id DESC LIMIT 100',()),
+             'payments':(query_in('list_payments','SELECT m.id,'),())}
+    report={}
+    with psycopg.connect(url) as c:
+        report['jit_available']=c.execute('SELECT pg_jit_available()').fetchone()[0]
+        report['postgres_version']=c.execute('SELECT version()').fetchone()[0]
+        for label,(query,args) in queries.items():
+            results=None;report[label]={};query=query.replace('?','%s')
+            for setting in ('on','off'):
+                c.execute('SET LOCAL jit = '+setting)
+                first=c.execute(query,args).fetchall()
+                if results is None:results=first
+                assert first==results, 'JIT làm đổi kết quả '+label
+                samples=[]
+                for _ in range(5):
+                    started=time.perf_counter();actual=c.execute(query,args).fetchall();samples.append(time.perf_counter()-started)
+                    assert actual==results
+                plan=c.execute('EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) '+query,args).fetchone()[0]
+                value={'median_seconds':statistics.median(samples),'max_seconds':max(samples),
+                       'samples_seconds':samples,'rows':len(first),'jit':plan[0].get('JIT'),
+                       'execution_ms':plan[0]['Execution Time'],'plan':plan}
+                report[label][setting]=value
+                print('C5 SQL '+label+' JIT '+setting+': '+json.dumps({k:v for k,v in value.items() if k!='plan'}),flush=True)
+    output.write_text(json.dumps(report,indent=2),encoding='utf-8')
+    return report
 
 
 def worker(args):
@@ -328,6 +365,8 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
     print('C5 môi trường: '+json.dumps(report['environment'],ensure_ascii=False),flush=True)
     print('C5 dữ liệu: '+json.dumps(manifest,ensure_ascii=False),flush=True)
     try:
+        since=datetime.now(timezone(timedelta(hours=7))).replace(hour=0,minute=0,second=0,microsecond=0).astimezone(timezone.utc).isoformat(timespec='seconds')
+        report['query_probes']=query_probes(url,since,args.output.parent/'query-probes.json')
         for label,source in [('before',baseline),('after',ROOT)]:
             print('C5 profile: '+label,flush=True)
             report['profiles'][label]=run_profile(source,label,env,data,manifest,pg_pid,args.output.parent/(label+'.json'))

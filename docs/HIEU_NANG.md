@@ -90,7 +90,7 @@ Không sửa view, không sao chép hoặc đổi công thức tiền, không th
 Trả về cùng các dòng, cùng tổng và cùng quyền như trước.
 
 Windows phát hiện lỗi có sẵn khi backup chứa tệp đính kèm: manifest ghi dấu
-`/`, còn tập tệp kiểm lại dùng `\\`, nên báo `Backup manifest mismatch` và
+`/`, còn tập tệp kiểm lại dùng `\`, nên báo `Backup manifest mismatch` và
 không thể tới bước khôi phục. C5 dùng đường dẫn POSIX thống nhất ở cả hai
 phía. Vẫn từ chối tệp thừa, sai SHA-256, archive không an toàn và CSDL đích
 không rỗng. Không ghi đè bản sao hoặc dữ liệu đang dùng. Bản trước được ghi
@@ -114,6 +114,13 @@ thời gian nhiều thao tác. Bộ đo đã tách chuẩn bị như phương ph
 giữ nguyên ngưỡng, giữ log cũ và đo lại cả main/bản mới cùng cách. Bản sao
 sau sửa đường dẫn ở run 55 kiểm/khôi phục khớp, RAM dịch vụ 112,001 MB,
 backup + kiểm 10,733 s, restore 12,430 s; các thao tác chưa đạt vẫn phải đo lại.
+
+Run 56 xác nhận phiếu/PDF đã đạt (0,239/0,196 s trung vị), nhưng kỹ thuật viên
+1,992 s và thu ngân 2,561 s còn không đạt. Bộ đo bổ sung EXPLAIN và đối chứng
+JIT bật/tắt trên chính máy Windows cho chỉ định, công nợ, phiếu thu; so kết quả
+giống nhau và lưu đủ năm mẫu mỗi chế độ. Các truy vấn đọc này đặt JIT off
+trong đúng giao dịch, như truy vấn Quản lý; không đổi cấu hình PostgreSQL
+toàn cục. Chưa kết luận nguyên nhân hoặc nghiệm thu trước khi có số đo này.
 
 ## Kết quả đo
 
@@ -152,6 +159,9 @@ Các bài bảo vệ: `test_tu_choi_ten_csdl_khong_phai_dich_c5`,
 `test_bat_buoc_xac_nhan_va_loopback_va_thu_muc_moi`,
 `test_c5_du_lieu_lien_ket_va_khong_ghi_de_csdl_co_san`,
 `test_rx_pages_are_complete_scoped_and_fetch_items_in_batches`,
+`test_orders_visit_filter_keeps_doctor_scope_and_old_visit_results`,
+`test_cashier_pages_keep_all_old_debts_selectable`,
 `test_p95_nearest_rank_va_khong_dung_mau_tot_nhat`,
+`test_chuan_bi_khong_cong_hai_thao_tac_va_loi_chuan_bi_van_khong_dat`,
 `test_lan_backup_nested_paths_are_portable_and_hashes_stay_required`,
 `test_loi_manifest_duoc_ghi_la_khong_dat_khong_co_so_khoi_phuc`, cùng toàn bộ C4 và phân quyền.

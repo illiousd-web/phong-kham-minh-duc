@@ -7,6 +7,7 @@ import pytest
 import pymupdf
 from .conftest import SOURCE
 from scripts.tao_du_lieu_gia import generate,CONFIRM
+from scripts.do_hieu_nang import query_probes
 
 
 def test_c5_du_lieu_lien_ket_va_khong_ghi_de_csdl_co_san(tmp_path):
@@ -17,6 +18,9 @@ def test_c5_du_lieu_lien_ket_va_khong_ghi_de_csdl_co_san(tmp_path):
         result=generate(source,name,tmp_path/name,CONFIRM,visits=60,patients=45,attachments=6)
         assert result['counts']['visits']==60 and result['counts']['orders']==240
         assert result['counts']['prescriptions']==60 and result['attachments']==6
+        probes=query_probes(url,'2024-01-01T00:00:00+00:00',tmp_path/'query-probes.json')
+        assert probes['orders']['on']['rows']==probes['orders']['off']['rows']==100
+        assert probes['dues']['on']['rows']==probes['dues']['off']['rows']==60
         with psycopg.connect(url) as c:
             assert c.execute('SELECT COUNT(*) FROM orders WHERE file_key IS NOT NULL').fetchone()[0]==6
             for key, in c.execute('SELECT file_key FROM orders WHERE file_key IS NOT NULL'):
