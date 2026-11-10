@@ -25,6 +25,10 @@ def test_c5_du_lieu_lien_ket_va_khong_ghi_de_csdl_co_san(tmp_path):
                 with pymupdf.open(path) as document:
                     assert len(document)==1 and not document.is_repaired
             assert c.execute("SELECT MIN(quantity) FROM stock_lots").fetchone()[0] >= 0
+            assert c.execute('''SELECT COUNT(*) FROM visits v JOIN patients p ON p.id=v.patient_id
+                WHERE p.created_at>v.created_at''').fetchone()[0]==0
+            assert c.execute('''SELECT COUNT(*) FROM audit_log a LEFT JOIN patients p ON p.id=a.object_id
+                WHERE a.event='patient_created' AND p.id IS NULL''').fetchone()[0]==0
             before=c.execute('SELECT COUNT(*) FROM audit_log').fetchone()[0]
         # Đích khác trên đĩa nhưng cùng tên DB: CREATE DATABASE phải từ chối,
         # kể cả người chạy biết đúng mã xác nhận và tên hợp lệ.

@@ -22,7 +22,7 @@ python -m scripts.tao_du_lieu_gia \
 
 Mặc định: 20.000 bệnh nhân, 22.000 lượt rải trong 731 ngày, 88.000 chỉ định,
 22.000 đơn có dòng thuốc, hơn 132.000 khoản phí, hơn 20.000 phiếu thu,
-hơn 548.000 dòng nhật ký, cùng nhập/cấp/tồn kho và chăm sóc điều dưỡng.
+hơn 546.000 dòng nhật ký, cùng nhập/cấp/tồn kho và chăm sóc điều dưỡng.
 Có 30 lượt đang làm việc. Có nợ và khoản chưa có giá để hàng chờ thu ngân
 không chỉ chứa lượt hôm nay. Có 2.000 PDF hợp lệ, mỗi tệp 64 KiB, tổng 125 MiB;
 phần đệm ngẫu nhiên tránh đo sao lưu trên các tệp giống nhau nén gần về 0.
@@ -76,7 +76,10 @@ Truy vấn Quản lý cũ lấy số tiền hiệu lực hai lần cho mỗi kho
 tiền, một lần đếm khoản chưa có giá. EXPLAIN của 66.022 khoản cho thấy các
 truy vấn con chạy 66.022 lần cho mỗi nhánh. Trang vượt cuối còn tính lại cả
 tập lần nữa để lấy tổng. Vì vậy CPU hoặc cache chậm hơn làm số đo tăng rõ;
-0,2 giây trên một máy không bảo đảm máy CI cũng đạt như vậy.
+0,2 giây trên một máy không bảo đảm máy CI cũng đạt như vậy. Cụ thể, số
+0,94 giây của C4 là ca **trang vượt cuối**, còn các ca một trang khác trên CI
+khoảng 0,42–0,51 giây. Không có log máy báo 0,2 giây để khẳng định đó là cùng
+ca hoặc cùng cấu hình. C5 đo đối chứng cùng máy để loại khác biệt này.
 
 C5 giữ kết quả giá hiệu lực một lần bằng CTE MATERIALIZED. Kết quả lọc được
 dùng chung cho đếm và lấy trang; LEFT JOIN giữ tổng kể cả trang trống.

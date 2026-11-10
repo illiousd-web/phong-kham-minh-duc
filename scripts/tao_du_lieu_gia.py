@@ -80,7 +80,7 @@ def generate(source, name, output, confirmation, *, visits=22000, patients=20000
         stamp = datetime.combine(today, datetime.min.time(), VN).replace(hour=8).astimezone(timezone.utc)
         c.execute("""INSERT INTO patients(id,code,full_name,date_of_birth,sex,phone,address,created_at)
             SELECT g,'C5-'||g,'Bệnh nhân giả lập C5 '||g,'1990-01-01','Nữ',
-            '09'||lpad(g::text,8,'0'),'Địa chỉ giả lập C5',%s FROM generate_series(1,%s) g""", (stamp.isoformat(), patients))
+            '09'||lpad(g::text,8,'0'),'Địa chỉ giả lập C5',%s FROM generate_series(1,%s) g""", ((stamp-timedelta(days=731)).isoformat(), patients))
         times = []
         for g in range(1, visits+1):
             age = 0 if g > closed else 1 + (closed-g)*729 // max(1, closed-1)
@@ -131,7 +131,8 @@ def generate(source, name, output, confirmation, *, visits=22000, patients=20000
         c.execute('''INSERT INTO clinical_revisions(id,visit_id,version,snapshot,actor_id,reason,kind,created_at)
             SELECT id,id,1,json_build_object('diagnosis',diagnosis,'vitals',vitals)::text,%s,'Dữ liệu giả lập C5','clinical',created_at FROM visits''', (ids['doctor'],))
         c.execute("INSERT INTO nursing_notes(id,visit_id,nurse_id,content,created_at,request_key) SELECT id,id,%s,'Chăm sóc giả lập C5',created_at,'c5-note-'||id FROM visits", (ids['nurse'],))
-        for event, role, typ in [('patient_created','reception','patient'),('visit_created','reception','visit'),
+        c.execute("INSERT INTO audit_log(user_id,event,object_type,object_id,details,created_at) SELECT %s,'patient_created','patient',id,'Giả lập C5',created_at FROM patients", (ids['reception'],))
+        for event, role, typ in [('visit_created','reception','visit'),
                                   ('nurse_assigned','doctor','visit'),('nurse_vitals_recorded','nurse','visit'),
                                   ('clinical_updated','doctor','visit'),('rx_draft_created','doctor','prescription'),
                                   ('visit_completed','doctor','visit'),('rx_dispensed','pharmacy','prescription')]:

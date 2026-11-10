@@ -271,6 +271,7 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
                 with psycopg.connect(os.environ['CLINIC_PERF_SOURCE_DATABASE_URL'],autocommit=True) as c:
                     c.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(target)))
             result.update(memory.result())
+            assert result['service_peak_bytes']>0 and result['postgres_peak_bytes']>0, 'Chưa lấy được số đo RAM của dịch vụ/PostgreSQL'
     finally:
         app.terminate()
         try:app.wait(timeout=15)
