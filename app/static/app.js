@@ -1,7 +1,8 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money=n=>n===null?'CHƯA CÓ GIÁ':Number(n||0).toLocaleString('vi-VN')+' đ';
+const moneyFormat=new Intl.NumberFormat('vi-VN');
+const money=n=>n===null?'CHƯA CÓ GIÁ':moneyFormat.format(Number(n||0))+' đ';
 const servicePrice=s=>s.price_at_collection?'Giá nhập khi thu':money(s.price);
 function requestId(){if(globalThis.crypto?.randomUUID)return globalThis.crypto.randomUUID();if(globalThis.crypto?.getRandomValues){const b=new Uint8Array(16);crypto.getRandomValues(b);return [...b].map(v=>v.toString(16).padStart(2,'0')).join('');}return 'demo-'+Date.now()+'-'+Math.random().toString(36).slice(2);}
 const roles={controlled_prescriber:'Bác sĩ thuốc kiểm soát',controlled_pharmacy:'Dược kiểm soát',controlled_reviewer:'Duyệt kiểm soát',admin:'Quản trị',manager:'Quản lý',reception:'Lễ tân',doctor:'Bác sĩ',technician:'Kỹ thuật viên',nurse:'Điều dưỡng',pharmacy:'Dược',cashier:'Thu ngân'};
@@ -118,8 +119,9 @@ async function loadUi(){try{ui=await api('/ui-settings');uiLoaded=true}catch(e){
 // Số việc đang chờ trên menu. /api/queue-counts chỉ trả con số theo vai trò và KHÔNG gia hạn phiên,
 // nên hỏi định kỳ không làm mất tự đăng xuất sau 20 phút không thao tác.
 const lastCounts={};let countEpoch=0;
-async function refreshCounts(){if(!auth)return;const epoch=++countEpoch;let counts;
- try{counts=await api('/queue-counts')}catch(e){return}
+async function refreshCounts(known={}){if(!auth)return;const epoch=++countEpoch;let counts;
+ const skip=Number.isInteger(known.lab)?'lab':Number.isInteger(known.cashier)?'cashier':null;
+ try{counts={...known,...await api('/queue-counts'+(skip?'?known='+skip:''))}}catch(e){return}
  if(epoch!==countEpoch||!auth)return;
  for(const el of document.querySelectorAll('[data-count]')){const page=el.dataset.count,n=counts[page];if(n==null)continue;
   el.textContent=String(n);el.classList.toggle('hidden',!n);el.setAttribute('aria-label',n?n+' việc đang chờ':'');
@@ -133,11 +135,12 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&auth)refr
 scheduleCounts();
 let renderEpoch=0;
 const SCREENS={reception:receptionScreen,prices:pricesScreen,doctor:doctorScreen,nurse:nurseScreen,lab:labScreen,pharmacy:pharmacyScreen,cashier:cashierScreen,manager:managerScreen,'price-management':priceManagementScreen,admin:adminScreen,settings:settingsScreen,password:passwordPage};
-async function render(){if(!auth){renderLogin();return}viewInit();const page=active,epoch=++renderEpoch;$('workspace').setAttribute('aria-busy','true');$('workspace').dataset.page=page;$('workspace').innerHTML=card('Đang tải dữ liệu ...');try{
+async function render(){if(!auth){renderLogin();return}viewInit();const page=active,epoch=++renderEpoch;let knownCounts={};$('workspace').setAttribute('aria-busy','true');$('workspace').dataset.page=page;$('workspace').innerHTML=card('Đang tải dữ liệu ...');try{
  if(!uiLoaded)await loadUi();
  const out=await SCREENS[page]();if(epoch!==renderEpoch)return;
+ knownCounts=out&&typeof out==='object'?(out.counts||{}):{};
  const html=typeof out==='string'?out:out.html;$('workspace').innerHTML=html;labelTables($('workspace'));if(out&&out.after)out.after();
- }catch(e){if(epoch!==renderEpoch)return;$('workspace').innerHTML=card(`<div class="empty">Không thể tải trang: ${esc(e.message)}</div>`)}finally{if(epoch===renderEpoch){$('workspace').setAttribute('aria-busy','false');refreshCounts()}}}
+ }catch(e){if(epoch!==renderEpoch)return;$('workspace').innerHTML=card(`<div class="empty">Không thể tải trang: ${esc(e.message)}</div>`)}finally{if(epoch===renderEpoch){$('workspace').setAttribute('aria-busy','false');refreshCounts(knownCounts)}}}
 function renderLogin(){priceFile=null;pricePreview=null;priceResult=null;auth=null;uiLoaded=false;for(const k in lastCounts)delete lastCounts[k];$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');$('change-password').classList.add('hidden');$('workspace').setAttribute('aria-busy','false');
  const users=[['letan','Lễ tân'],['bs_noi','Bác sĩ Nội'],['bs_san','Bác sĩ Sản'],['kythuat','Kỹ thuật viên'],['duoc','Nhân viên dược'],['thungan','Thu ngân'],['quanly','Quản lý'],['quantri','Quản trị viên'],['dieuduong','Điều dưỡng']];
  $('workspace').innerHTML=card(`<form data-form="login" class="fields">${serverMode==='lan'?field('Tài khoản nhân viên','username','text','',true):selectField('Tài khoản mô phỏng','username',users)}${field('Mật khẩu','password','password','',true)}<div class="field full"><button class="btn" type="submit">Đăng nhập</button><p class="hint">${serverMode==='lan'?'Dùng tài khoản riêng do quản trị cấp. Phiên kết thúc sau 20 phút không hoạt động hoặc tối đa 8 giờ.':'Nhập mật khẩu đã chọn khi khởi động bản demo cục bộ.'}</p></div></form>`,'Đăng nhập theo vai trò');}
@@ -206,7 +209,7 @@ async function labScreen(){
  const o=orderList.find(x=>x.id===sel.order);
  const form=o?`<div class="patient-head"><div><b>${esc(o.name)}</b> <span class="muted">${esc(vi(o.category))}</span></div><div class="muted">${esc(o.patient_name)} · ${esc(o.patient_code)} · chỉ định #${o.id}</div><div>${pill(o.status)}</div></div><form data-form="result" class="fields">${hidden('order_id',o.id)}${textarea('Nội dung kết quả','result_text','Mỗi chỉ số một dòng: Tên | Kết quả | Đơn vị | Tham chiếu | Đánh dấu\nVí dụ: Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nDòng cuối: Kết luận: ...')}<p class="hint wide">Xét nghiệm: mỗi chỉ số một dòng, ngăn bằng dấu |. Siêu âm, X-quang, điện tim: mô tả tự do. Dòng bắt đầu bằng "Kết luận:" được in vào mục Kết luận.</p><div class="wide"><button class="btn">Gửi kết quả cho bác sĩ duyệt</button></div></form><form data-form="attach" class="fields" enctype="multipart/form-data">${hidden('attach_order',o.id)}<div class="field"><label for="attachment">Tệp kết quả PDF/PNG/JPG (tối đa 5 MB)</label><input id="attachment" type="file" name="attachment" accept=".pdf,.png,.jpg,.jpeg" required></div><div class="field"><button class="ghost">Đính kèm tệp</button></div></form>`:empty('Chọn một chỉ định trong hàng chờ.');
  const item=x=>({id:x.id,main:`${esc(x.name)} · ${esc(x.patient_name)}`,sub:`${esc(x.patient_code)} · ${pill(x.status)}${x.file_name?' · có tệp':''}`});
- return {html:card(queue(todo.map(item),{kind:'order',current:sel.order,emptyText:'Không còn chỉ định chờ làm.'}),`Chỉ định chờ làm (${todo.length})`)+
+ return {counts:{lab:todo.length},html:card(queue(todo.map(item),{kind:'order',current:sel.order,emptyText:'Không còn chỉ định chờ làm.'}),`Chỉ định chờ làm (${todo.length})`)+
   card(form,'Nhập kết quả')+(sent.length?details(`Đã gửi, chờ bác sĩ duyệt (${sent.length}) — vẫn sửa được`,queue(sent.map(item),{kind:'order',current:sel.order,emptyText:''})):''),
   after(){if(o&&$('result_text'))$('result_text').value=o.result_text||''}}}
 
@@ -280,7 +283,7 @@ async function cashierScreen(){
  const payHistory=details('Lịch sử thu',t(pays.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.patient_name)}<div class="muted">lượt #${x.visit_id} · ${showDay(x.created_at)}</div></td><td>${money(x.amount)}<div class="muted">${PAYMENT_KIND[x.kind]||''}</div></td><td>${esc(vi(x.method))}</td><td>${receiptButton(x,true)}</td></tr>`),['Mã thu','Bệnh nhân','Số tiền','Hình thức','']));
  const myRequests=details('Đề nghị giảm phí / hoàn tiền đã gửi',t(adj.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.patient_name)}<div class="muted">lượt #${x.visit_id}</div></td><td>${esc(vi(x.kind))} — ${money(x.amount)}</td><td>${pill(x.status)}</td></tr>`),['Mã','Bệnh nhân','Loại','Trạng thái']))+
   details('Đề nghị sửa giá nhập tay đã gửi',t(manualRequests.map(x=>`<tr><td>#${x.id} · lượt #${x.visit_id}</td><td>${esc(x.description)}</td><td>${money(x.previous_amount)} → ${money(x.new_amount)}</td><td>${pill(x.status)}</td></tr>`),['Đề nghị','Nội dung','Giá','Trạng thái']));
- if(!sel.cashVisit)return head+myRequests+payHistory;
+ if(!sel.cashVisit)return {counts:{cashier:owing.length},html:head+myRequests+payHistory};
  const vid=sel.cashVisit,d=dues.find(x=>x.visit_id===vid);
  const [lines,state]=await Promise.all([api('/charges/'+vid),api('/visits/'+vid+'/settlement')]);
  const due=Math.max(0,d.charged-d.paid),unpriced=d.unpriced_count>0,mine=pays.filter(p=>p.visit_id===vid);
@@ -290,7 +293,7 @@ async function cashierScreen(){
  const advance=ui.advance_payment&&!unpriced&&OPEN({status:state.clinical_status})?details('Nhận tiền ứng trước',`<form data-form="advance" class="fields">${hidden('visit_id',vid)}${field('Số tiền ứng trước','amount','number','',true)}${selectField('Hình thức','method',[['cash','Tiền mặt'],['transfer','Chuyển khoản']])}<div class="wide"><button class="btn">Nhận ứng trước</button></div></form>`):'';
  const receipts=t(mine.map(x=>`<tr><td>#${x.id}</td><td>${money(x.amount)}<div class="muted">${PAYMENT_KIND[x.kind]||''} · ${showDay(x.created_at)}</div></td><td>${esc(vi(x.method))}</td><td>${receiptButton(x)}</td></tr>`),['Mã thu','Số tiền','Hình thức','']);
  const adjust=card(`<form data-form="adjustment" class="fields" data-patient="${esc(d.patient_name)}" data-visit="${vid}">${hidden('visit_id',vid)}<div class="wide adjust-for">Cho bệnh nhân <b>${esc(d.patient_name)}</b> · lượt <b>#${vid}</b></div>${selectField('Loại đề nghị','kind',[['discount','Giảm phí'],['refund','Hoàn phần trả thừa']])}${field('Số tiền (VNĐ)','amount','number','',true)}${selectField('Phiếu thu cần hoàn (chỉ khi hoàn tiền)','payment_id',[['','Không áp dụng'],...mine.map(x=>[x.id,`#${x.id}: ${money(x.amount)}`])])}${field('Lý do','reason','text','Tối thiểu 5 ký tự',true)}<div class="approve-box hidden wide" data-adjust-confirm></div><div class="wide"><button class="btn">Xem lại đề nghị</button></div></form>`,'Đề nghị giảm phí / hoàn tiền cho lượt này');
- return {html:head+`<div class="patient-head"><div><b>${esc(d.patient_name)}</b> <span class="muted">${esc(d.patient_code)}</span></div><div class="muted">lượt #${vid}</div><div>${pill(state.clinical_status)}</div></div>`+stepCard(1,'Bảng kê',bill)+stepCard(2,'Thu tiền',pay)+advance+stepCard(3,'In phiếu thu',receipts)+adjust+myRequests+payHistory,
+ return {counts:{cashier:owing.length},html:head+`<div class="patient-head"><div><b>${esc(d.patient_name)}</b> <span class="muted">${esc(d.patient_code)}</span></div><div class="muted">lượt #${vid}</div><div>${pill(state.clinical_status)}</div></div>`+stepCard(1,'Bảng kê',bill)+stepCard(2,'Thu tiền',pay)+advance+stepCard(3,'In phiếu thu',receipts)+adjust+myRequests+payHistory,
   after(){const a=document.querySelector('[data-form="payment"] [name="amount"]');if(a)a.value=unpriced?'':due}}}
 
 // ---------- Quản lý: duyệt, lượt khám, danh mục, báo cáo ----------

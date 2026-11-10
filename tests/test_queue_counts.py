@@ -40,3 +40,25 @@ def test_dues_not_readable_by_reception_but_by_cashier_role():
     both = {'Authorization': 'Bearer ' + client.post('/api/login', json={'username': name, 'password': password}).json()['access_token']}
     assert client.get('/api/dues', headers=both).status_code == 200
     assert set(client.get('/api/queue-counts', headers=both).json()) == {'reception', 'cashier'}
+
+
+def test_known_render_count_skips_only_duplicate_query_and_poll_remains_complete():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.queue_counts import install_queue_counts
+    app=FastAPI();calls=[]
+    @app.get('/api/visits')
+    def visits(u=None):calls.append('visits');return []
+    @app.get('/api/orders')
+    def orders(u=None):calls.append('orders');return [{'status':'ordered'}]
+    @app.get('/api/dues')
+    def dues(u=None):calls.append('dues');return [{'charged':1000,'paid':0,'unpriced_count':0}]
+    install_queue_counts(app,lambda:{'roles':['reception','technician','cashier']},lambda:{},None)
+    c=TestClient(app)
+    assert c.get('/api/queue-counts?known=lab').json()=={'reception':0,'cashier':1}
+    assert calls==['visits','dues'];calls.clear()
+    assert c.get('/api/queue-counts?known=cashier').json()=={'reception':0,'lab':1}
+    assert calls==['visits','orders'];calls.clear()
+    assert c.get('/api/queue-counts').json()=={'reception':0,'lab':1,'cashier':1}
+    assert calls==['visits','orders','dues']
+    assert c.get('/api/queue-counts?known=doctor').status_code==422

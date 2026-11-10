@@ -464,7 +464,6 @@ def add_order(data:OrderInput,u=Depends(principal)):
 def list_orders(u=Depends(principal),visit_id:int|None=None):
     require(u,'doctor','nurse','technician')
     with db() as c:
-        if LAN:c.execute('SET LOCAL jit = off')
         sql='''SELECT o.id,o.visit_id,o.category,o.name,o.status,o.service_id,o.proposed_price,o.result_text,o.file_name,o.created_at,
             CASE WHEN o.status='requested' AND o.proposed_price IS NULL THEN 1
             WHEN EXISTS(SELECT 1 FROM effective_charges ch JOIN charge_sources cs ON cs.charge_id=ch.id
@@ -679,7 +678,6 @@ def today_start_utc():
 
 
 def dues_rows(c,since=None):
-    if LAN:c.execute('SET LOCAL jit = off')
     return [dict(x) for x in c.execute(DUES_SQL,(since or today_start_utc(),))]
 
 
@@ -827,7 +825,6 @@ def _invoice_state(c, vid:int):
 def list_payments(u=Depends(principal)):
     require(u,'cashier','manager')
     with db() as c:
-        if LAN:c.execute('SET LOCAL jit = off')
         return [dict(x) for x in c.execute('''SELECT m.id,m.visit_id,m.amount,m.method,m.created_at,m.external_ref,m.kind,
              (SELECT COUNT(*) FROM effective_charges ch WHERE ch.visit_id=m.visit_id AND ch.amount IS NULL) AS unpriced_count,
              p.code AS patient_code,p.full_name AS patient_name,users.full_name AS cashier_name

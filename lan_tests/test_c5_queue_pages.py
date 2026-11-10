@@ -38,10 +38,21 @@ def test_cashier_pages_keep_all_old_debts_selectable(https_server):
             if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):
                 assert browser.version.split('.')[0]==os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
             page=browser.new_page(viewport={'width':390,'height':844})
+            requests=[]
+            page.on('request',lambda request:requests.append(request.url))
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.goto(origin)
             page.locator('[name="username"]').fill('test_cashier');page.locator('[name="password"]').fill(PASSWORDS['cashier'])
             page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for();settle(page)
+            formats=page.evaluate("""() => [null,0,1,1000,150000,2000000000,-150000].map(n=>
+                [money(n),n===null?'CHƯA CÓ GIÁ':Number(n||0).toLocaleString('vi-VN')+' đ'])""")
+            assert all(actual==previous for actual,previous in formats)
+            expect(page.locator('#navigation [data-count="cashier"]')).to_have_text(str(len(expected)))
+            assert len([url for url in requests if url.endswith('/api/dues')])==1
+            assert any('/api/queue-counts?known=cashier' in url for url in requests)
+            with page.expect_response(lambda response:response.url.endswith('/api/queue-counts')) as polled:
+                page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+            assert polled.value.json()['cashier']==len(expected)
             found=[]
             while True:
                 rows=page.locator('[data-action="pick"][data-kind="cash"]')

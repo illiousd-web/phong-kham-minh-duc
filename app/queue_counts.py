@@ -8,8 +8,11 @@
   Đề nghị sửa giá: COUNT trực tiếp, không tải danh sách.
 - Xác thực bằng principal.peek: KHÔNG gia hạn phiên. Hỏi định kỳ mỗi 60 giây
   không làm mất tự đăng xuất sau 20 phút không thao tác.
+- known chỉ bỏ tính lại số của danh sách màn hình vừa tải; không nhận số đếm
+  từ client. Không truyền known (định kỳ/quay lại tab) vẫn đếm đủ mọi vai trò.
 """
 from fastapi import Depends
+from typing import Literal
 
 OPEN = lambda v: v['status'] not in ('completed', 'cancelled')
 
@@ -24,7 +27,7 @@ def install_queue_counts(app, peek, load_ui, db):
         return cache[path](u=u, **kw)
 
     @app.get('/api/queue-counts')
-    def queue_counts(u=Depends(peek)):
+    def queue_counts(u=Depends(peek),known:Literal['lab','cashier']|None=None):
         roles = set(u['roles'])
         ui = load_ui()
         out = {}
@@ -37,14 +40,14 @@ def install_queue_counts(app, peek, load_ui, db):
                 out['doctor'] = sum(map(OPEN, visits))
             if 'nurse' in roles:
                 out['nurse'] = sum(map(OPEN, visits))
-        if 'technician' in roles:
+        if 'technician' in roles and known!='lab':
             out['lab'] = sum(o['status'] == 'ordered' for o in get('/api/orders', u))
         if 'pharmacy' in roles:
             # Cùng tập đơn nháp của API/giao diện, không tải mọi đơn và dòng
             # thuốc trong hai năm chỉ để đếm một số. Bao gồm đủ các trang.
             with db() as c:
                 out['pharmacy'] = c.execute("SELECT COUNT(*) FROM prescriptions WHERE status='draft'").fetchone()[0]
-        if 'cashier' in roles:
+        if 'cashier' in roles and known!='cashier':
             out['cashier'] = sum(d['charged'] - d['paid'] > 0 or d['unpriced_count'] > 0 for d in get('/api/dues', u))
         if 'manager' in roles:
             total = sum(x['status'] == 'pending' for x in get('/api/adjustments', u))

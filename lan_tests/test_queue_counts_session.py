@@ -60,3 +60,15 @@ def test_real_activity_still_extends_session():
         assert datetime.fromisoformat(fresh) <= datetime.now(timezone.utc)
     finally:
         client.close()
+
+
+def test_known_render_counts_do_not_extend_or_bypass_expired_session():
+    for role,known in (('cashier','cashier'),('technician','lab')):
+        client=client_for(role)
+        try:
+            before,digest=_last_seen(client)
+            assert client.get('/api/queue-counts?known='+known).json()=={}
+            assert _last_seen(client)[0]==before
+            _shift(digest,21)
+            assert client.get('/api/queue-counts?known='+known).status_code==401
+        finally:client.close()

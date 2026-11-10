@@ -118,9 +118,17 @@ backup + kiểm 10,733 s, restore 12,430 s; các thao tác chưa đạt vẫn ph
 Run 56 xác nhận phiếu/PDF đã đạt (0,239/0,196 s trung vị), nhưng kỹ thuật viên
 1,992 s và thu ngân 2,561 s còn không đạt. Bộ đo bổ sung EXPLAIN và đối chứng
 JIT bật/tắt trên chính máy Windows cho chỉ định, công nợ, phiếu thu; so kết quả
-giống nhau và lưu đủ năm mẫu mỗi chế độ. Các truy vấn đọc này đặt JIT off
-trong đúng giao dịch, như truy vấn Quản lý; không đổi cấu hình PostgreSQL
-toàn cục. Chưa kết luận nguyên nhân hoặc nghiệm thu trước khi có số đo này.
+giống nhau và lưu đủ năm mẫu mỗi chế độ. Run 58 cho thấy JIT không được kích
+hoạt: công nợ bật/tắt 1,124/1,140 s, chỉ định 0,979/0,973 s; không phải nguyên
+nhân. Đã bỏ các lệnh tắt JIT thử nghiệm của ba API, giữ bằng chứng đối chứng.
+
+Mỗi lần vẽ màn hình còn gọi lại cùng danh sách để đếm menu. Hai truy vấn
+khoảng một giây tranh CPU, làm màn hình thành khoảng hai giây. C5 dùng số
+đếm của danh sách vừa tải cho màn hình đang mở; chỉ hỏi máy chủ các số khác.
+Lần hỏi định kỳ/quay lại tab vẫn lấy đầy đủ số mới, không gia hạn phiên.
+Không lưu đệm công nợ hoặc bỏ các trang. Bộ định dạng tiền dùng lại một
+Intl.NumberFormat thay vì tạo lại hàng nghìn lần; kiểm chữ hiển thị giống cũ
+trên Chromium 109, gồm giá chưa biết, số 0, số lớn và số âm.
 
 ## Kết quả đo
 
