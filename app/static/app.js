@@ -327,6 +327,38 @@ async function uploadPriceFile(confirm=false){
 function manualReport(r){
  return card(`<form data-form="manual-report" class="fields">${dateField('Ngày báo cáo (giờ Việt Nam)','report_day',true,r.day)}<div class="wide"><button class="btn">Xem báo cáo ngày</button></div></form>`+stats([['Thu thường',money(r.payments.regular.total)+' · '+r.payments.regular.count+' phiếu'],['Thu tạm',money(r.payments.provisional.total)+' · '+r.payments.provisional.count+' phiếu'],['Ứng trước',money(r.payments.advance.total)+' · '+r.payments.advance.count+' phiếu']])+stats([['Nhập giá lần đầu',money(r.total_entered)],['Điều chỉnh tăng / giảm',money(r.adjustment_delta)],['Khoản chưa có giá trong ngày',r.unpriced.length]])+t(r.entries.map(x=>`<tr><td>${showDay(x.occurred_at)}</td><td>#${x.charge_id} · lượt #${x.visit_id}<div>${esc(x.patient_name)}</div></td><td>${esc(x.label)}<div>${esc(x.description)}</div></td><td>${x.previous_amount==null?money(x.amount):money(x.previous_amount)+' → '+money(x.amount)}</td><td>${esc(x.actor_name)}${x.reviewer_name?'<div>Duyệt: '+esc(x.reviewer_name)+'</div>':''}</td><td>${x.kind==='entry'?'Nhập lần đầu':'Sửa đã duyệt'}${x.void_reason?'<div>Đã hủy: '+esc(x.void_reason)+'</div>':''}</td></tr>`),['Thời gian','Khoản / người bệnh','Nội dung cụ thể','Số tiền','Người nhập / người duyệt','Nghiệp vụ'])+(r.unpriced.length?t(r.unpriced.map(x=>`<tr><td>#${x.charge_id} · lượt #${x.visit_id}</td><td>${esc(x.patient_name)}</td><td>${esc(x.label)}</td><td>CHƯA CÓ GIÁ</td></tr>`),['Khoản','Người bệnh','Dịch vụ','Trạng thái']):''),'Khoản giá nhập tay — '+r.day)
 }
+// Quản lý → Lượt khám: tìm theo khoảng ngày (mặc định 7 ngày gần nhất, giờ Việt Nam), mã/tên/điện thoại,
+// trạng thái lượt, tình trạng tiền; 50 dòng một trang. Không dùng /api/dues (hàng chờ thu ngân chỉ có lượt còn việc).
+const MONEY_STATUS={owing:'Còn nợ',settled:'Đã đủ',unpriced:'Có khoản chưa có giá',refund:'Cần hoàn'};
+const MONEY_TONE={owing:'warn',unpriced:'warn',refund:'error'};
+let mgrSearch={date_from:'',date_to:'',q:'',status:'',money:'',page:1};
+function moneyCell(x){const label=`<span class="status ${MONEY_TONE[x.money_status]||''}">${esc(MONEY_STATUS[x.money_status])}</span>`;
+ const detail=x.money_status==='unpriced'?`đã biết ${money(x.charged)} · đã thu ${money(x.paid)}`:x.money_status==='owing'?`còn ${money(x.due)}`:x.money_status==='refund'?`hoàn ${money(x.refund_due)}`:`đã thu ${money(x.paid)}`;
+ return `${label}<div class="muted">${detail}</div>`}
+async function managerVisitsTab(head){
+ const qs=new URLSearchParams();for(const k of ['date_from','date_to','q','status','money'])if(mgrSearch[k])qs.set(k,mgrSearch[k]);qs.set('page',String(mgrSearch.page));
+ const res=await api('/manager/visits?'+qs.toString());
+ const form=`<form data-form="mgr-visit-search" class="fields">${dateField('Từ ngày','vs_from',true,res.date_from)}${dateField('Đến ngày','vs_to',true,res.date_to)}${field('Mã, tên hoặc số điện thoại bệnh nhân','vs_q')}${selectField('Trạng thái lượt','vs_status',[['','Tất cả'],...['waiting','in_progress','waiting_results','completed','cancelled'].map(s=>[s,vi(s)])])}${selectField('Tình trạng tiền','vs_money',[['','Tất cả'],...Object.entries(MONEY_STATUS)])}<div class="wide"><button class="btn">Tìm lượt khám</button><p class="hint">Mặc định 7 ngày gần nhất. Tìm lượt cũ hơn: sửa ô Từ ngày (dd/mm/yyyy).</p></div></form>`;
+ const rows=res.items.map(x=>`<tr><td>#${x.visit_id}<div class="muted">${showDay(x.created_at)}</div></td><td>${esc(x.patient_name)}<div class="muted">${esc(x.patient_code||'')}</div></td><td>${pill(x.status)}</td><td>${moneyCell(x)}</td><td>${btn(sel.mgrVisit===x.visit_id?'Đang xem':'Xem lượt này','pick',`data-kind="mgr-visit" data-id="${x.visit_id}" aria-pressed="${sel.mgrVisit===x.visit_id}"`,sel.mgrVisit===x.visit_id?'btn smallbtn':'ghost smallbtn')}</td></tr>`);
+ const pager=`<div class="toolbar-actions"><span id="mgr-visit-count">Trang ${res.page}/${res.pages} · ${res.total} lượt</span>${res.page>1?btn('Trang trước','mgr-page',`data-id="${res.page-1}"`):''}${res.page<res.pages?btn('Trang sau','mgr-page',`data-id="${res.page+1}"`):''}</div>`;
+ let html=head+card(form,'Tìm lượt khám')+card((res.items.length?t(rows,['Lượt / ngày','Bệnh nhân','Trạng thái lượt','Tiền','']):empty('Không có lượt khám phù hợp. Lượt cũ hơn: sửa ô Từ ngày.'))+pager,'Kết quả');
+ const after=()=>{if($('vs_q'))$('vs_q').value=mgrSearch.q;if($('vs_status'))$('vs_status').value=mgrSearch.status;if($('vs_money'))$('vs_money').value=mgrSearch.money};
+ if(!sel.mgrVisit)return {html,after};
+ const vid=sel.mgrVisit;const [lines,state,info]=await Promise.all([api('/charges/'+vid),api('/visits/'+vid+'/settlement'),api('/manager/visits/'+vid)]);
+ const v=info.visit;
+ // Mọi thứ của lượt đang xem nằm trong một khung có tiêu đề và nút Đóng; chuyển trang, đổi bộ lọc, tìm mới đều đóng khung này.
+ html+=`<div id="mgr-visit-detail"><div class="patient-head"><div><b id="mgr-visit-title">Đang xem lượt #${v.id} – ${esc(v.patient_name)}</b> <span class="muted">${esc(v.patient_code||'')}</span></div><div class="muted">ngày ${showDay(v.created_at)}</div><div class="multi-actions">${pill(v.status)}${btn('Đóng','mgr-close')}</div></div>`;
+ html+=stats([['Chuyên môn',vi(state.clinical_status)],['Còn phải thu',money(state.billing.due)],['Cần hoàn',money(state.billing.refund_due)],['Cấp thuốc',vi(state.dispensing_status)]]);
+ html+=card(t(lines.map(l=>`<tr><td>${esc(l.label)}</td><td>${money(l.amount)}</td><td>${esc(l.void_reason||'Còn hiệu lực')}</td></tr>`),['Khoản','Số tiền','Trạng thái'])+`<form data-form="reprice" class="fields">${selectField('Khoản cần điều chỉnh','charge_id',lines.filter(l=>!l.void_reason&&!l.price_at_collection).map(l=>[l.id,l.label]))}${field('Số tiền mới','amount','number','',true)}${field('Lý do','reason','text','Tối thiểu 8 ký tự',true)}<div class="wide"><button class="btn" ${lines.some(l=>!l.void_reason&&!l.price_at_collection)?'':'disabled'}>Điều chỉnh giá</button><p class="hint">Có nhật ký, giữ chứng từ gốc.</p></div></form>`,'Bảng kê và điều chỉnh giá');
+ html+=manualChargeForms(lines);
+ html+=card(t(info.payments.map(x=>`<tr><td>#${x.id}</td><td>${money(x.amount)}<div class="muted">${PAYMENT_KIND[x.kind]||''} · ${showDay(x.created_at)}</div></td><td>${esc(vi(x.method))}<div class="muted">${esc(x.cashier_name)}</div></td><td>${receiptButton(x,true)}</td></tr>`),['Mã thu','Số tiền','Hình thức / người thu','']),'Phiếu thu của lượt');
+ const discounts=info.adjustments.filter(a=>a.kind==='discount'&&a.status==='approved'&&!a.reversed);
+ if(discounts.length)html+=card(t(discounts.map(a=>`<tr><td>#${a.id}</td><td>${money(a.amount)}</td><td>${esc(a.reason)}</td><td>${btn('Hoàn tác giảm phí','reverse-discount',`data-id="${a.id}"`)}</td></tr>`),['Mã','Số tiền','Lý do','']),'Giảm phí đã duyệt');
+ if(OPEN({status:state.clinical_status}))html+=details('Hủy lượt khám',`<form data-form="cancel-visit" class="fields">${hidden('visit_id',vid)}${field('Lý do hủy lượt','reason','text','',true)}<div class="wide"><button class="btn danger">Hủy lượt</button><p class="hint">Chỉ hủy được khi chỉ định đã hủy, y lệnh đã xử lý và thuốc đã đối soát.</p></div></form>`);
+ return {html:html+'</div>',after}}
+// Bỏ lượt đang xem ngay trên trang (không vẽ lại, để khỏi mất chữ đang gõ trong ô lọc).
+function closeMgrVisit(){sel.mgrVisit=null;const box=$('mgr-visit-detail');if(box)box.remove();
+ document.querySelectorAll('[data-action="pick"][data-kind="mgr-visit"]').forEach(b=>{b.setAttribute('aria-pressed','false');b.textContent='Xem lượt này';b.className='ghost smallbtn'})}
 async function managerScreen(){
  const p=await pendingApprovals();
  const head=tabs(sel.mgrTab,[['approve',`Cần duyệt (${p.total})`],['visits','Lượt khám'],['catalog','Danh mục'],['import','Nhập bảng giá'],['report','Báo cáo']],'mgr');
@@ -336,17 +368,7 @@ async function managerScreen(){
   return head+manualReport(manual)+(o.unpriced_count?card(`<p>Còn ${o.unpriced_count} khoản CHƯA CÓ GIÁ. Tổng phải thu hiện chỉ gồm phần đã biết, chưa phải tổng cuối.</p>`):'')+stats([['Lượt khám',o.visits],[o.unpriced_count?'Phải thu đã biết':'Phải thu',money(o.charged)],['Đã thu',money(o.paid)],['Còn phải thu',money(o.outstanding)],['Lô thuốc cần chú ý',o.stock_warning]])+
    card('<p class="hint">Số liệu phục vụ kiểm thử, chưa dùng cho kế toán hoặc khai thuế.</p>'+t(dues.filter(d=>d.charged-d.paid!==0||d.unpriced_count>0).map(d=>`<tr><td>#${d.visit_id}</td><td>${esc(d.patient_name)}</td><td>${money(d.charged)}</td><td>${money(d.paid)}</td><td>${d.unpriced_count?'CHƯA CÓ GIÁ':money(d.charged-d.paid)}</td></tr>`),['Lượt','Bệnh nhân','Phải thu','Đã thu','Chênh lệch (âm là trả thừa)']),'Công nợ theo lượt')+
    card(t(stockList.filter(x=>ui.controlled_drugs||!x.controlled).map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.lot_number)}</td><td>${showDay(x.expiry_date)}</td><td>${esc(x.quantity)} ${esc(x.base_unit)}</td><td>${x.quarantined?'<span class="status error">Cách ly</span>':'<span class="status">Bán được</span>'}</td></tr>`),['Thuốc','Số lô','Hạn dùng','Tồn','Trạng thái']),'Tồn kho')}
- if(sel.mgrTab==='visits'){const dues=await api('/dues');if(!dues.some(d=>d.visit_id===sel.mgrVisit))sel.mgrVisit=dues[0]?.visit_id??null;
-  let html=head+card(selectField('Lượt khám','mgr_visit',dues.map(d=>[d.visit_id,`#${d.visit_id} – ${d.patient_name}`])),'Chọn lượt khám');
-  if(!sel.mgrVisit)return head+empty('Chưa có lượt khám.');
-  const vid=sel.mgrVisit;const [lines,state]=await Promise.all([api('/charges/'+vid),api('/visits/'+vid+'/settlement')]);
-  html+=stats([['Chuyên môn',vi(state.clinical_status)],['Còn phải thu',money(state.billing.due)],['Cần hoàn',money(state.billing.refund_due)],['Cấp thuốc',vi(state.dispensing_status)]]);
-  html+=card(t(lines.map(l=>`<tr><td>${esc(l.label)}</td><td>${money(l.amount)}</td><td>${esc(l.void_reason||'Còn hiệu lực')}</td></tr>`),['Khoản','Số tiền','Trạng thái'])+`<form data-form="reprice" class="fields">${selectField('Khoản cần điều chỉnh','charge_id',lines.filter(l=>!l.void_reason&&!l.price_at_collection).map(l=>[l.id,l.label]))}${field('Số tiền mới','amount','number','',true)}${field('Lý do','reason','text','Tối thiểu 8 ký tự',true)}<div class="wide"><button class="btn" ${lines.some(l=>!l.void_reason&&!l.price_at_collection)?'':'disabled'}>Điều chỉnh giá</button><p class="hint">Có nhật ký, giữ chứng từ gốc.</p></div></form>`,'Bảng kê và điều chỉnh giá');
-  html+=manualChargeForms(lines);
-  const discounts=p.allAdj.filter(a=>a.visit_id===vid&&a.kind==='discount'&&a.status==='approved');
-  if(discounts.length)html+=card(t(discounts.map(a=>`<tr><td>#${a.id}</td><td>${money(a.amount)}</td><td>${esc(a.reason)}</td><td>${btn('Hoàn tác giảm phí','reverse-discount',`data-id="${a.id}"`)}</td></tr>`),['Mã','Số tiền','Lý do','']),'Giảm phí đã duyệt');
-  if(OPEN({status:state.clinical_status}))html+=details('Hủy lượt khám',`<form data-form="cancel-visit" class="fields">${hidden('visit_id',vid)}${field('Lý do hủy lượt','reason','text','',true)}<div class="wide"><button class="btn danger">Hủy lượt</button><p class="hint">Chỉ hủy được khi chỉ định đã hủy, y lệnh đã xử lý và thuốc đã đối soát.</p></div></form>`);
-  return {html,after(){if($('mgr_visit'))$('mgr_visit').value=String(vid)}}}
+ if(sel.mgrTab==='visits')return managerVisitsTab(head);
  let html=head+card(t(p.manual.map(x=>`<tr><td>#${x.id} · lượt #${x.visit_id}</td><td>${esc(x.patient_name)}<div>${esc(x.description)}</div></td><td>${money(x.previous_amount)} → ${money(x.new_amount)}</td><td>${esc(x.reason)}<div>${esc(x.proposed_name)}</div></td><td>${decide('review-manual-price',x.id,'Duyệt sửa giá')}</td></tr>`),['Đề nghị','Dịch vụ','Giá','Lý do / người đề nghị','Quyết định']),`Sửa giá nhập tay (${p.manualCount})`);
  html+=card(t(p.adj.map(x=>`<tr><td>#${x.id} · lượt #${x.visit_id}</td><td>${esc(x.patient_name)}</td><td>${esc(vi(x.kind))} — ${money(x.amount)}</td><td>${esc(x.reason)}<div class="muted">${esc(x.proposed_name||'')}</div></td><td>${decide('review-adjustment',x.id)}</td></tr>`),['Mã','Bệnh nhân','Loại','Lý do','Quyết định']),`Giảm phí / hoàn tiền (${p.adj.length})`);
  html+=card(t(p.cancel.map(x=>`<tr><td>#${x.order_id} · lượt #${x.visit_id}</td><td>${esc(x.order_name)}</td><td>${esc(x.reason)}</td><td>${decide('review-cancel',x.id,'Duyệt hủy')}</td></tr>`),['Chỉ định','Dịch vụ','Lý do','Quyết định']),`Hủy chỉ định (${p.cancel.length})`);
@@ -405,6 +427,8 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  if(kind==='login'){
   const res=await api('/login',{method:'POST',body:{username:value('username'),password:value('password')}});auth={token:res.access_token,user:res.user};selectedRole=null;uiLoaded=false;if(res.access_token)sessionStorage.setItem('md_token',res.access_token);active=null;await render();notify('Đăng nhập thành công');return;}
  if(kind==='password'){await api('/password',{method:'POST',body:{current_password:value('current_password'),new_password:value('new_password')}});sessionStorage.removeItem('md_token');selectedRole=null;renderLogin();notify('Đã đổi mật khẩu. Hãy đăng nhập lại');return;}
+ if(kind==='mgr-visit-search'){const from=parseDay(value('vs_from'),'Từ ngày'),to=parseDay(value('vs_to'),'Đến ngày');if(from&&to&&from>to)throw new Error('Từ ngày phải trước hoặc bằng Đến ngày');
+  mgrSearch={date_from:from||'',date_to:to||'',q:value('vs_q'),status:value('vs_status'),money:value('vs_money'),page:1};sel.mgrVisit=null;await render();return;}
  if(kind==='manual-report'){manualReportDay=value('report_day');parseDay(manualReportDay);await render();return;}
  if(kind==='patient-search'){sel.patientQuery=value('q');await render();return;}
  if(kind==='price-preview'){
@@ -473,7 +497,7 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  else if(kind==='controlled-receipt'){await keyed(kind,'/controlled-receipts',{medicine_id:num('medicine_id'),lot_number:value('lot_number'),expiry_date:parseDay(value('expiry_date')),quantity:num('quantity'),reason:value('reason'),register_ref:value('register_ref')});msg='Đã gửi đề nghị nhập thuốc kiểm soát';}
  await render();notify(msg);}
 async function downloadPdfReceipt(id){const r=await fetch(`/api/print/receipt/${id}`,{headers:authHeader()});if(!r.ok){const m=await r.json().catch(()=>({detail:'Lỗi xuất chứng từ'}));throw new Error(m.detail)}const blob=await r.blob();if(blob.type!=='application/pdf')throw new Error('Không nhận được PDF');const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`MinhDuc_PhieuThu_${id}.pdf`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);notify('Đã tạo phiếu thu PDF');}
-const PICK={visit:'visit','nurse-visit':'nurseVisit',order:'order',dispense:'dispense',cash:'cashVisit',patient:'patient'};
+const PICK={visit:'visit','nurse-visit':'nurseVisit',order:'order',dispense:'dispense',cash:'cashVisit',patient:'patient','mgr-visit':'mgrVisit'};
 async function handleClick(element){const action=element.dataset.action,id=Number(element.dataset.id),approve=element.dataset.value==='approve';let msg='';
  if(action==='price-template'){
   const r=await fetch('/api/catalog/services/import/template',{headers:authHeader()});if(!r.ok)throw new Error('Không tải được tệp mẫu');
@@ -486,7 +510,9 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
   catch(e){pricePreview=null;priceFile=null;await render();throw e}return;
  }
  if(action==='navigate'){active=element.dataset.page;uiLoaded=false;await render();return}
- if(action==='pick'){sel[PICK[element.dataset.kind]]=id;await render();if(element.dataset.kind==='patient')$('visit-step')?.scrollIntoView({block:'start'});return}
+ if(action==='pick'){sel[PICK[element.dataset.kind]]=id;await render();if(element.dataset.kind==='patient')$('visit-step')?.scrollIntoView({block:'start'});if(element.dataset.kind==='mgr-visit')$('mgr-visit-detail')?.scrollIntoView({block:'start'});return}
+ if(action==='mgr-page'){mgrSearch.page=id;sel.mgrVisit=null;await render();return}
+ if(action==='mgr-close'){closeMgrVisit();return}
  if(action==='tab'){sel[element.dataset.kind==='mgr'?'mgrTab':'adminTab']=element.dataset.tab;await render();return}
  if(action==='clear-search'){sel.patientQuery='';await render();return}
  if(action==='audit-prev'||action==='audit-next'){auditOffset=Math.max(0,auditOffset+(action==='audit-next'?100:-100));await render();return}
@@ -515,18 +541,19 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
 document.addEventListener('submit',async ev=>{const form=ev.target.closest('[data-form]');if(!form)return;ev.preventDefault();if(form.dataset.busy)return;form.dataset.busy='1';const buttons=[...form.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);try{await handleForm(form)}catch(err){notify(err.message,true)}finally{delete form.dataset.busy;buttons.forEach(b=>b.disabled=false)}});
 document.addEventListener('click',async ev=>{const b=ev.target.closest('[data-action]');if(!b||b.disabled)return;if(b.dataset.busy)return;b.dataset.busy='1';try{await handleClick(b)}catch(err){notify(err.message,true)}finally{delete b.dataset.busy}});
 document.addEventListener('change',async ev=>{const el=ev.target;
+ if(el.closest('[data-form="mgr-visit-search"]')){closeMgrVisit();return;}
  if(el.id==='price-file'){pricePreview=null;priceFile=null;priceResult=null;$('price-review')?.remove();$('price-file-name').textContent=el.files[0]?.name||'Chưa chọn tệp';return;}
  if(el.closest('.rx-line')&&el.name==='medicine_id'){const unit=el.closest('.rx-line').querySelector('[name="unit_id"]');if(unit)unit.disabled=true;try{const med=(await api('/dispensable-medicines')).find(m=>m.id===Number(el.value));if(unit)unit.innerHTML='<option value="">Đơn vị cơ sở</option>'+(med?.units||[]).map(u=>`<option value="${u.id}">${esc(u.name)} = ${u.base_factor}</option>`).join('');}catch(e){notify(e.message,true)}finally{if(unit)unit.disabled=false;}return;}
  try{
   if(el.id==='role_switch'){selectedRole=el.value;active=null;await render();}
   else if(el.id==='visit_choose'&&el.value){sel.visit=Number(el.value);await render();}
   else if(el.id==='cash_choose'&&el.value){sel.cashVisit=Number(el.value);await render();}
-  else if(el.id==='mgr_visit'){sel.mgrVisit=Number(el.value);await render();}
   else if(el.id==='account_choose'){sel.account=el.value?Number(el.value):null;await render();}
   else if(el.name==='roles'&&el.closest('form'))adminChange(el.closest('form'));
  }catch(e){notify(e.message,true)}});
 // Tự chèn dấu / khi gõ ngày; cập nhật cảnh báo sinh hiệu khi gõ.
 document.addEventListener('input',ev=>{const el=ev.target;
+ if(el.closest('[data-form="mgr-visit-search"]'))closeMgrVisit();
  if(el.name==='amount'&&el.closest('[data-form="payment"]'))capCheck(el.closest('form'));
  {const af=el.closest&&el.closest('[data-form="adjustment"]');if(af&&af.dataset.confirmed){delete af.dataset.confirmed;af.querySelector('[data-adjust-confirm]').classList.add('hidden');af.querySelector('button.btn').textContent='Xem lại đề nghị'}}
  if(el.id==='price-filter'){const q=el.value.trim().toLowerCase();document.querySelectorAll('tr[data-search]').forEach(tr=>tr.classList.toggle('hidden',!!q&&!tr.dataset.search.includes(q)));return}

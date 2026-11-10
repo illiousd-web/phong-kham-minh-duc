@@ -1050,6 +1050,8 @@ install_manual_prices(app, db, principal, require, audit, NOW)
 install_workflows(app, db, principal, require, audit, visit_access, NOW)
 from .workflows_v050 import install_v050
 install_v050(app,db,principal,require,audit,visit_access,NOW)
+from .manager_visits import install_manager_visits
+install_manager_visits(app,db,principal,require)
 from .ui_settings import install_ui_settings
 install_ui_settings(app,db,principal,require,audit,FILES)
 from .ui_settings import settings_path, read_settings
