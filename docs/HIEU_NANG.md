@@ -46,8 +46,8 @@ của dịch vụ đang vận hành. Bản sao lưu, khóa, tệp đính kèm v�
   Không lấy số đo máy nhanh khác làm kết quả sau trên CI.
 - Màn hình thực sự chạy qua Chromium/HTTPS: hàng chờ cả tám vai trò, tìm bệnh
   nhân, mở phiếu khám, tra cứu lượt khám trọn tháng và xuất PDF có mở/đọc lại.
-  “Tra cứu tháng” là Quản lý → Lượt khám với ngày đầu/cuối tháng; phần mềm hiện
-  chưa có báo cáo doanh thu tháng riêng, phép đo không tạo nghiệp vụ mới.
+  Theo xác nhận của chủ dự án trong C5, “báo cáo tháng” đo Quản lý → Lượt khám
+  với ngày đầu/cuối tháng hiện có; không thêm báo cáo doanh thu tháng riêng.
 - Mỗi thao tác làm nóng một lần, đo 20 lần. Trung vị ≤ 1,5 giây; P95 ≤ 3 giây.
   P95 dùng mẫu thứ 19 trong 20 mẫu đã sắp tăng dần; ghi cả mẫu chậm nhất.
   Timeout/lỗi hoặc thiếu mẫu là không đạt, không thay bằng số 0 hoặc bỏ qua.
@@ -86,6 +86,13 @@ dùng chung cho đếm và lấy trang; LEFT JOIN giữ tổng kể cả trang t
 Không sửa view, không sao chép hoặc đổi công thức tiền, không thêm chỉ mục.
 Trả về cùng các dòng, cùng tổng và cùng quyền như trước.
 
+Windows phát hiện lỗi có sẵn khi backup chứa tệp đính kèm: manifest ghi dấu
+`/`, còn tập tệp kiểm lại dùng `\\`, nên báo `Backup manifest mismatch` và
+không thể tới bước khôi phục. C5 dùng đường dẫn POSIX thống nhất ở cả hai
+phía. Vẫn từ chối tệp thừa, sai SHA-256, archive không an toàn và CSDL đích
+không rỗng. Không ghi đè bản sao hoặc dữ liệu đang dùng. Bản trước được ghi
+đúng là kiểm thất bại, không chạy restore từ bản chưa kiểm đạt.
+
 Đơn thuốc cũ tải toàn bộ lịch sử rồi đọc từng đơn riêng. C5 lấy dòng thuốc
 theo lô truy vấn, bác sĩ tải đơn theo lượt đang mở, nhà thuốc phân trang 100
 đơn chờ cấp. Có Trang trước/Trang sau, không bỏ các đơn ở trang sau. Bộ đếm
@@ -105,6 +112,19 @@ Test C5 yêu cầu trung vị mọi truy vấn Quản lý trên CI ≤ **0,5 gi�
 giữ cách đo một lần làm nóng + năm mẫu; đồng thời đo lại mã trước C5 và
 so toàn bộ kết quả trước/sau giống nhau. Log và JSON lưu đủ mẫu cùng EXPLAIN.
 
+Đối chứng cùng máy Ubuntu CI, cùng dữ liệu tại
+[run 52](https://github.com/illiousd-web/phong-kham-minh-duc/actions/runs/42752785299)
+(mã tối ưu `3556508`, PostgreSQL 17):
+
+| Truy vấn Quản lý | Trung vị trước | Trung vị sau | Chậm nhất trước / sau |
+|---|---:|---:|---:|
+| Một năm, đã đủ, trang vượt cuối | 0,859136 s | 0,336436 s | 0,899079 / 0,337997 s |
+| Ca chậm nhất trong toàn bộ truy vấn sau C5 (trang cuối) | — | 0,344078 s | — / 0,390416 s |
+
+Mọi ca sau C5 đạt trung vị ≤ 0,5 giây. Tên có dấu, không dấu, chữ hoa,
+lọc tiền, trang cuối và trang trống đều kiểm đúng số dòng/kết quả.
+Số này là truy vấn PostgreSQL; bảng Windows bên dưới đo cả thao tác trình duyệt.
+
 | Hạng mục Windows | Trước C5 | Sau C5 | Ngưỡng |
 |---|---:|---:|---|
 | Hàng chờ từng vai trò | Chờ số đo CI | Chờ số đo CI | Trung vị 1,5 s; P95 3 s |
@@ -117,4 +137,6 @@ Các bài bảo vệ: `test_tu_choi_ten_csdl_khong_phai_dich_c5`,
 `test_bat_buoc_xac_nhan_va_loopback_va_thu_muc_moi`,
 `test_c5_du_lieu_lien_ket_va_khong_ghi_de_csdl_co_san`,
 `test_rx_pages_are_complete_scoped_and_fetch_items_in_batches`,
-`test_p95_nearest_rank_va_khong_dung_mau_tot_nhat`, cùng toàn bộ C4 và phân quyền.
+`test_p95_nearest_rank_va_khong_dung_mau_tot_nhat`,
+`test_lan_backup_nested_paths_are_portable_and_hashes_stay_required`,
+`test_loi_manifest_duoc_ghi_la_khong_dat_khong_co_so_khoi_phuc`, cùng toàn bộ C4 và phân quyền.

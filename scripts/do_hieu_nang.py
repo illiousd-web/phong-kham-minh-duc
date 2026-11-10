@@ -158,10 +158,17 @@ def worker(args):
         key=Path(os.environ['C5_BACKUP_KEY'])
         started=time.perf_counter();target=backup_lan.backup(root/'backups',key)
         saved=time.perf_counter()
-        with tempfile.TemporaryDirectory(dir=root) as temp:
-            manifest=backup_lan.unpack_verified(target,key,Path(temp))
-        result={'backup_seconds':saved-started,'verify_seconds':time.perf_counter()-saved,
-                'backup_verify_seconds':time.perf_counter()-started,'backup_path':str(target),'verified_files':len(manifest['files'])}
+        result={'backup_seconds':saved-started,'backup_path':str(target),
+                'verified_files':0,'backup_verified':False}
+        try:
+            with tempfile.TemporaryDirectory(dir=root) as temp:
+                manifest=backup_lan.unpack_verified(target,key,Path(temp))
+            result.update(verified_files=len(manifest['files']),backup_verified=True)
+        except ValueError as error:
+            # Ghi lỗi của mã trước C5 để vẫn đo được bản sau. Tuyệt đối không
+            # gọi restore hoặc coi backup này là đạt khi kiểm manifest thất bại.
+            result['verification_error']=type(error).__name__+': '+str(error)
+        result.update(verify_seconds=time.perf_counter()-saved,backup_verify_seconds=time.perf_counter()-started)
     else:
         started=time.perf_counter()
         backup_lan.restore(Path(os.environ['C5_BACKUP']),Path(os.environ['C5_BACKUP_KEY']),os.environ['C5_RESTORE_URL'],root/'attachments')
@@ -175,7 +182,7 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
     from cryptography import x509
     from cryptography.hazmat.primitives import serialization
     credentials=json.loads((data/'credentials.json').read_text(encoding='utf-8'))
-    result={'screens':{},'source':str(source),'errors':[]}
+    result={'screens':{},'source':str(source),'errors':[],'restored_exact':False,'passed':False}
     profile=data/label;profile.mkdir()
     log=(profile/'service.log').open('w',encoding='utf-8')
     app=subprocess.Popen([sys.executable,'-m','scripts.run_lan'],cwd=source,env=env,stdout=log,stderr=log)
@@ -253,29 +260,33 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
             cmd=[sys.executable,str(ROOT/'scripts/do_hieu_nang.py'),'--source',str(source),'--workspace',str(profile)]
             subprocess.run(cmd+['--worker','backup','--output',str(profile/'backup.json')],env=env,check=True,timeout=960)
             backup=json.loads((profile/'backup.json').read_text(encoding='utf-8'));result.update(backup)
-            assert backup['verified_files']==manifest['attachments']+2
-            target=manifest['database_name']+'_restore_'+label
-            with psycopg.connect(os.environ['CLINIC_PERF_SOURCE_DATABASE_URL'],autocommit=True) as c:
-                c.execute(sql.SQL('CREATE DATABASE {} TEMPLATE template0').format(sql.Identifier(target)))
-            restore_url=urlunsplit(urlsplit(env['CLINIC_DATABASE_URL'])._replace(path='/'+target))
-            try:
-                restore_env={**env,'C5_BACKUP':backup['backup_path'],'C5_RESTORE_URL':restore_url}
-                subprocess.run(cmd+['--worker','restore','--workspace',str(profile/'restored'),'--output',str(profile/'restore.json')],env=restore_env,check=True,timeout=960)
-                result.update(json.loads((profile/'restore.json').read_text(encoding='utf-8')))
-                restored=database_state(restore_url)
-                expected={**before,'tables':dict(before['tables'])}
-                # Hợp đồng restore đã có: hủy mọi phiên trình duyệt và ghi
-                # đúng một sự kiện backup_restored; mọi dữ liệu nghiệp vụ giữ nguyên.
-                expected['tables']['sessions']=0;expected['tables']['audit_log']+=1
-                result['restore_checks']={'source':before,'expected':expected,'restored':restored}
-                assert restored==expected,('Khôi phục không khớp số dòng/tiền/kho',expected,restored)
-                with psycopg.connect(restore_url) as c:
-                    assert c.execute("SELECT COUNT(*) FROM audit_log WHERE event='backup_restored'").fetchone()[0]==1
-                assert files_state(profile/'restored/attachments')==attachments,'Tệp khôi phục không khớp SHA-256'
-                result['restored_exact']=True
-            finally:
+            result['restored_exact']=False
+            if not backup['backup_verified']:
+                result['errors'].append(backup['verification_error'])
+            else:
+                assert backup['verified_files']==manifest['attachments']+2
+                target=manifest['database_name']+'_restore_'+label
                 with psycopg.connect(os.environ['CLINIC_PERF_SOURCE_DATABASE_URL'],autocommit=True) as c:
-                    c.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(target)))
+                    c.execute(sql.SQL('CREATE DATABASE {} TEMPLATE template0').format(sql.Identifier(target)))
+                restore_url=urlunsplit(urlsplit(env['CLINIC_DATABASE_URL'])._replace(path='/'+target))
+                try:
+                    restore_env={**env,'C5_BACKUP':backup['backup_path'],'C5_RESTORE_URL':restore_url}
+                    subprocess.run(cmd+['--worker','restore','--workspace',str(profile/'restored'),'--output',str(profile/'restore.json')],env=restore_env,check=True,timeout=960)
+                    result.update(json.loads((profile/'restore.json').read_text(encoding='utf-8')))
+                    restored=database_state(restore_url)
+                    expected={**before,'tables':dict(before['tables'])}
+                    # Hợp đồng restore đã có: hủy mọi phiên trình duyệt và ghi
+                    # đúng một sự kiện backup_restored; mọi dữ liệu nghiệp vụ giữ nguyên.
+                    expected['tables']['sessions']=0;expected['tables']['audit_log']+=1
+                    result['restore_checks']={'source':before,'expected':expected,'restored':restored}
+                    assert restored==expected,('Khôi phục không khớp số dòng/tiền/kho',expected,restored)
+                    with psycopg.connect(restore_url) as c:
+                        assert c.execute("SELECT COUNT(*) FROM audit_log WHERE event='backup_restored'").fetchone()[0]==1
+                    assert files_state(profile/'restored/attachments')==attachments,'Tệp khôi phục không khớp SHA-256'
+                    result['restored_exact']=True
+                finally:
+                    with psycopg.connect(os.environ['CLINIC_PERF_SOURCE_DATABASE_URL'],autocommit=True) as c:
+                        c.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(target)))
             result.update(memory.result())
             assert result['service_peak_bytes']>0 and result['postgres_peak_bytes']>0, 'Chưa lấy được số đo RAM của dịch vụ/PostgreSQL'
     finally:
@@ -283,7 +294,10 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
         try:app.wait(timeout=15)
         except subprocess.TimeoutExpired:app.kill();app.wait()
         log.close()
-    result['passed']=all(x['passed'] for x in result['screens'].values()) and result['backup_verify_seconds']<=900 and result['service_peak_bytes']<=500000000 and not result['errors'] and result['restored_exact']
+        if sys.exc_info()[1] is not None:
+            result['errors'].append('Đo bị dừng: '+type(sys.exc_info()[1]).__name__)
+        output.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+    result['passed']=all(x['passed'] for x in result['screens'].values()) and result['backup_verified'] and result['backup_verify_seconds']<=900 and result['service_peak_bytes']<=500000000 and not result['errors'] and result['restored_exact']
     output.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
     return result
 
@@ -318,7 +332,8 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
             report['profiles'][label]=run_profile(source,label,env,data,manifest,pg_pid,args.output.parent/(label+'.json'))
             value=report['profiles'][label]
             print('C5 '+label+' tổng kết: '+json.dumps({k:value[k] for k in
-                  ('backup_seconds','verify_seconds','backup_verify_seconds','restore_seconds','service_peak_mb','postgres_peak_mb','restored_exact','passed')},ensure_ascii=False),flush=True)
+                  ('backup_seconds','verify_seconds','backup_verify_seconds','restore_seconds','service_peak_mb','postgres_peak_mb','backup_verified','restored_exact','passed')
+                  if k in value},ensure_ascii=False),flush=True)
             args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
         return 0 if report['profiles']['after']['passed'] else 1
     finally:

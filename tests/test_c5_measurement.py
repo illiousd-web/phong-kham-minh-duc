@@ -18,3 +18,19 @@ def test_timeout_hoac_loi_khong_duoc_coi_la_mau_dat():
     assert not result['passed'] and result['sample_count']==0
     assert result['median_seconds'] is None and result['p95_seconds'] is None
     assert 'TimeoutError' in result['errors'][0]
+
+
+def test_loi_manifest_duoc_ghi_la_khong_dat_khong_co_so_khoi_phuc(tmp_path,monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from scripts import backup_lan,do_hieu_nang
+    monkeypatch.setenv('C5_BACKUP_KEY',str(tmp_path/'fake.key'))
+    monkeypatch.setattr(backup_lan,'backup',lambda *args:tmp_path/'fake.mdbackup')
+    def fail(*args):raise ValueError('Backup manifest mismatch')
+    monkeypatch.setattr(backup_lan,'unpack_verified',fail)
+    output=tmp_path/'result.json'
+    do_hieu_nang.worker(SimpleNamespace(source=do_hieu_nang.ROOT,workspace=tmp_path/'worker',worker='backup',output=output))
+    result=json.loads(output.read_text(encoding='utf-8'))
+    assert not result['backup_verified'] and result['verified_files']==0
+    assert result['verification_error']=='ValueError: Backup manifest mismatch'
+    assert 'restore_seconds' not in result

@@ -29,6 +29,7 @@ def test_c5_du_lieu_lien_ket_va_khong_ghi_de_csdl_co_san(tmp_path):
                 WHERE p.created_at>v.created_at''').fetchone()[0]==0
             assert c.execute('''SELECT COUNT(*) FROM audit_log a LEFT JOIN patients p ON p.id=a.object_id
                 WHERE a.event='patient_created' AND p.id IS NULL''').fetchone()[0]==0
+            assert c.execute("INSERT INTO service_catalog(name,price) VALUES('Kiểm chuỗi giả lập C5',1000) RETURNING id").fetchone()[0]>5
             before=c.execute('SELECT COUNT(*) FROM audit_log').fetchone()[0]
         # Đích khác trên đĩa nhưng cùng tên DB: CREATE DATABASE phải từ chối,
         # kể cả người chạy biết đúng mã xác nhận và tên hợp lệ.

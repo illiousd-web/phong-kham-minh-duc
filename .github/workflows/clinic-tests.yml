@@ -453,6 +453,8 @@ jobs:
           $py = 'C:\MinhDuc\.venv\Scripts\python.exe'
           & $py -m pip install -r requirements-test.lock
           if ($LASTEXITCODE) { throw 'C5 test dependencies' }
+          & $py -m pytest tests/test_backup_paths.py tests/test_c5_measurement.py -q
+          if ($LASTEXITCODE) { throw 'C5 backup path and measurement regression' }
           & $py -m playwright install chromium
           if ($LASTEXITCODE) { throw 'C5 Chromium' }
           $pgServices = @(Get-Service -Name 'postgresql*' | Where-Object { $_.Status -eq 'Running' })

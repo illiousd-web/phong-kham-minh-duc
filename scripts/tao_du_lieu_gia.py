@@ -156,7 +156,7 @@ def generate(source, name, output, confirmation, *, visits=22000, patients=20000
             padding=secrets.token_hex((remaining+1)//2).encode()[:remaining]
             (uploads/key).write_bytes(header+padding+trailer)
         c.execute("UPDATE orders SET file_name='Ket_qua_gia_lap_C5.pdf',file_key='c5-'||id||'.pdf' WHERE id<=%s", (attachments,))
-        for table in ('users','patients','visits','orders','charges','prescriptions','prescription_items','dispensations','dispensation_items','payments','medicines','stock_lots','clinical_revisions','nursing_notes'):
+        for table in ('users','patients','visits','service_catalog','orders','charges','prescriptions','prescription_items','dispensations','dispensation_items','payments','medicines','stock_lots','clinical_revisions','nursing_notes'):
             c.execute(sql.SQL("SELECT setval(pg_get_serial_sequence(%s,'id'),COALESCE((SELECT MAX(id) FROM {}),1))").format(sql.Identifier(table)), (table,))
         c.execute('ANALYZE')
         counts={table:c.execute(sql.SQL('SELECT COUNT(*) FROM {}').format(sql.Identifier(table))).fetchone()[0]
