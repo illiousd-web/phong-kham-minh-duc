@@ -11,6 +11,7 @@ from .conftest import SOURCE
 from app.database import PGConnection, record_factory
 from app.administrative_migration import migrate_administrative
 from app.m0_migration import migrate_m0
+from app.patient_catalog import migrate_public_catalog
 from scripts.tao_du_lieu_gia import generate, CONFIRM
 
 
@@ -28,7 +29,7 @@ def test_l12_migration_on_populated_c5_preserves_legacy_data_and_prints(tmp_path
                 cursor=con.execute('SELECT * FROM '+table+' ORDER BY id')
                 before[table]=([col.name for col in cursor.description],cursor.fetchall())
             c=PGConnection(con)
-            migrate_m0(c);migrate_administrative(c);migrate_administrative(c)
+            migrate_m0(c);migrate_administrative(c);migrate_public_catalog(c);migrate_public_catalog(c)
             for table,(columns,rows) in before.items():
                 query=sql.SQL('SELECT {} FROM {} ORDER BY id').format(sql.SQL(',').join(map(sql.Identifier,columns)),sql.Identifier(table))
                 assert con.execute(query).fetchall()==rows

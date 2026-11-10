@@ -67,7 +67,11 @@ def test_upgrade_preserves_every_old_column_and_backup_restore(version,tmp_path,
         with psycopg.connect(url) as c:
             for table,(columns,rows) in before.items():
                 query=sql.SQL('SELECT {} FROM {} ORDER BY id').format(sql.SQL(',').join(map(sql.Identifier,columns)),sql.Identifier(table))
-                assert c.execute(query).fetchall()==rows,table
+                actual=c.execute(query).fetchall()
+                if table=='audit_log':
+                    assert actual[:len(rows)]==rows,table
+                    assert len(actual)==len(rows)+1 and actual[-1][columns.index('event')]=='patient_catalog_seeded'
+                else:assert actual==rows,table
             assert c.execute('SELECT count(*) FROM schema_migrations WHERE version=3').fetchone()[0]==1
             assert c.execute('SELECT count(*) FROM charges').fetchone()[0]==(2 if version=='v042' else 1)
             assert c.execute('SELECT count(*) FROM order_authorizations').fetchone()[0]==(1 if version=='v042' else 0)

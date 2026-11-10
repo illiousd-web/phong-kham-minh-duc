@@ -91,3 +91,10 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 
 /* Long allergy histories must leave room for the clinical form on narrow screens. */
 .doctor-patient .allergy-warning{max-height:6em;overflow-y:auto}
+
+.catalog-combo{position:relative;min-width:0}
+.catalog-results{position:absolute;top:78px;left:0;right:0;max-height:260px;overflow:auto;z-index:15;background:#fff;border:1px solid #abc9cb;border-radius:8px;box-shadow:0 5px 18px #1232}
+.catalog-results button{display:block;width:100%;text-align:left;padding:10px;border:0;border-bottom:1px solid #dfebeb;background:#fff;color:#153a40;white-space:normal}
+.catalog-results button small{display:block;font-weight:normal;color:#617a80;line-height:1.4}
+.catalog-results button:hover,.catalog-results .catalog-active{background:#e5f5f1}
+.catalog-results p{padding:10px}

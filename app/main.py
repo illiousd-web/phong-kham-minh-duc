@@ -56,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=6").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=7").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -73,6 +73,8 @@ def init_db():
         migrate_m0(c)
         from .administrative_migration import migrate_administrative
         migrate_administrative(c)
+        from .patient_catalog import migrate_public_catalog
+        migrate_public_catalog(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -194,7 +196,7 @@ def staff(u=Depends(principal)):
     with db() as c:
         return [dict(x) for x in c.execute("SELECT u.id,u.full_name,u.username FROM users u JOIN user_roles r ON r.user_id=u.id WHERE r.role='doctor' AND u.active=1 ORDER BY u.id")]
 
-from .administrative import (AdministrativePatient, duplicate_warning, validate_catalog, redact_document,
+from .administrative import (AdministrativePatient, duplicate_warning, redact_document,
     document_value, months_old, require_child_prescription, install_administrative)
 from .practitioners import printed_name, scope_warning, install_practitioners
 
@@ -238,7 +240,8 @@ class PatientInput(AdministrativePatient):
 def add_patient(data:PatientInput,u=Depends(principal)):
     require(u,'reception','admin')
     with db(True) as c:
-        validate_catalog(c,data)
+        from .patient_catalog import resolve_patient_catalog
+        resolve_patient_catalog(c,data)
         warnings=duplicate_warning(c,data)
         params=data.model_dump()
         cols=','.join(params)

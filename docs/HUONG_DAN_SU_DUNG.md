@@ -2,7 +2,7 @@
 
 Bản thử nghiệm. Chỉ nhập dữ liệu giả lập. Chưa dùng cho bệnh nhân, đơn thuốc hoặc tiền thật trước khi nghiệm thu độc lập.
 
-Hồ sơ hành chính, nạp danh mục tỉnh/xã/dân tộc, cân nặng và người đưa trẻ đi khám, người hành nghề: xem [hướng dẫn L1–L2](L1_L2_HO_SO.md).
+Hồ sơ hành chính, danh mục tỉnh/xã/dân tộc có sẵn và nạp lại, cân nặng và người đưa trẻ đi khám, người hành nghề: xem [hướng dẫn L1–L2](L1_L2_HO_SO.md).
 
 ## Chung cho mọi người
 

@@ -107,3 +107,70 @@ def test_administrative_practitioner_and_refund_ui(https_server, clients, reques
         assert not errors,errors
         browser.close()
     clients['admin'].put(f'/api/practitioners/{IDS["doctor"]}',json=prior)
+
+
+def test_public_catalog_comboboxes_default_province_and_explicit_ethnicity(https_server, clients, request):
+    from app.ui_settings import settings_path
+    from app.main import FILES
+    settings=settings_path(FILES);previous=settings.read_bytes() if settings.exists() else None
+    def restore():
+        if previous is None:settings.unlink(missing_ok=True)
+        else:settings.write_bytes(previous)
+    request.addfinalizer(restore)
+    assert clients['admin'].put('/api/ui-settings',json={'default_province_code':'06'}).status_code==200
+    origin,certdir=https_server
+    cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    errors=[]
+    with sync_playwright() as p:
+        browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,
+            args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
+        if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):assert browser.version.split('.')[0]==os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
+        page=browser.new_page(viewport={'width':1366,'height':900});page.on('pageerror',lambda e:errors.append(str(e)))
+        page.goto(origin);page.locator('[name=username]').fill('test_reception');page.locator('[name=password]').fill(PASSWORDS['reception'])
+        page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+        for width in (1366,390):
+            page.set_viewport_size({'width':width,'height':900});go(page,'reception')
+            page.locator('summary').filter(has_text='Thêm bệnh nhân mới').click()
+            form=page.locator('[data-form=patient]')
+            expect(form.locator('[name=province_code]')).to_have_value('06')
+            expect(form.locator('[name=ethnicity_code]')).to_have_value('')
+            expect(form.locator('[name=ethnicity_search]')).to_have_value('')
+            # Both extra choices are discoverable without assigning any default ethnicity.
+            ethnic=form.locator('[name=ethnicity_search]');ethnic.focus()
+            with page.expect_response(lambda r:'/patient-catalog?' in r.url and 'kind=ethnicity' in r.url):ethnic.press('ArrowDown')
+            expect(form.locator('[data-code=FOREIGN]')).to_be_visible();expect(form.locator('[data-code=UNKNOWN]')).to_be_visible()
+            expect(form.locator('[name=ethnicity_code]')).to_have_value('')
+            with page.expect_response(lambda r:'/patient-catalog?' in r.url and 'kind=ethnicity' in r.url):ethnic.fill('viet')
+            option=form.locator('[data-catalog-combo=ethnicity] [data-code="01"]')
+            expect(option.locator('span')).to_have_text('Kinh');expect(option.locator('small.muted')).to_have_text('Việt')
+            option.click();expect(form.locator('[name=ethnicity_code]')).to_have_value('01')
+            with page.expect_response(lambda r:'/patient-catalog?' in r.url and 'kind=ethnicity' in r.url):ethnic.fill('tho')
+            ethnic.press('ArrowDown');ethnic.press('Enter');expect(form.locator('[name=ethnicity_code]')).to_have_value('02')
+            commune=form.locator('[name=commune_search]')
+            with page.expect_response(lambda r:'/patient-catalog?' in r.url and 'kind=commune' in r.url) as response:commune.fill('cat thanh')
+            rows=response.value.json();assert len(rows)<=30 and all(x['parent_code']=='06' for x in rows)
+            form.locator('[data-catalog-combo=commune] [data-code="11311067"]').click()
+            expect(form.locator('[name=commune_search]')).to_have_value('Xã Cát Thành')
+            form.locator('[name=province_code]').select_option('01')
+            expect(form.locator('[name=commune_search]')).to_have_value('');expect(form.locator('[name=commune_code]')).to_have_value('')
+            form.locator('[name=province_code]').select_option('06')
+            with page.expect_response(lambda r:'/patient-catalog?' in r.url and 'kind=commune' in r.url):commune.fill('phuong nam dinh')
+            form.locator('[data-catalog-combo=commune] [data-code="11301122"]').click()
+            form.locator('[name=full_name]').fill('Người bệnh giả lập danh mục '+str(width));form.locator('[name=date_of_birth]').fill('01/01/1990')
+            form.locator('[name=sex]').select_option('Nữ');form.locator('[name=phone]').fill('0900000000')
+            with page.expect_response(lambda r:r.url.endswith('/api/patients') and r.request.method=='POST') as saved:form.locator('button.btn').click()
+            assert saved.value.status==201,saved.value.text();settle(page)
+            record=clients['reception'].get('/api/patients/'+str(saved.value.json()['id'])).json()
+            assert (record['province_code'],record['commune_code'],record['ethnicity_code'])==('06','11301122','02')
+            no_horizontal_scroll(page)
+            out=Path('test_evidence/l1-catalog');out.mkdir(parents=True,exist_ok=True);page.screenshot(path=str(out/f'catalog-{width}.png'),full_page=True)
+        page.locator('#logout').click();page.locator('[name=username]').fill('test_admin');page.locator('[name=password]').fill(PASSWORDS['admin'])
+        page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+        go(page,'settings');expect(page.locator('[name=default_province_code]')).to_have_value('06')
+        go(page,'admin');page.locator('[data-action=tab][data-tab=catalog]').click();settle(page)
+        with page.expect_response(lambda r:'/patient-catalog/import' in r.url and r.request.method=='POST') as reload:
+            page.locator('[data-form=patient-catalog] button').click()
+        assert reload.value.status==200;settle(page)
+        assert not errors,errors
+        browser.close()

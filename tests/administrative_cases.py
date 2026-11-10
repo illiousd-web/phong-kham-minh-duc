@@ -20,8 +20,8 @@ def check_administrative(clients, ids, db, service_id):
     for body in ({'document_type': 'identity'}, {'document_type': 'passport'}, {'document_type': 'none', 'document_number': number}):
         assert r.post('/api/patients', json=dict(base, **body)).status_code == 422
     payload = dict(base, document_type='identity', document_number=number,
-                   ethnicity='Dân tộc giả lập', occupation='Nghề giả lập', workplace='Nơi học giả lập',
-                   province='Tỉnh giả lập tự nhập', commune='Xã giả lập tự nhập', address_detail='Số nhà giả lập', address='Địa chỉ cũ giả lập')
+                   ethnicity='Kinh', occupation='Nghề giả lập', workplace='Nơi học giả lập',
+                   province='Tỉnh Ninh Bình', commune='Xã Cát Thành', address_detail='Số nhà giả lập', address='Địa chỉ cũ giả lập')
     first = r.post('/api/patients', json=payload); assert first.status_code == 201, first.text
     pid = first.json()['id']
     second = r.post('/api/patients', json=payload); assert second.status_code == 201, second.text
@@ -92,42 +92,60 @@ def check_administrative(clients, ids, db, service_id):
 
 
 def check_catalog(clients, db):
-    a = clients['admin']
-    csv = 'kind,code,name,parent_code\nprovince,P-GIA,Tỉnh giả lập,\ncommune,X-GIA,Xã giả lập,P-GIA\nethnicity,D-GIA,Dân tộc giả lập,\n'
-    files = lambda text: {'file': ('gia-lap.csv', text.encode(), 'text/csv')}
-    assert clients['reception'].post('/api/patient-catalog/import', files=files(csv)).status_code == 403
-    assert a.post('/api/patient-catalog/import', files=files(csv)).status_code == 200
-    before = a.get('/api/patient-catalog').json()
+    from app.patient_catalog import GEO_HEADERS, ETHNIC_HEADERS, bundled_catalog, apply_catalog
+    import csv as csv_module
+    a,r=clients['admin'],clients['reception']
+    def content(headers,rows):
+        buf=io.StringIO();w=csv_module.writer(buf);w.writerow(headers);w.writerows(rows);return buf.getvalue().encode()
+    geography=content(GEO_HEADERS,[['99','Tỉnh giả lập','99001','Xã cùng tên giả lập','Huyện cũ giả lập'],['98','Tỉnh khác giả lập','98001','Xã cùng tên giả lập','Huyện cũ khác']])
+    upload=lambda raw,kind='geography': {'data':{'kind':kind},'files':{'file':('gia-lap.csv',raw,'text/csv')}}
+    assert r.post('/api/patient-catalog/import',**upload(geography)).status_code==403
     try:
-        for bad, line in [(csv+'commune,X-LOI,Xã lỗi,KHONG-CO\n',5), (csv+'province,P-GIA,Trùng giả lập,\n',5), ('loi\n',1)]:
-            res = a.post('/api/patient-catalog/import', files=files(bad))
-            assert res.status_code == 422 and f'Dòng {line}' in res.json()['detail'], res.text
-            assert a.get('/api/patient-catalog').json() == before
-        from openpyxl import Workbook
-        book=Workbook(); sheet=book.active
-        for row in csv.strip().splitlines(): sheet.append(row.split(','))
-        buf=io.BytesIO();book.save(buf)
-        assert a.post('/api/patient-catalog/import', files={'file':('gia-lap.xlsx',buf.getvalue())}).status_code == 200
-        sheet.append(['commune','X-LOI','Xã lỗi','KHONG-CO']);buf=io.BytesIO();book.save(buf)
-        res=a.post('/api/patient-catalog/import',files={'file':('gia-lap.xlsx',buf.getvalue())})
-        assert res.status_code==422 and 'Dòng 5' in res.json()['detail']
-        assert a.get('/api/patient-catalog').json()==before
-        base={'full_name':'Người giả lập danh mục','date_of_birth':'1990-01-01','sex':'Nam','phone':'0900000000'}
-        assert clients['reception'].post('/api/patients',json=dict(base,province='Tỉnh giả lập',commune='Xã giả lập',ethnicity='Dân tộc giả lập')).status_code==201
-        assert clients['reception'].post('/api/patients',json=dict(base,province='Không có trong danh mục')).status_code==422
-        # Commune names can repeat in different provinces; selection must match both fields.
-        same_names=csv+'province,P-KHAC,Tỉnh giả lập khác,\ncommune,X-KHAC,Xã giả lập,P-KHAC\n'
-        assert a.post('/api/patient-catalog/import',files=files(same_names)).status_code==200
-        for province in ('Tỉnh giả lập','Tỉnh giả lập khác'):
-            assert clients['reception'].post('/api/patients',json=dict(base,province=province,commune='Xã giả lập')).status_code==201
-        invalid=same_names+'commune,X-TRUNG,Xã giả lập,P-KHAC\n'
-        res=a.post('/api/patient-catalog/import',files=files(invalid))
-        assert res.status_code==422 and 'Dòng 7' in res.json()['detail']
-        assert len(a.get('/api/patient-catalog').json())==5
+        response=a.post('/api/patient-catalog/import',**upload(geography));assert response.status_code==200,response.text
+        assert response.json()['inactive']>=3355
+        # Equal commune names in different provinces are valid and resolve by both codes.
+        for province,commune in [('99','99001'),('98','98001')]:
+            p=r.post('/api/patients',json={'full_name':'Người giả lập danh mục','date_of_birth':'1990-01-01','sex':'Nam','phone':'0900000000','province_code':province,'commune_code':commune})
+            assert p.status_code==201,p.text
+        before=a.get('/api/patient-catalog',params={'kind':'province'}).json()
+        missing=content(GEO_HEADERS[:-1],[['99','Tỉnh giả lập','99001','Xã cùng tên giả lập']])
+        res=a.post('/api/patient-catalog/import',**upload(missing))
+        assert res.status_code==422 and 'Tên Quận huyện TMS (cũ)' in res.json()['detail']
+        duplicate=content(GEO_HEADERS,[['99','Tỉnh giả lập','99001','Xã một',''],['99','Tỉnh giả lập','99001','Xã hai','']])
+        res=a.post('/api/patient-catalog/import',**upload(duplicate));assert res.status_code==422 and 'Dòng 3' in res.json()['detail']
+        assert a.get('/api/patient-catalog',params={'kind':'province'}).json()==before
+        # Update by code and deactivate a removed, referenced commune. Patient snapshots do not change.
+        kept_pid=p.json()['id']
+        changed=content(GEO_HEADERS,[['99','Tỉnh giả lập đổi tên','99001','Xã mới giả lập','Huyện cũ giả lập']])
+        assert a.post('/api/patient-catalog/import',**upload(changed)).status_code==200
+        kept=r.get(f'/api/patients/{kept_pid}').json()
+        assert kept['province']=='Tỉnh khác giả lập' and kept['commune']=='Xã cùng tên giả lập'
+        with db() as c:
+            assert c.execute("SELECT active FROM patient_catalog WHERE kind='commune' AND code='98001'").fetchone()[0]==0
+        assert a.get('/api/patient-catalog',params={'kind':'commune','province_code':'98'}).json()==[]
+        body={k:kept[k] for k in ('province','commune','province_code','commune_code','ethnicity','ethnicity_code')}
+        assert r.put(f'/api/patients/{kept_pid}/administrative',json=body).status_code==200
+        assert r.post('/api/patients',json={'full_name':'Người mới giả lập','date_of_birth':'1990-01-01','sex':'Nam','phone':'0900000000','province_code':'98','commune_code':'98001'}).status_code==422
+        moved=content(GEO_HEADERS,[['99','Tỉnh giả lập đổi tên','98001','Xã được chuyển giả lập','Huyện cũ khác']])
+        assert a.post('/api/patient-catalog/import',**upload(moved)).status_code==200
+        assert r.put(f'/api/patients/{kept_pid}/administrative',json=body).status_code==200
+        assert r.get(f'/api/patients/{kept_pid}').json()['province']=='Tỉnh khác giả lập'
 
+        # Workbook headers are located by name, ignoring surrounding spaces.
+        from openpyxl import Workbook
+        book=Workbook();sheet=book.active;sheet.append(['Ghi chú công khai']);sheet.append([]);sheet.append([' '+h+' ' for h in reversed(GEO_HEADERS)])
+        sheet.append(list(reversed(['99','Tỉnh giả lập','99001','Xã giả lập','Huyện cũ giả lập'])))
+        buf=io.BytesIO();book.save(buf)
+        res=a.post('/api/patient-catalog/import',data={'kind':'geography'},files={'file':('gia-lap.xlsx',buf.getvalue())});assert res.status_code==200,res.text
+        ethnic=content(ETHNIC_HEADERS,[['01','Dân tộc giả lập','Tên khác giả lập']])
+        assert a.post('/api/patient-catalog/import',**upload(ethnic,'ethnicity')).status_code==200
+        assert a.get('/api/patient-catalog',params={'kind':'ethnicity','q':'ten khac gia lap'}).json()[0]['code']=='01'
+        # Original public catalogs remain available to restore the removed items.
+        assert a.post('/api/patient-catalog/import').status_code==200
+        assert len(a.get('/api/patient-catalog',params={'kind':'province'}).json())==34
+        assert any(x['event']=='patient_catalog_imported' for x in a.get('/api/audit?limit=30').json())
     finally:
-        # This disposable database's test catalog must not change subsequent test scenarios.
-        with db(True) as c:c.execute('DELETE FROM patient_catalog')
+        with db(True) as c:apply_catalog(c,bundled_catalog(),('province','commune','ethnicity'))
 
 
 def check_child(clients, ids, db, service_id):
