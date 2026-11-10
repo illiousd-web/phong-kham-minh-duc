@@ -62,12 +62,13 @@ def test_real_activity_still_extends_session():
         client.close()
 
 
-def test_known_render_counts_do_not_extend_or_bypass_expired_session():
+def test_queue_counts_legacy_known_does_not_extend_or_bypass_expired_session():
     for role,known in (('cashier','cashier'),('technician','lab')):
         client=client_for(role)
         try:
             before,digest=_last_seen(client)
-            assert client.get('/api/queue-counts?known='+known).json()=={}
+            counts=client.get('/api/queue-counts?known='+known).json()
+            assert set(counts)=={known} and type(counts[known]) is int
             assert _last_seen(client)[0]==before
             _shift(digest,21)
             assert client.get('/api/queue-counts?known='+known).status_code==401

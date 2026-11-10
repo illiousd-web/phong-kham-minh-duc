@@ -49,7 +49,8 @@ def test_cashier_pages_keep_all_old_debts_selectable(https_server):
             assert all(actual==previous for actual,previous in formats)
             expect(page.locator('#navigation [data-count="cashier"]')).to_have_text(str(len(expected)))
             assert len([url for url in requests if url.endswith('/api/dues')])==1
-            assert any('/api/queue-counts?known=cashier' in url for url in requests)
+            assert any(url.endswith('/api/queue-counts') for url in requests)
+            assert not any('/api/queue-counts?known=' in url for url in requests)
             with page.expect_response(lambda response:response.url.endswith('/api/queue-counts')) as polled:
                 page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
             assert polled.value.json()['cashier']==len(expected)

@@ -260,8 +260,10 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
                     status='ordered' if role=='technician' else None
                     ids=[row['id'] for row in rows if row['status']==status or (status is None and row['status'] not in ('completed','cancelled'))]
                     expected=manifest['active_visits']*(4 if role=='technician' else 1)
-                    result['queue_coverage'][role]={'actual':len(ids),'expected':expected,'unique':len(set(ids))==len(ids)}
-                    if label=='after' and (len(ids)!=expected or len(set(ids))!=len(ids)):
+                    key='lab' if role=='technician' else role
+                    badge=pages[role].evaluate("async key=>(await api('/queue-counts'))[key]",key)
+                    result['queue_coverage'][role]={'actual':len(ids),'badge':badge,'expected':expected,'unique':len(set(ids))==len(ids)}
+                    if label=='after' and (len(ids)!=expected or badge!=expected or len(set(ids))!=len(ids)):
                         result['errors'].append('Hàng chờ '+role+' thiếu hoặc trùng việc')
                 doctor=pages['doctor'];visit=manifest['doctor_visit']
                 def clinical():

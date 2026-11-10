@@ -42,7 +42,7 @@ def test_dues_not_readable_by_reception_but_by_cashier_role():
     assert set(client.get('/api/queue-counts', headers=both).json()) == {'reception', 'cashier'}
 
 
-def test_known_render_count_skips_only_duplicate_query_and_poll_remains_complete():
+def test_queue_counts_always_count_sql_and_ignore_legacy_known_hint():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.queue_counts import install_queue_counts
@@ -59,10 +59,10 @@ def test_known_render_count_skips_only_duplicate_query_and_poll_remains_complete
     def database():yield Connection()
     install_queue_counts(app,lambda:{'id':1,'roles':['reception','technician','cashier']},lambda:{},database)
     c=TestClient(app)
-    assert c.get('/api/queue-counts?known=lab').json()=={'reception':1,'cashier':1}
-    assert calls==['visits','cashier'];calls.clear()
-    assert c.get('/api/queue-counts?known=cashier').json()=={'reception':1,'lab':1}
-    assert calls==['visits','lab'];calls.clear()
+    assert c.get('/api/queue-counts?known=lab').json()=={'reception':1,'lab':1,'cashier':1}
+    assert calls==['visits','lab','cashier'];calls.clear()
+    assert c.get('/api/queue-counts?known=cashier').json()=={'reception':1,'lab':1,'cashier':1}
+    assert calls==['visits','lab','cashier'];calls.clear()
     assert c.get('/api/queue-counts').json()=={'reception':1,'lab':1,'cashier':1}
     assert calls==['visits','lab','cashier']
     assert c.get('/api/queue-counts?known=doctor').status_code==422

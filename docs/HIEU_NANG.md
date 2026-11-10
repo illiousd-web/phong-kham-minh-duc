@@ -42,7 +42,8 @@ của dịch vụ đang vận hành. Bản sao lưu, khóa, tệp đính kèm v�
 
 ## Phương pháp và ngưỡng
 
-- Đo cùng máy, cùng bộ dữ liệu, trước C5 tại main `76f5628` và sau C5 tại mã PR.
+- Hai phiên trước/sau dùng cùng máy và cùng bộ dữ liệu. Lần C5 ban đầu lấy
+  main `76f5628`; lần sửa hàng chờ lấy `2fd1e9c` trước sửa làm mốc.
   Không lấy số đo máy nhanh khác làm kết quả sau trên CI.
 - Màn hình thực sự chạy qua Chromium/HTTPS: hàng chờ cả tám vai trò, tìm bệnh
   nhân, mở phiếu khám, tra cứu lượt khám trọn tháng và xuất PDF có mở/đọc lại.
@@ -219,8 +220,10 @@ Các bài bảo vệ: `test_tu_choi_ten_csdl_khong_phai_dich_c5`,
 `test_chuan_bi_khong_cong_hai_thao_tac_va_loi_chuan_bi_van_khong_dat`,
 `test_lan_backup_nested_paths_are_portable_and_hashes_stay_required`,
 `test_loi_manifest_duoc_ghi_la_khong_dat_khong_co_so_khoi_phuc`,
-`test_known_render_count_skips_only_duplicate_query_and_poll_remains_complete`,
-`test_known_render_counts_do_not_extend_or_bypass_expired_session`,
+`test_known_render_count_skips_only_duplicate_query_and_poll_remains_complete`
+và `test_known_render_counts_do_not_extend_or_bypass_expired_session` là tên
+hai bài ở lượt C5 ban đầu; ở lần sửa tiếp chúng được thay bằng các bài
+COUNT SQL/hết hạn phiên ghi dưới đây.
 `test_price_query_covers_every_input_of_effective_view`,
 `test_price_query_matches_view_and_expected_amounts_sqlite`,
 `test_price_query_matches_view_and_expected_amounts_postgresql`, cùng toàn bộ C4 và phân quyền.
@@ -270,12 +273,15 @@ giữ nguyên mọi khẳng định phí/phiếu thu/tình trạng đã thu đ�
 Tên kiểm thử: `test_pending_queues_sqlite_keep_old_work_counts_and_permissions`,
 `test_pending_queues_postgresql_keep_old_work_counts_and_permissions`,
 `test_pending_queues_chromium109_show_all_old_work`;
-`test_known_render_count_skips_only_duplicate_query_and_poll_remains_complete`
-kiểm COUNT SQL và việc bỏ phép đếm trùng, không gọi danh sách cắt ngắn.
+`test_queue_counts_always_count_sql_and_ignore_legacy_known_hint`
+kiểm mọi lần đều COUNT SQL, kể cả client cũ gửi known; không gọi API danh sách
+để đếm. Giao diện bỏ số đếm suy từ mảng và chờ COUNT xong mới kết thúc tải
+màn hình. Bộ đo C5 vì vậy tính cả thời gian số menu sẵn sàng.
 
 Đo lại Windows dùng baseline trước sửa `2fd1e9c` và mã sửa trên cùng VM,
 1 lần làm nóng + 20 mẫu, giữ nguyên ngưỡng trung vị/P95. Trình đo đối chiếu
-thêm đủ 120 chỉ định và 30 lượt cho lễ tân/bác sĩ/điều dưỡng, không trùng;
+thêm đủ 120 chỉ định và 30 lượt cho lễ tân/bác sĩ/điều dưỡng, badge bằng tổng
+số kỳ vọng, không trùng;
 thiếu việc thì bản sau không đạt dù nhanh. Kết quả lần đo sửa tiếp sẽ ghi
 ở đây sau khi job Windows hoàn tất; số ở bảng run 60 phía trên là lịch sử C5.
 
