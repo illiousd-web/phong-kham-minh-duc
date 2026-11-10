@@ -124,9 +124,10 @@ hoạt: công nợ bật/tắt 1,124/1,140 s, chỉ định 0,979/0,973 s; khôn
 nhân. Đã bỏ các lệnh tắt JIT thử nghiệm của ba API, giữ bằng chứng đối chứng.
 
 Mỗi lần vẽ màn hình còn gọi lại cùng danh sách để đếm menu. Hai truy vấn
-khoảng một giây tranh CPU, làm màn hình thành khoảng hai giây. C5 dùng số
-đếm của danh sách vừa tải cho màn hình đang mở; chỉ hỏi máy chủ các số khác.
-Lần hỏi định kỳ/quay lại tab vẫn lấy đầy đủ số mới, không gia hạn phiên.
+khoảng một giây tranh CPU, làm màn hình thành khoảng hai giây. C5 ban đầu
+dùng số của danh sách vừa tải cho màn hình đang mở. Lần sửa tiếp bên dưới
+bỏ lối tắt đó: mọi số menu lấy COUNT SQL, kể cả client cũ gửi known.
+Lần hỏi định kỳ/quay lại tab cũng COUNT đầy đủ và không gia hạn phiên.
 Không lưu đệm công nợ hoặc bỏ các trang. Bộ định dạng tiền dùng lại một
 Intl.NumberFormat thay vì tạo lại hàng nghìn lần; kiểm chữ hiển thị giống cũ
 trên Chromium 109, gồm giá chưa biết, số 0, số lớn và số âm.
@@ -281,9 +282,48 @@ màn hình. Bộ đo C5 vì vậy tính cả thời gian số menu sẵn sàng.
 Đo lại Windows dùng baseline trước sửa `2fd1e9c` và mã sửa trên cùng VM,
 1 lần làm nóng + 20 mẫu, giữ nguyên ngưỡng trung vị/P95. Trình đo đối chiếu
 thêm đủ 120 chỉ định và 30 lượt cho lễ tân/bác sĩ/điều dưỡng, badge bằng tổng
-số kỳ vọng, không trùng;
-thiếu việc thì bản sau không đạt dù nhanh. Kết quả lần đo sửa tiếp sẽ ghi
-ở đây sau khi job Windows hoàn tất; số ở bảng run 60 phía trên là lịch sử C5.
+số kỳ vọng, không trùng; thiếu việc hoặc sai số menu thì bản sau không đạt dù nhanh.
+Bảng run 60 phía trên giữ làm lịch sử C5 ban đầu.
+
+### Kết quả sửa tiếp — Windows run 64
+
+[Run 64](https://github.com/illiousd-web/phong-kham-minh-duc/actions/runs/42798723753)
+tại `8ca5c83` xanh đủ năm job. Hai phiên trên cùng VM, cùng CSDL hai năm:
+trước `2fd1e9c`, sau `8ca5c83`. Mỗi thao tác một lần làm nóng và 20 mẫu.
+Thời gian bản sau gồm chờ COUNT từ máy chủ xong rồi mới kết thúc tải màn hình.
+
+| Hàng chờ | Trước: trung vị / P95 / chậm nhất (s) | Sau: trung vị / P95 / chậm nhất (s) |
+| --- | --- | --- |
+| Kỹ thuật viên | 0,114268 / 0,124028 / 0,297306 | 0,101138 / 0,230090 / 0,230091 |
+| Lễ tân | 0,207932 / 0,861419 / 0,874223 | 0,119401 / 0,243725 / 0,250952 |
+| Bác sĩ | 0,227067 / 0,336798 / 0,357024 | 0,217635 / 0,265359 / 0,281912 |
+| Thu ngân (kèm COUNT) | 0,395545 / 0,860869 / 0,867543 | 1,068815 / 1,128740 / 1,149788 |
+
+Trước sửa, kỹ thuật viên chỉ tải 100/120 việc và menu cũng ghi 100. Số thời
+gian trước sửa không chứng minh hàng chờ đầy đủ. Sau sửa tải đủ 120/120,
+menu đúng 120, không trùng. Lễ tân, bác sĩ và điều dưỡng đều tải đủ 30/30,
+menu đúng 30. SQL lấy thêm việc cũ mà ba màn hình được yêu cầu đo lại vẫn đạt.
+Thu ngân tăng từ 0,395545 lên 1,068815 s khi tải màn hình phải chờ COUNT SQL;
+vẫn đạt ngưỡng 1,5 s trung vị và 3 s P95.
+
+Cả 12 thao tác sau sửa đạt: trung vị lớn nhất 1,068815 s, P95 lớn nhất
+1,128740 s, mẫu chậm nhất 1,149788 s. Không tăng timeout hoặc nới ngưỡng.
+RAM dịch vụ cao nhất 118,141 MB (ngưỡng 500 MB); tổng PostgreSQL 611,746 MB.
+Sao lưu + kiểm 10,039777 s (ngưỡng 900 s);
+khôi phục 14,008004 s. Mọi số dòng, tổng tiền, từng
+lô và 2.000 SHA-256 tệp khôi phục khớp; đã kiểm thật, không chỉ tạo archive.
+
+Truy vấn Quản lý trong job test của cùng run giữ đủ 1 làm nóng + 5 mẫu:
+ca vượt cuối cũ/mới 0,857172 / 0,175818 s trung vị; trung vị lớn nhất mọi ca
+mới 0,190244 s, mẫu chậm nhất 0,281478 s, đạt ngưỡng 0,5 s / 2,5 s.
+
+Bằng chứng: artifact
+[c5-windows-performance](https://github.com/illiousd-web/phong-kham-minh-duc/actions/runs/42798723753/artifacts/13755691736)
+có `windows.json`, `before.json`, `after.json`, `query-probes.json`;
+JSON giữ đủ từng mẫu và actual/badge/expected/unique của hàng chờ.
+Run 64: 262 tests SQLite, 114 LAN, 34 bài Chromium 109 đều đạt.
+Máy i3/Win11 và Win7 vật lý vẫn chưa có để kiểm; đây là Windows CI với giới
+hạn hai CPU logic/8 GiB như phương pháp đã ghi.
 
 ## Hoãn
 
