@@ -130,6 +130,20 @@ Không lưu đệm công nợ hoặc bỏ các trang. Bộ định dạng tiền
 Intl.NumberFormat thay vì tạo lại hàng nghìn lần; kiểm chữ hiển thị giống cũ
 trên Chromium 109, gồm giá chưa biết, số 0, số lớn và số âm.
 
+Run 59: kỹ thuật viên đạt 1,379 s; thu ngân vẫn chưa đạt, trung vị 1,889 s,
+P95 3,507 s. EXPLAIN chỉ ra bốn truy vấn con của view còn quét bảng điều
+chỉnh rỗng 132.097 lần mỗi bảng. C5 gom ID có dấu vết đổi giá/giá tay/hoàn
+thuốc/hủy phí một lần. Khoản không có bất kỳ dấu vết nào dùng snapshot ban
+đầu (NULL vẫn là NULL); mọi khoản có dấu vết vẫn đọc nguyên view hiện có.
+Không sao chép công thức hoặc thứ tự ưu tiên giá, không sửa view/DDL.
+Chỉ định lọc đúng 100 dòng được phép trước khi tra khoản chưa có giá.
+
+Kiểm 14 trạng thái riêng lẻ và chồng nhiều nguồn trên cả SQLite/PostgreSQL:
+giá từng dòng, số khoản chưa giá và tính duy nhất đều khớp view cùng giá kỳ
+vọng độc lập. Test còn ràng buộc mọi bảng đầu vào của view có mặt trong tập
+ID thay đổi để cảnh báo khi view được mở rộng. EXPLAIN cục bộ sau thay đổi
+cho thấy bốn truy vấn con không chạy khi tập thay đổi rỗng. Đang đo lại Windows.
+
 ## Kết quả đo
 
 Kết quả Windows CI trên mã C5 đang được chạy; chưa coi đây là nghiệm thu cuối.

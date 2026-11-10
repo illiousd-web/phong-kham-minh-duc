@@ -27,12 +27,13 @@ DEFAULT_DAYS = 7
 MIN_DAY, MAX_DAY = '2000-01-01', '2100-12-31'
 
 # Tính tiền chỉ cho các lượt đã lọc (base), cùng công thức với domain.invoice và DUES_SQL.
+from .charge_queries import priced_ctes
+
 SEARCH_SQL = '''WITH base AS (
   SELECT v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name
   FROM visits v JOIN patients p ON p.id=v.patient_id
   WHERE {where}),
-priced AS {materialized}(SELECT visit_id,amount FROM effective_charges
-  WHERE visit_id IN (SELECT id FROM base)),
+'''+priced_ctes('visit_id IN (SELECT id FROM base)',materialized='{materialized}')+''',
 ch AS (SELECT visit_id,COALESCE(SUM(amount),0) AS total,
   SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS unpriced
   FROM priced GROUP BY visit_id),

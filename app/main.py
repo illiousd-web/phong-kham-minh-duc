@@ -8,6 +8,7 @@ import secrets
 import uuid
 import json
 from .domain import authorize_order, revision, status_refresh, invoice
+from .charge_queries import DUES_SQL,orders_sql
 from contextlib import asynccontextmanager
 from starlette.concurrency import run_in_threadpool
 from .resources import LIMITS, export_slot
@@ -464,20 +465,14 @@ def add_order(data:OrderInput,u=Depends(principal)):
 def list_orders(u=Depends(principal),visit_id:int|None=None):
     require(u,'doctor','nurse','technician')
     with db() as c:
-        sql='''SELECT o.id,o.visit_id,o.category,o.name,o.status,o.service_id,o.proposed_price,o.result_text,o.file_name,o.created_at,
-            CASE WHEN o.status='requested' AND o.proposed_price IS NULL THEN 1
-            WHEN EXISTS(SELECT 1 FROM effective_charges ch JOIN charge_sources cs ON cs.charge_id=ch.id
-                WHERE cs.source_type='order' AND cs.source_id=o.id AND ch.amount IS NULL) THEN 1 ELSE 0 END AS unpriced,
-            p.code AS patient_code,p.full_name AS patient_name FROM orders o JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id'''
-        args=[];where=[]
+        args=[];where=[];hide_results=False
         if 'nurse' in u['roles'] and 'doctor' not in u['roles'] and 'technician' not in u['roles']:
-            sql=sql.replace('o.result_text,o.file_name,','NULL AS result_text,NULL AS file_name,')
+            hide_results=True
             where.append('EXISTS(SELECT 1 FROM visit_nurses n WHERE n.visit_id=v.id AND n.nurse_id=? AND n.active=1)');args=[u['id']]
         elif 'doctor' in u['roles'] and 'technician' not in u['roles']:
             where.append('v.doctor_id=?');args=[u['id']]
         if visit_id is not None:where.append('o.visit_id=?');args.append(visit_id)
-        if where:sql+=' WHERE '+' AND '.join(where)
-        return [dict(x) for x in c.execute(sql+' ORDER BY o.id DESC LIMIT 100',args)]
+        return [dict(x) for x in c.execute(orders_sql(' AND '.join(where),hide_results),args)]
 
 class ResultInput(BaseModel):
     result_text:str=Field(min_length=1,max_length=10000)
@@ -655,22 +650,6 @@ def get_rx(u=Depends(principal), visit_id:int|None=None,
 # Hàng chờ thu ngân: KHÔNG cắt theo "100 lượt mới nhất". Trả mọi lượt còn nợ, còn khoản
 # chưa có giá, cần hoàn tiền (đã thu > phải thu), cộng mọi lượt tạo trong ngày hôm nay (giờ VN).
 # Tính tổng một lần bằng GROUP BY (không truy vấn con theo từng lượt) để đủ nhanh với vài chục nghìn lượt.
-DUES_SQL='''WITH priced AS MATERIALIZED (SELECT visit_id,amount FROM effective_charges),
-     ch AS (SELECT visit_id,COALESCE(SUM(amount),0) AS total,
-          SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS unpriced FROM priced GROUP BY visit_id),
-     adj AS (SELECT visit_id,SUM(CASE WHEN kind='discount' THEN amount ELSE 0 END) AS discount,
-          SUM(CASE WHEN kind='refund' THEN amount ELSE 0 END) AS refund
-          FROM effective_adjustments WHERE status='approved' GROUP BY visit_id),
-     pay AS (SELECT visit_id,SUM(amount) AS total FROM payments GROUP BY visit_id),
-     t AS (SELECT v.id,v.patient_id,v.created_at,COALESCE(ch.total,0)-COALESCE(adj.discount,0) AS charged,
-          COALESCE(pay.total,0)-COALESCE(adj.refund,0) AS paid,COALESCE(ch.unpriced,0) AS unpriced_count
-          FROM visits v LEFT JOIN ch ON ch.visit_id=v.id LEFT JOIN adj ON adj.visit_id=v.id LEFT JOIN pay ON pay.visit_id=v.id)
-SELECT t.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,t.charged,t.paid,t.unpriced_count
-FROM t JOIN patients p ON p.id=t.patient_id
-WHERE t.charged<>t.paid OR t.unpriced_count>0 OR t.created_at>=?
-ORDER BY t.id DESC'''
-
-
 def today_start_utc():
     """0 giờ hôm nay theo giờ Việt Nam, dạng chuỗi UTC như cột created_at."""
     vn=timezone(timedelta(hours=7))

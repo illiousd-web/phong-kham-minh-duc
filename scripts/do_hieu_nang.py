@@ -154,13 +154,12 @@ def files_state(root):
 def query_probes(url, since, output):
     """Đối chứng JIT cùng SQL/dữ liệu trên chính máy Windows, không đổi cấu hình DB."""
     tree=ast.parse((ROOT/'app/main.py').read_text(encoding='utf-8'))
-    dues=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign)
-              and any(isinstance(t,ast.Name) and t.id=='DUES_SQL' for t in n.targets))
+    from app.charge_queries import DUES_SQL,orders_sql
     def query_in(name,prefix):
         function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name)
         return next(n.value for n in ast.walk(function) if isinstance(n,ast.Constant) and isinstance(n.value,str) and n.value.startswith(prefix))
-    queries={'dues':(dues,(since,)),
-             'orders':(query_in('list_orders','SELECT o.id,')+' ORDER BY o.id DESC LIMIT 100',()),
+    queries={'dues':(DUES_SQL,(since,)),
+             'orders':(orders_sql(),()),
              'payments':(query_in('list_payments','SELECT m.id,'),())}
     report={}
     with psycopg.connect(url) as c:
