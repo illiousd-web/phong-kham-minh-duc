@@ -572,8 +572,20 @@ def test_hang_cho_khong_thua_khong_thieu_va_chan_thu_du(day):
     assert actual & ids == expected
     assert day.call('cashier', 'GET', '/api/queue-counts')['cashier'] == len(actual)
     c = day.ui('cashier')
-    visible = {int(x) for x in c.locator('[data-kind="cash"]').evaluate_all('els=>els.map(e=>e.dataset.id)')}
+    # C5 phân trang giao diện; vẫn so TOÀN BỘ tập, không chỉ trang đầu.
+    visible = set()
+    while True:
+        page_ids = [int(x) for x in c.locator('[data-kind="cash"]').evaluate_all('els=>els.map(e=>e.dataset.id)')]
+        assert len(page_ids) == len(set(page_ids)) and not visible.intersection(page_ids)
+        visible.update(page_ids)
+        following = c.locator('[data-action="cash-page"]').filter(has_text='Trang sau')
+        if not following.count():
+            break
+        following.click(); settle(c)
     assert visible == actual
+    previous = c.locator('[data-action="cash-page"]').filter(has_text='Trang trước')
+    while previous.count():
+        previous.click(); settle(c)
     v = day.visits[7]
     c.locator('#cash_choose').select_option(str(v['id'])); settle(c)
     expect(c.locator('[data-form="payment"] button')).to_have_text('Thu tạm một phần')
