@@ -4,6 +4,7 @@ from urllib.parse import urlsplit,urlunsplit
 import psycopg
 from psycopg import sql
 import pytest
+import pymupdf
 from .conftest import SOURCE
 from scripts.tao_du_lieu_gia import generate,CONFIRM
 
@@ -19,7 +20,10 @@ def test_c5_du_lieu_lien_ket_va_khong_ghi_de_csdl_co_san(tmp_path):
         with psycopg.connect(url) as c:
             assert c.execute('SELECT COUNT(*) FROM orders WHERE file_key IS NOT NULL').fetchone()[0]==6
             for key, in c.execute('SELECT file_key FROM orders WHERE file_key IS NOT NULL'):
-                assert (tmp_path/name/'attachments'/key).read_bytes().startswith(b'%PDF-')
+                path=tmp_path/name/'attachments'/key
+                assert path.stat().st_size==64*1024
+                with pymupdf.open(path) as document:
+                    assert len(document)==1 and not document.is_repaired
             assert c.execute("SELECT MIN(quantity) FROM stock_lots").fetchone()[0] >= 0
             before=c.execute('SELECT COUNT(*) FROM audit_log').fetchone()[0]
         # Đích khác trên đĩa nhưng cùng tên DB: CREATE DATABASE phải từ chối,

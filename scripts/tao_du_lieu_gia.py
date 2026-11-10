@@ -142,14 +142,18 @@ def generate(source, name, output, confirmation, *, visits=22000, patients=20000
         c.execute("INSERT INTO audit_log(user_id,event,object_type,object_id,details,created_at) SELECT %s,'payment_recorded_demo','payment',id,'Giả lập C5',created_at FROM payments", (ids['cashier'],))
         from reportlab.pdfgen import canvas
         buffer=BytesIO(); page=canvas.Canvas(buffer);page.drawString(50,780,'DU LIEU GIA LAP C5');page.save()
+        body,trailer=buffer.getvalue().rsplit(b'\nstartxref\n',1)
+        trailer=b'\nstartxref\n'+trailer
         for oid in range(1,attachments+1):
             key=f'c5-{oid}.pdf'
             # PDF nhỏ 64 KiB, phần đệm là comment có dữ liệu ngẫu nhiên để
             # benchmark backup không hưởng lợi từ 2.000 bản sao nén gần về 0.
-            header=buffer.getvalue()+f'\n%C5-{oid}-'.encode()
-            remaining=64*1024-len(header)-1
+            # Chèn comment SAU bảng xref nhưng TRƯỚC startxref/EOF: giữ nguyên
+            # offset xref và để EOF cuối tệp, không bắt trình đọc phải sửa PDF.
+            header=body+f'\n%C5-{oid}-'.encode()
+            remaining=64*1024-len(header)-len(trailer)
             padding=secrets.token_hex((remaining+1)//2).encode()[:remaining]
-            (uploads/key).write_bytes(header+padding+b'\n')
+            (uploads/key).write_bytes(header+padding+trailer)
         c.execute("UPDATE orders SET file_name='Ket_qua_gia_lap_C5.pdf',file_key='c5-'||id||'.pdf' WHERE id<=%s", (attachments,))
         for table in ('users','patients','visits','orders','charges','prescriptions','prescription_items','dispensations','dispensation_items','payments','medicines','stock_lots','clinical_revisions','nursing_notes'):
             c.execute(sql.SQL("SELECT setval(pg_get_serial_sequence(%s,'id'),COALESCE((SELECT MAX(id) FROM {}),1))").format(sql.Identifier(table)), (table,))
