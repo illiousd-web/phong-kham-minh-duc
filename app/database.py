@@ -125,3 +125,5 @@ def migrate():
 
         from .m0_migration import migrate_m0
         migrate_m0(PGConnection(con))
+        from .administrative_migration import migrate_administrative
+        migrate_administrative(PGConnection(con))

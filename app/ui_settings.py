@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool
 FILE_NAME = 'ui_settings.json'
 FOLDER = 'caidat'
 DEFAULTS = {
+    'block_practitioner_scope': False, # Chặn duyệt ngoài phạm vi; mặc định chỉ cảnh báo
     'advance_payment': False,   # Ứng trước tiền
     'addendum': True,           # Phụ lục đính chính sau khóa hồ sơ
     'controlled_drugs': True,   # Thuốc kiểm soát đặc biệt
@@ -36,6 +37,7 @@ log = logging.getLogger('clinic')
 
 class SettingsInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    block_practitioner_scope: StrictBool | None = None
     advance_payment: StrictBool | None = None
     addendum: StrictBool | None = None
     controlled_drugs: StrictBool | None = None

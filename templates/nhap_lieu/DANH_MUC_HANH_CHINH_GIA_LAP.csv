@@ -1,0 +1,4 @@
+kind,code,name,parent_code
+province,TINH-GIA-LAP,Tỉnh giả lập,
+commune,XA-GIA-LAP,Xã giả lập,TINH-GIA-LAP
+ethnicity,DT-GIA-LAP,Dân tộc giả lập,

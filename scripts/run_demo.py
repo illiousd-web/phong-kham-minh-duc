@@ -22,7 +22,7 @@ def main():
         env["DEMO_PASSWORD"] = password
     return subprocess.call(
         [sys.executable, "-m", "uvicorn", "app.main:app",
-         "--host", "127.0.0.1", "--port", "8000", "--no-proxy-headers"],
+         "--host", "127.0.0.1", "--port", "8000", "--no-proxy-headers", "--no-access-log"],
         cwd=Path(__file__).resolve().parents[1], env=env,
     )
 

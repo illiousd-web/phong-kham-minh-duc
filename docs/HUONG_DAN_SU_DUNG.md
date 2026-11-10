@@ -2,6 +2,8 @@
 
 Bản thử nghiệm. Chỉ nhập dữ liệu giả lập. Chưa dùng cho bệnh nhân, đơn thuốc hoặc tiền thật trước khi nghiệm thu độc lập.
 
+Hồ sơ hành chính, nạp danh mục tỉnh/xã/dân tộc, cân nặng và người đưa trẻ đi khám, người hành nghề: xem [hướng dẫn L1–L2](L1_L2_HO_SO.md).
+
 ## Chung cho mọi người
 
 - Mỗi người dùng tài khoản riêng. Không dùng chung mật khẩu.
@@ -108,11 +110,12 @@ Giá mới áp dụng cho khoản phát sinh mới. Khoản phải thu, phiếu 
   - Cấp hoặc bỏ quyền **Quản trị** phải đánh dấu ô xác nhận hiện ngay trong trang.
   - Đổi quyền hoặc khóa sẽ đăng xuất mọi phiên của người đó.
 - **Cài đặt**: bật hoặc tắt chức năng phụ cho cả phòng khám.
+  - Chặn duyệt ngoài phạm vi chuyên môn: mặc định **tắt**, chỉ cảnh báo và ghi nhật ký; bật sẽ chặn tại API.
   - Ứng trước tiền: mặc định **tắt**.
   - Phụ lục đính chính: mặc định **bật**.
   - Thuốc kiểm soát đặc biệt: mặc định **bật**.
 
-Tắt chỉ ẩn chức năng khỏi màn hình. Quyền kiểm tra ở máy chủ không đổi, dữ liệu cũ giữ nguyên. Người khác thấy thay đổi khi bấm lại menu hoặc đăng nhập lại.
+Các công tắc chức năng phụ điều khiển hiển thị. Riêng công tắc chặn phạm vi áp dụng tại API duyệt kết quả; xem hướng dẫn L1–L2. Quyền kiểm tra ở máy chủ giữ nguyên. Người khác thấy thay đổi khi bấm lại menu hoặc đăng nhập lại.
 
 Cài đặt lưu trong tệp `caidat/ui_settings.json` cạnh thư mục tệp đính kèm (Windows: `C:\ProgramData\MinhDuc\caidat\ui_settings.json`; thư mục này cho dịch vụ quyền ghi). Bộ cài tạo tệp mặc định. Tệp nằm trong bản sao lưu và được khôi phục cùng dữ liệu, kể cả khi CAP_NHAT lỗi tự quay về bản cũ. Tệp thiếu hoặc hỏng thì phần mềm dùng giá trị mặc định, ghi cảnh báo vào nhật ký máy chủ, màn hình Cài đặt hiện dòng báo, và **KIEM_TRA.bat báo KHÔNG ĐẠT**; quản trị kiểm tra rồi bấm **Lưu cài đặt** để ghi lại tệp. Mỗi lần đổi cài đặt được ghi nhật ký trước rồi mới thay tệp: nếu không ghi được nhật ký thì cài đặt không đổi.
 

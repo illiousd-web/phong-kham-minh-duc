@@ -6,7 +6,7 @@ def test_defaults_and_admin_only_update():
     reception = token('letan')
     current = client.get('/api/ui-settings', headers=reception)
     assert current.status_code == 200
-    assert current.json() == {'advance_payment': False, 'addendum': True, 'controlled_drugs': True, 'source': 'missing'}
+    assert current.json() == {'block_practitioner_scope': False, 'advance_payment': False, 'addendum': True, 'controlled_drugs': True, 'source': 'missing'}
     assert client.get('/api/ui-settings').status_code == 401
     for user in ('letan', 'quanly', 'thungan', 'bs_noi'):
         assert client.put('/api/ui-settings', headers=token(user), json={'advance_payment': True}).status_code == 403
@@ -15,12 +15,12 @@ def test_defaults_and_admin_only_update():
     assert client.put('/api/ui-settings', headers=admin, json={'advance_payment': 'yes'}).status_code == 422
     changed = client.put('/api/ui-settings', headers=admin, json={'advance_payment': True, 'controlled_drugs': False})
     assert changed.status_code == 200
-    assert changed.json() == {'advance_payment': True, 'addendum': True, 'controlled_drugs': False, 'source': 'file'}
+    assert changed.json() == {'block_practitioner_scope': False, 'advance_payment': True, 'addendum': True, 'controlled_drugs': False, 'source': 'file'}
     assert client.get('/api/ui-settings', headers=reception).json()['controlled_drugs'] is False
     log = client.get('/api/audit?limit=20', headers=admin).json()
     assert any(x['event'] == 'ui_settings_changed' and 'advance_payment=bật' in x['details'] for x in log)
     restored = client.put('/api/ui-settings', headers=admin, json={'advance_payment': False, 'controlled_drugs': True})
-    assert restored.json() == {'advance_payment': False, 'addendum': True, 'controlled_drugs': True, 'source': 'file'}
+    assert restored.json() == {'block_practitioner_scope': False, 'advance_payment': False, 'addendum': True, 'controlled_drugs': True, 'source': 'file'}
 
 
 def test_hidden_feature_keeps_server_permission_checks():

@@ -56,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=5").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=6").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -71,6 +71,8 @@ def init_db():
     with db(True) as c:
         from .m0_migration import migrate_m0
         migrate_m0(c)
+        from .administrative_migration import migrate_administrative
+        migrate_administrative(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -192,14 +194,17 @@ def staff(u=Depends(principal)):
     with db() as c:
         return [dict(x) for x in c.execute("SELECT u.id,u.full_name,u.username FROM users u JOIN user_roles r ON r.user_id=u.id WHERE r.role='doctor' AND u.active=1 ORDER BY u.id")]
 
-class PatientInput(BaseModel):
+from .administrative import (AdministrativePatient, duplicate_warning, validate_catalog, redact_document,
+    document_value, months_old, require_child_prescription, install_administrative)
+from .practitioners import printed_name, scope_warning, install_practitioners
+
+class PatientInput(AdministrativePatient):
     # Khảo sát bước 4: họ tên, ngày sinh, giới tính, số điện thoại là bắt buộc;
     # căn cước và địa chỉ có thể bổ sung sau.
     full_name:str=Field(min_length=2,max_length=180)
     date_of_birth:str
     sex:Literal['Nam','Nữ','Khác']
     phone:str=Field(max_length=30)
-    citizen_id:str|None=Field(default=None,max_length=24)
     address:str|None=Field(default=None,max_length=300)
 
     @field_validator('full_name')
@@ -214,7 +219,7 @@ class PatientInput(BaseModel):
     def date_valid(cls,v):
         iso=parse_day(v)
         if not iso:raise ValueError('Cần nhập ngày sinh')
-        if date.fromisoformat(iso)>date.today() or date.fromisoformat(iso)<date(1900,1,1):raise ValueError('Ngày sinh không hợp lệ')
+        if date.fromisoformat(iso)>datetime.now(timezone(timedelta(hours=7))).date() or date.fromisoformat(iso)<date(1900,1,1):raise ValueError('Ngày sinh không hợp lệ')
         return iso
 
     @field_validator('phone')
@@ -224,7 +229,7 @@ class PatientInput(BaseModel):
         if not 9<=len(digits)<=12:raise ValueError('Số điện thoại cần 9–12 chữ số')
         return digits
 
-    @field_validator('citizen_id','address')
+    @field_validator('address')
     @classmethod
     def blank_to_none(cls,v):
         return (v or '').strip() or None
@@ -233,9 +238,8 @@ class PatientInput(BaseModel):
 def add_patient(data:PatientInput,u=Depends(principal)):
     require(u,'reception','admin')
     with db(True) as c:
-        if data.citizen_id:
-            exists=c.execute('SELECT id FROM patients WHERE citizen_id=?',(data.citizen_id,)).fetchone()
-            if exists:raise HTTPException(409,'Có hồ sơ trùng số định danh; hãy tìm hồ sơ cũ')
+        validate_catalog(c,data)
+        warnings=duplicate_warning(c,data)
         params=data.model_dump()
         cols=','.join(params)
         names=','.join('?' for _ in params)
@@ -244,28 +248,28 @@ def add_patient(data:PatientInput,u=Depends(principal)):
         code=f'MD{pid:06d}'
         c.execute('UPDATE patients SET code=? WHERE id=?',(code,pid))
         audit(c,u,'patient_created','patient',pid)
-        return {'id':pid,'code':code}
+        return {'id':pid,'code':code,'warnings':warnings}
 
 @app.get('/api/patients')
 def patients(q:str='',u=Depends(principal)):
     require(u,'reception','doctor','nurse','admin')
     q=q.strip()[:100]
     with db() as c:
-        wh="WHERE (p.full_name LIKE ? OR p.code LIKE ? OR p.phone LIKE ?)" if q else ''
-        args=['%'+q+'%']*3 if q else []
+        wh="WHERE (p.full_name LIKE ? OR p.code LIKE ? OR p.phone LIKE ? OR p.document_number=? OR p.citizen_id=?)" if q else ''
+        args=['%'+q+'%']*3+[q,q] if q else []
         if not {'reception','admin'}.intersection(u['roles']):
             if 'doctor' in u['roles']:
                 wh+=(' AND ' if wh else ' WHERE ')+ 'EXISTS (SELECT 1 FROM visits v WHERE v.patient_id=p.id AND v.doctor_id=?)'
             else:
                 wh+=(' AND ' if wh else ' WHERE ')+ 'EXISTS (SELECT 1 FROM visits v JOIN visit_nurses n ON n.visit_id=v.id WHERE v.patient_id=p.id AND n.nurse_id=? AND n.active=1)'
             args.append(u['id'])
-        sql=f'SELECT p.id,p.code,p.full_name,p.date_of_birth,p.sex,p.phone,p.address FROM patients p {wh} ORDER BY p.id DESC LIMIT 100'
-        return [dict(x) for x in c.execute(sql,args)]
+        sql=f'SELECT p.id,p.code,p.full_name,p.date_of_birth,p.sex,p.phone,p.address,p.document_type,p.document_number,p.citizen_id FROM patients p {wh} ORDER BY p.id DESC LIMIT 100'
+        return [redact_document(dict(x)) for x in c.execute(sql,args)]
 
 @app.get('/api/patients/{patient_id}')
 def patient_detail(patient_id:int,u=Depends(principal)):
     require(u,'reception','doctor','nurse','admin')
-    with db() as c:
+    with db(True) as c:
         p=c.execute('SELECT * FROM patients WHERE id=?',(patient_id,)).fetchone()
         if not p:raise HTTPException(404,'Không có bệnh nhân')
         if not {'reception','admin'}.intersection(u['roles']):
@@ -275,7 +279,12 @@ def patient_detail(patient_id:int,u=Depends(principal)):
                 allowed=c.execute('SELECT 1 FROM visits v JOIN visit_nurses n ON n.visit_id=v.id WHERE v.patient_id=? AND n.nurse_id=? AND n.active=1',(patient_id,u['id'])).fetchone()
             if not allowed:raise HTTPException(403,'Không được xem hồ sơ này')
         if 'nurse' in u['roles'] and not {'doctor','reception','admin'}.intersection(u['roles']):return {k:p[k] for k in ('id','code','full_name','date_of_birth','sex')}
-        return dict(p)
+        data=dict(p)
+        data['age_months']=months_old(data['date_of_birth'])
+        if {'reception','doctor'}.intersection(u['roles']):
+            if document_value(data):audit(c,u,'patient_document_viewed','patient',patient_id)
+        else:data=redact_document(data)
+        return data
 
 class AppointmentInput(BaseModel):
     patient_id:int
@@ -367,7 +376,9 @@ def visit_detail(visit_id:int,u=Depends(principal)):
         v=visit_access(c,u,visit_id,clinical=True) if 'doctor' in u['roles'] else visit_access(c,u,visit_id)
         if 'doctor' in u['roles']:
             audit(c,u,'clinical_viewed','visit',visit_id)
-            return dict(v)
+            data=dict(v)
+            data['age_months']=months_old(v['patient_dob'])
+            return data
         brief={'id':v['id'],'patient_id':v['patient_id'],'patient_name':v['patient_name'],'patient_code':v['patient_code'],'status':v['status'],'doctor_id':v['doctor_id'],'created_at':v['created_at']}
         if 'nurse' in u['roles']:
             if not c.execute('SELECT 1 FROM visit_nurses WHERE visit_id=? AND nurse_id=? AND active=1',(visit_id,u['id'])).fetchone():
@@ -493,10 +504,12 @@ def approve_result(order_id:int,u=Depends(principal)):
         if o['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ phụ trách')
         if c.execute("SELECT status FROM visits WHERE id=?",(o['visit_id'],)).fetchone()['status'] in ('completed','cancelled'):raise HTTPException(409,'Lượt khám đã kết thúc')
         if o['status']!='pending_review' or not o['result_text'].strip():raise HTTPException(409,'Chưa có kết quả chờ duyệt')
+        from .ui_settings import read_settings, settings_path
+        warnings=scope_warning(c,u,o['category'],order_id,NOW,block=read_settings(settings_path(FILES))['block_practitioner_scope'])
         c.execute("UPDATE orders SET status='approved',approved_by=?,approved_at=? WHERE id=?",(u['id'],NOW(),order_id))
         status_refresh(c,o['visit_id'])
         audit(c,u,'result_approved_demo','order',order_id,'Chưa ký số; phê duyệt mô phỏng')
-        return {'status':'approved','note':'Chỉ xác nhận quy trình demo, không có chữ ký số chuyên môn'}
+        return {'status':'approved','warnings':warnings,'note':'Chỉ xác nhận quy trình demo, không có chữ ký số chuyên môn'}
 
 @app.post('/api/orders/{order_id}/attachment')
 def add_attachment(order_id:int,file:UploadFile=File(...),u=Depends(principal)):
@@ -583,6 +596,7 @@ def create_rx(data:PrescriptionInput,u=Depends(principal)):
     with db(True) as c:
         v=visit_access(c,u,data.visit_id,clinical=True)
         ensure_open(v)
+        require_child_prescription(c,v)
         if not (v['diagnosis'] or '').strip():raise HTTPException(409,'Cần lưu chẩn đoán trên phiếu khám trước khi lập đơn thuốc')
         if c.execute('SELECT 1 FROM prescriptions WHERE visit_id=?',(data.visit_id,)).fetchone():raise HTTPException(409,'Lượt khám đã có đơn nháp')
         if LAN and not data.items:raise HTTPException(422,'Đơn LAN phải có dòng thuốc cấu trúc liên kết danh mục kho')
@@ -953,6 +967,12 @@ def print_form(kind:str,item_id:int,u=Depends(principal)):
             data=dict(pay);data['code']=f'MD-PT-{item_id:06d}'
             # Tiêu đề theo loại đã lưu lúc thu; người gọi không đổi được (không nhận tham số loại).
             data['receipt_kind']=pay['kind']
+        if kind=='receipt':data['cashier_name']=printed_name(c,data['created_by'])
+        if kind!='receipt':
+            data['doctor_name']=printed_name(c,data['doctor_id'])
+            if kind in ('order','result'):
+                data['approved_name']=printed_name(c,data.get('approved_by'))
+                data['result_by_name']=printed_name(c,data.get('result_by'))
         if kind=='clinical':data['addenda']=[dict(x) for x in c.execute("SELECT * FROM visit_addenda WHERE visit_id=? AND status='approved' ORDER BY id",(item_id,))]
         pdf=pdf_document(kind,data)
         audit(c,u,'form_pdf_generated_demo',kind,item_id)
@@ -980,19 +1000,19 @@ def form_context(c, kind: str, object_id: int):
     else:visit_id=object_id
     visit=row(c.execute('SELECT * FROM visits WHERE id=?',(visit_id,)).fetchone())
     if not visit:raise HTTPException(404,'Không có lượt khám')
-    patient=row(c.execute('SELECT * FROM patients WHERE id=?',(visit['patient_id'],)).fetchone())
-    doctor=c.execute('SELECT full_name FROM users WHERE id=?',(visit['doctor_id'],)).fetchone()
+    patient=redact_document(row(c.execute('SELECT * FROM patients WHERE id=?',(visit['patient_id'],)).fetchone()))
     charge=c.execute('SELECT label FROM effective_charges WHERE visit_id=? ORDER BY id LIMIT 1',(visit_id,)).fetchone()
-    context={'visit':visit,'patient':patient,'doctor_name':doctor['full_name'],
+    context={'visit':visit,'patient':patient,'doctor_name':printed_name(c,visit['doctor_id']),
              'service_label':charge['label'] if charge else 'Chưa xác định',
              'orders':[dict(x) for x in c.execute('SELECT * FROM orders WHERE visit_id=? ORDER BY id LIMIT 201',(visit_id,))]}
     if len(context['orders'])>200:raise HTTPException(413,'Lượt khám quá nhiều chỉ định để xuất gộp; liên hệ quản trị')
     if order:
-        names=lambda uid:(c.execute('SELECT full_name FROM users WHERE id=?',(uid,)).fetchone() or {'full_name':''})['full_name'] if uid else ''
+        names=lambda uid:printed_name(c,uid)
         order['result_by_name']=names(order.get('result_by'))
         order['approved_by_name']=names(order.get('approved_by'))
         context['order']=order
     if kind=='visit':context['addenda']=[dict(x) for x in c.execute("SELECT a.*,u.full_name AS author_name FROM visit_addenda a JOIN users u ON u.id=a.created_by WHERE a.visit_id=? AND a.status='approved' ORDER BY a.id",(visit_id,))]
+    for appendix in context.get('addenda',[]):appendix['author_name']=printed_name(c,appendix['created_by'])
     if rx:context['rx']=rx
     if kind=='followup':
         r=c.execute('SELECT * FROM prescriptions WHERE visit_id=?',(visit_id,)).fetchone()
@@ -1031,6 +1051,9 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
     name=f'MinhDuc_DEMO_{kind}_{object_id}.{ext}'
     return Response(payload,media_type=mime,headers={'Content-Disposition':f'attachment; filename="{name}"',
                                                    'Cache-Control':'no-store','X-Demo-Only':'true'})
+
+install_administrative(app,db,principal,require,audit,visit_access,NOW)
+install_practitioners(app,db,principal,require,NOW)
 
 from .accounts import install_accounts
 install_accounts(app, db, principal, require, audit, pw_hash, NOW)

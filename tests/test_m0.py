@@ -71,3 +71,11 @@ def test_300_history_visits_have_constant_query_count_and_are_fast(monkeypatch):
         assert sum('FROM prescriptions WHERE visit_id IN' in q for q in statements) == 1
         assert sum('FROM orders WHERE visit_id IN' in q for q in statements) == 1
     assert statistics.median(timings[1:]) <= 1.5
+
+
+def test_doctor_queue_date_bounds():
+    d = RoleClient('bs_noi')
+    for day in ('01/01/2000', '31/12/2100'):
+        assert d.get('/api/doctor/queue', params={'day': day}).status_code == 200
+    for day in ('31/12/1999', '01/01/2101', '31/12/9999'):
+        assert d.get('/api/doctor/queue', params={'day': day}).status_code == 422
