@@ -149,7 +149,7 @@ def pg_accent_check():
 
 
 SETTINGS_FILE = DATA / 'caidat' / 'ui_settings.json'
-CHOSEN = {'advance_payment': True, 'addendum': True, 'controlled_drugs': False}
+CHOSEN = {'block_practitioner_scope': False, 'advance_payment': True, 'addendum': True, 'controlled_drugs': False}
 
 
 def settings_set():
