@@ -532,9 +532,25 @@ async function downloadPdfReceipt(id){const r=await fetch(`/api/print/receipt/${
 const PICK={visit:'visit','nurse-visit':'nurseVisit',order:'order',dispense:'dispense',cash:'cashVisit',patient:'patient','mgr-visit':'mgrVisit'};
 async function handleClick(element){const action=element.dataset.action,id=Number(element.dataset.id),approve=element.dataset.value==='approve';let msg='';
  if(action==='close-m0-dialog'){$('m0-dialog')?.close();return;}
- if(action==='edit-allergies'){const patient=await api('/patients/'+id);showM0Dialog('<h2>Dị ứng thuốc</h2>'+allergyEditor(patient));setAllergyState(patient);return;}
+ if(action==='edit-allergies'){const vid=sel.visit,patient=await api('/patients/'+id);if(active!=='doctor'||sel.visit!==vid)return;showM0Dialog('<h2>Dị ứng thuốc · '+esc(patient.full_name)+' ('+esc(patient.code)+')</h2>'+allergyEditor(patient));setAllergyState(patient);return;}
  if(action==='close-abandoned'){showM0Dialog(`<h2>Đóng lượt bỏ dở #${id}</h2><p>Lượt có tiền thu, khoản phí hoặc thuốc đã cấp phải qua quy trình hủy/hoàn hiện có.</p><form class="fields" data-form="close-abandoned">${hidden('visit_id',id)}${selectField('Lý do bắt buộc','close_reason',[['Người bệnh bỏ về','Người bệnh bỏ về'],['Tạo nhầm','Tạo nhầm'],['Khác','Khác (phải ghi chú)']])}${textarea('Ghi chú','close_note')}<div class="wide"><button class="btn danger">Xác nhận đóng lượt</button></div></form>`);return;}
- if(action==='doctor-tab'){const target=element.dataset.target;document.querySelectorAll('.doctor-tabs button').forEach(b=>b.setAttribute('aria-current',String(b===element)));if(target==='history'){$('patient-history').innerHTML=card(t((await api('/visits/'+sel.visit+'/patient-history')).map(v=>`<tr><td>${showDay(v.created_at)}</td><td>${esc(v.diagnosis||'Chưa có')}</td><td>${v.prescriptions.map(r=>esc(r.drug_lines)).join('<br>')}</td><td>${v.results.map(r=>esc(r.name)+': '+esc(r.result_text)).join('<br>')}</td></tr>`),['Ngày khám','Chẩn đoán','Đơn thuốc','Kết luận CLS']),'Lịch sử khám trong phạm vi phân quyền');}if(target==='payment'){$('doctor-payment-status').textContent=(await api('/visits/'+sel.visit+'/payment-status')).status;}document.getElementById('doctor-'+target).scrollIntoView({block:'start'});return;}
+ if(action==='doctor-tab'){
+  const target=element.dataset.target,vid=sel.visit;
+  document.querySelectorAll('.doctor-tabs button').forEach(b=>b.setAttribute('aria-current',String(b===element)));
+  if(target==='history'){
+   const rows=await api('/visits/'+vid+'/patient-history');
+   if(active!=='doctor'||sel.visit!==vid)return;
+   $('patient-history').innerHTML=card(t(rows.map(v=>`<tr><td>${showDay(v.created_at)}</td><td>${esc(v.diagnosis||'Chưa có')}</td><td>${v.prescriptions.map(r=>esc(r.drug_lines)).join('<br>')}</td><td>${v.results.map(r=>esc(r.name)+': '+esc(r.result_text)).join('<br>')}</td></tr>`),['Ngày khám','Chẩn đoán','Đơn thuốc','Kết luận CLS']),'Lịch sử khám trong phạm vi phân quyền');
+  }
+  if(target==='payment'){
+   const payment=await api('/visits/'+vid+'/payment-status');
+   if(active!=='doctor'||sel.visit!==vid)return;
+   $('doctor-payment-status').textContent=payment.status;
+  }
+  const section=document.getElementById('doctor-'+target);
+  section.style.scrollMarginTop=(document.querySelector('.doctor-sticky').getBoundingClientRect().height+12)+'px';
+  section.scrollIntoView({block:'start'});return;
+ }
  if(action==='price-template'){
   const r=await fetch('/api/catalog/services/import/template',{headers:authHeader()});if(!r.ok)throw new Error('Không tải được tệp mẫu');
   const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download='BANG_GIA.xlsx';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);return;
