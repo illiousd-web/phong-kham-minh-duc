@@ -33,3 +33,7 @@ F4 tìm người bệnh; sáu nút điều hướng cuộn, tô sáng phần đa
 - Bác sĩ chỉ sửa dị ứng khi có lượt mở của mình; bác sĩ chỉ có lượt hoàn tất nhận 403.
 - Lịch sử 300 lượt dùng một truy vấn đơn thuốc và một truy vấn kết quả; kiểm thời gian trung vị không quá 1,5 giây.
 - Lỗi đóng lượt có phí hướng dẫn liên hệ Quản lý, không bỏ qua phí. Lễ tân/bác sĩ không có API tạo yêu cầu hủy lượt, nên không hiện nút dẫn đến chức năng không được phân quyền.
+
+Kết quả sửa tiếp cục bộ: 266 tests đạt; 99 LAN đạt, 1 bài Windows bỏ qua trên Linux; C4 giữ nguyên đạt. C5 22.000 lượt đạt, trung vị màn hình bác sĩ 0,136 giây; mở phiếu 0,378 giây (p95 0,471 giây). Kết quả JSON tại test_evidence/review-c5/report.json.
+
+CI run 42850956098 (commit 95b6c53) thất bại cả 5 job, kể cả sau chạy lại; API trả steps=null, tải log trả 404 BlobNotFound. Chưa xác định nguyên nhân máy chạy vì không có nhật ký. Không sửa workflow để vượt kiểm thử; giữ PR Draft cho đến khi commit cuối đủ 5/5 xanh.
