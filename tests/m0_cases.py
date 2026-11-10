@@ -69,3 +69,18 @@ def check_m0(clients, ids, db):
     assert reception.get('/api/queue-counts').json()['reception'] == before - 1
     with db() as c:
         assert c.execute('SELECT reason FROM visit_cancellations WHERE visit_id=?', (reception_vid,)).fetchone()[0] == 'Khác: Ghi chú giả lập M0'
+    assert other.get(f'/api/visits/{reception_vid}/payment-status').status_code == 403
+    # History must carry real prior content while excluding another doctor's record.
+    with db(True) as c:
+        previous = []
+        for actor in (ids['doctor'], ids['doctor2']):
+            c.execute("INSERT INTO visits(patient_id,doctor_id,created_by,created_at,diagnosis,status) VALUES(?,?,?,'2026-11-08T00:00:00+00:00',?,'completed')", (pid, actor, ids['reception'], 'Chẩn đoán M0 '+str(actor)))
+            previous.append(c.execute('SELECT last_insert_rowid()').fetchone()[0])
+        c.execute("INSERT INTO prescriptions(visit_id,doctor_id,drug_lines,instructions,created_at) VALUES(?,?,'Thuốc giả lập lịch sử M0','Lời dặn M0','2026-11-08')", (previous[0], ids['doctor']))
+        c.execute("INSERT INTO orders(visit_id,category,name,requested_by,created_at,result_text,status) VALUES(?,'lab','CLS lịch sử M0',?,'2026-11-08','Kết luận: giả lập M0','approved')", (previous[0], ids['doctor']))
+    history = doctor.get(f'/api/visits/{reception_vid}/patient-history').json()
+    assert previous[1] not in [r['id'] for r in history]
+    row = next(r for r in history if r['id'] == previous[0])
+    assert row['diagnosis'] == 'Chẩn đoán M0 '+str(ids['doctor'])
+    assert row['prescriptions'][0]['drug_lines'] == 'Thuốc giả lập lịch sử M0'
+    assert row['results'][0]['result_text'] == 'Kết luận: giả lập M0'
