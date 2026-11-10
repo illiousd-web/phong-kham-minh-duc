@@ -30,7 +30,7 @@ Bốn cột theo thứ tự: `kind,code,name,parent_code`. Mã nên để kiểu
 | commune | Xã/phường/đặc khu | Mã tỉnh/thành có trong cùng file |
 | ethnicity | Dân tộc | Để trống |
 
-Mỗi lần nạp thay toàn bộ ba danh mục. File tối đa 2 MB, 20.000 dòng dữ liệu; Excel tối đa 20 MB sau giải nén. Không nhận công thức, ô lỗi, mã/tên trùng trong cùng loại hoặc xã thiếu tỉnh cha. Lỗi báo số dòng và giữ nguyên toàn bộ danh mục trước đó. Việc nạp không sửa trường đã lưu trong hồ sơ người bệnh.
+Mỗi lần nạp thay toàn bộ ba danh mục. File tối đa 2 MB, 20.000 dòng dữ liệu; Excel tối đa 20 MB sau giải nén. Không nhận công thức, ô lỗi, mã trùng trong cùng loại, tên xã trùng trong cùng tỉnh, tên tỉnh/dân tộc trùng trong cùng loại hoặc xã thiếu tỉnh cha. Lỗi báo số dòng và giữ nguyên toàn bộ danh mục trước đó. Tên xã ở hai tỉnh khác nhau được phép trùng. Việc nạp không sửa trường đã lưu trong hồ sơ người bệnh.
 
 Chưa nạp một loại danh mục thì ô tương ứng cho gõ tự do. Đã nạp thì chọn trong danh mục; xã được lọc theo tỉnh đã chọn. Nếu hồ sơ cũ dùng tên ngoài danh mục mới, tên cũ vẫn hiển thị; khi lưu lại cần chọn giá trị hiện hành hoặc để trống.
 

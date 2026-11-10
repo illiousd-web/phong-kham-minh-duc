@@ -115,6 +115,16 @@ def check_catalog(clients, db):
         base={'full_name':'Người giả lập danh mục','date_of_birth':'1990-01-01','sex':'Nam','phone':'0900000000'}
         assert clients['reception'].post('/api/patients',json=dict(base,province='Tỉnh giả lập',commune='Xã giả lập',ethnicity='Dân tộc giả lập')).status_code==201
         assert clients['reception'].post('/api/patients',json=dict(base,province='Không có trong danh mục')).status_code==422
+        # Commune names can repeat in different provinces; selection must match both fields.
+        same_names=csv+'province,P-KHAC,Tỉnh giả lập khác,\ncommune,X-KHAC,Xã giả lập,P-KHAC\n'
+        assert a.post('/api/patient-catalog/import',files=files(same_names)).status_code==200
+        for province in ('Tỉnh giả lập','Tỉnh giả lập khác'):
+            assert clients['reception'].post('/api/patients',json=dict(base,province=province,commune='Xã giả lập')).status_code==201
+        invalid=same_names+'commune,X-TRUNG,Xã giả lập,P-KHAC\n'
+        res=a.post('/api/patient-catalog/import',files=files(invalid))
+        assert res.status_code==422 and 'Dòng 7' in res.json()['detail']
+        assert len(a.get('/api/patient-catalog').json())==5
+
     finally:
         # This disposable database's test catalog must not change subsequent test scenarios.
         with db(True) as c:c.execute('DELETE FROM patient_catalog')

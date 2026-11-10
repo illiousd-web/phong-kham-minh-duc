@@ -84,13 +84,12 @@ def duplicate_warning(c, data, pid=0):
 def validate_catalog(c, data):
     for kind, name in [('province', data.province), ('commune', data.commune), ('ethnicity', data.ethnicity)]:
         if name and c.execute('SELECT 1 FROM patient_catalog WHERE kind=? LIMIT 1', (kind,)).fetchone():
-            row = c.execute('SELECT parent_code FROM patient_catalog WHERE kind=? AND name=?', (kind, name)).fetchone()
-            if not row:
-                raise HTTPException(422, 'Giá trị không thuộc danh mục đã nạp: ' + {'province':'Tỉnh/thành','commune':'Xã/phường/đặc khu','ethnicity':'Dân tộc'}[kind])
             if kind == 'commune':
                 parent = c.execute("SELECT code FROM patient_catalog WHERE kind='province' AND name=?", (data.province,)).fetchone()
-                if not parent or parent['code'] != row['parent_code']:
+                if not parent or not c.execute("SELECT 1 FROM patient_catalog WHERE kind='commune' AND name=? AND parent_code=?", (name, parent['code'])).fetchone():
                     raise HTTPException(422, 'Xã/phường/đặc khu không thuộc tỉnh/thành đã chọn')
+            elif not c.execute('SELECT 1 FROM patient_catalog WHERE kind=? AND name=?', (kind, name)).fetchone():
+                raise HTTPException(422, 'Giá trị không thuộc danh mục đã nạp: ' + {'province':'Tỉnh/thành','ethnicity':'Dân tộc'}[kind])
 
 
 class ChildVisitInput(BaseModel):
@@ -171,11 +170,13 @@ def parse_catalog(raw, filename):
         kind, code, name, parent = [str(x).strip() if x is not None else '' for x in row]
         if kind not in ('province', 'commune', 'ethnicity') or not code or not name or max(map(len, (code, name, parent))) > 180:
             raise HTTPException(422, f'Dòng {line}: loại, mã hoặc tên không hợp lệ')
-        if (kind, code) in keys or (kind, name) in names:
-            raise HTTPException(422, f'Dòng {line}: trùng mã hoặc tên trong cùng loại')
+        if (kind, code) in keys:
+            raise HTTPException(422, f'Dòng {line}: trùng mã trong cùng loại danh mục')
+        if (kind, parent, name) in names:
+            raise HTTPException(422, f'Dòng {line}: trùng tên trong cùng tỉnh hoặc cùng loại danh mục')
         if (kind == 'commune') != bool(parent):
             raise HTTPException(422, f'Dòng {line}: chỉ xã/phường/đặc khu phải có mã tỉnh cha')
-        keys.add((kind, code)); names.add((kind, name))
+        keys.add((kind, code)); names.add((kind, parent, name))
         parsed.append((line, kind, code, name, parent))
     if not parsed:
         raise HTTPException(422, 'Dòng 2: danh mục trống')
