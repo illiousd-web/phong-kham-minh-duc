@@ -131,7 +131,7 @@ Intl.NumberFormat thay vì tạo lại hàng nghìn lần; kiểm chữ hiển t
 trên Chromium 109, gồm giá chưa biết, số 0, số lớn và số âm.
 
 Run 59: kỹ thuật viên đạt 1,379 s; thu ngân vẫn chưa đạt, trung vị 1,889 s,
-P95 3,507 s. EXPLAIN chỉ ra bốn truy vấn con của view còn quét bảng điều
+P95 3,507 s. EXPLAIN cục bộ cùng SQL chỉ ra bốn truy vấn con của view quét bảng điều
 chỉnh rỗng 132.097 lần mỗi bảng. C5 gom ID có dấu vết đổi giá/giá tay/hoàn
 thuốc/hủy phí một lần. Khoản không có bất kỳ dấu vết nào dùng snapshot ban
 đầu (NULL vẫn là NULL); mọi khoản có dấu vết vẫn đọc nguyên view hiện có.
@@ -142,40 +142,72 @@ Kiểm 14 trạng thái riêng lẻ và chồng nhiều nguồn trên cả SQLit
 giá từng dòng, số khoản chưa giá và tính duy nhất đều khớp view cùng giá kỳ
 vọng độc lập. Test còn ràng buộc mọi bảng đầu vào của view có mặt trong tập
 ID thay đổi để cảnh báo khi view được mở rộng. EXPLAIN cục bộ sau thay đổi
-cho thấy bốn truy vấn con không chạy khi tập thay đổi rỗng. Đang đo lại Windows.
+cho thấy bốn truy vấn con không chạy khi tập thay đổi rỗng. Windows đã đạt
+theo kết quả nghiệm thu bên dưới.
 
 ## Kết quả đo
 
-Kết quả Windows CI trên mã C5 đang được chạy; chưa coi đây là nghiệm thu cuối.
-Số trước đã có từ CI C4: ca Quản lý chậm nhất có trung vị **0,935643 giây**,
-mẫu chậm nhất **0,995045 giây** tại [run 49](https://github.com/illiousd-web/phong-kham-minh-duc/actions/runs/42734103351).
+Mã C5 `245930b`, [run 60](https://github.com/illiousd-web/phong-kham-minh-duc/actions/runs/42766828490):
+**cả năm job xanh**, 261 tests, 112 LAN, job Chromium 109 có 32 bài.
+Windows đạt **12/12 thao tác**, mỗi thao tác đủ 20 mẫu. Trung vị cao nhất
+0,486 s, P95 cao nhất 0,522 s; các ngưỡng 1,5/3 s được giữ nguyên.
 
-Đo cục bộ trước/sau cùng dữ liệu 22.000 lượt (không giả là kết quả Windows):
-ca trang vượt cuối giảm trung vị từ khoảng **0,626 xuống 0,252 giây**.
-Test C5 yêu cầu trung vị mọi truy vấn Quản lý trên CI ≤ **0,5 giây**,
-giữ cách đo một lần làm nóng + năm mẫu; đồng thời đo lại mã trước C5 và
-so toàn bộ kết quả trước/sau giống nhau. Log và JSON lưu đủ mẫu cùng EXPLAIN.
+Máy đo: Windows Server 2025 (26100), hai CPU logic 0–1, RAM máy 8.187 MiB,
+Job Object 8 GiB; Python 3.12.10, PostgreSQL 17.11, Chromium 156.0.8078.4.
+Kiểm tương thích giao diện chạy riêng trên Chromium 109; chưa đo máy i3,
+Windows 11 hoặc máy trạm Windows 7 vật lý.
 
-Đối chứng cùng máy Ubuntu CI, cùng dữ liệu tại
-[run 52](https://github.com/illiousd-web/phong-kham-minh-duc/actions/runs/42752785299)
-(mã tối ưu `3556508`, PostgreSQL 17):
+Số trước/sau Windows dưới đây lấy **cùng một VM, cùng bộ dữ liệu**, mã trước
+`76f5628` và mã sau `245930b`. JSON đủ từng mẫu, EXPLAIN và kiểm khôi phục tại
+[artifact c5-windows-performance](https://github.com/illiousd-web/phong-kham-minh-duc/actions/runs/42766828490/artifacts/13740303777):
+`windows.json`, `before.json`, `after.json`, `query-probes.json`.
 
-| Truy vấn Quản lý | Trung vị trước | Trung vị sau | Chậm nhất trước / sau |
+| Thao tác Windows | Trước: trung vị / P95 (s) | Sau: trung vị / P95 (s) | Mẫu chậm nhất sau (s) |
 |---|---:|---:|---:|
-| Một năm, đã đủ, trang vượt cuối | 0,859136 s | 0,336436 s | 0,899079 / 0,337997 s |
-| Ca chậm nhất trong toàn bộ truy vấn sau C5 (trang cuối) | — | 0,344078 s | — / 0,390416 s |
+| Quản trị | 0,067 / 0,137 | 0,069 / 0,110 | 0,133 |
+| Quản lý | 0,102 / 0,114 | 0,101 / 0,215 | 0,216 |
+| Lễ tân | 0,111 / 0,126 | 0,112 / 0,122 | 0,128 |
+| Bác sĩ | Timeout (0/20) | 0,217 / 0,241 | 0,249 |
+| Kỹ thuật viên | 0,908 / 0,977 | 0,115 / 0,125 | 0,220 |
+| Dược | Timeout (0/20) | 0,101 / 0,114 | 0,119 |
+| Thu ngân | 2,183 / 2,574 | 0,288 / 0,320 | 0,332 |
+| Điều dưỡng | 0,833 / 1,436 | 0,116 / 0,131 | 0,213 |
+| Mở phiếu khám | 3,464 / 4,524 (17/20; lỗi) | 0,214 / 0,220 | 0,223 |
+| Tìm bệnh nhân | 0,216 / 0,400 | 0,211 / 0,250 | 0,251 |
+| Tra cứu trọn tháng | 0,645 / 0,725 | 0,486 / 0,522 | 0,553 |
+| In PDF (tải và mở đọc) | 0,129 / 0,153 | 0,121 / 0,139 | 0,154 |
 
-Mọi ca sau C5 đạt trung vị ≤ 0,5 giây. Tên có dấu, không dấu, chữ hoa,
-lọc tiền, trang cuối và trang trống đều kiểm đúng số dòng/kết quả.
-Số này là truy vấn PostgreSQL; bảng Windows bên dưới đo cả thao tác trình duyệt.
+Bản trước: mở phiếu chỉ hoàn thành 17/20 mẫu rồi lỗi; trung vị/P95 của
+17 mẫu được ghi lại nhưng **không đạt**. Timeout 0/20 không có số trung vị.
+PDF đo riêng sau khi hồ sơ đã sẵn sàng, đúng phương pháp ở trên.
+Số hiển thị làm tròn; điều kiện kiểm dùng số gốc.
 
-| Hạng mục Windows | Trước C5 | Sau C5 | Ngưỡng |
+| Sao lưu, khôi phục và RAM Windows | Trước C5 | Sau C5 | Ngưỡng/kết quả |
 |---|---:|---:|---|
-| Hàng chờ từng vai trò | Chờ số đo CI | Chờ số đo CI | Trung vị 1,5 s; P95 3 s |
-| Tìm bệnh nhân / phiếu khám / tra cứu tháng / PDF | Chờ số đo CI | Chờ số đo CI | Trung vị 1,5 s; P95 3 s |
-| Sao lưu + kiểm SHA-256 | Chờ số đo CI | Chờ số đo CI | 900 s |
-| Khôi phục và đối chiếu | Chờ số đo CI | Chờ số đo CI | Khớp dữ liệu và tệp |
-| RAM tối đa dịch vụ / PostgreSQL | Chờ số đo CI | Chờ số đo CI | Dịch vụ ≤ 500 MB |
+| Sao lưu + giải mã/kiểm SHA-256 | 7,627 s, lỗi manifest | 8,223 s, đạt | ≤ 900 s |
+| Khôi phục | Bị chặn vì bản sao chưa kiểm đạt | 13,006 s | Khớp dữ liệu và 2.000 tệp |
+| RAM dịch vụ tối đa | 265,949 MB | 118,706 MB | ≤ 500 MB |
+| RAM PostgreSQL tối đa | 572,940 MB | 544,965 MB | Ghi riêng, tổng working set |
+
+Bản trước dừng ở bước so tên tệp nên thời gian đó không phải một bản sao đã
+kiểm đạt. Bản sau kiểm đủ 2.002 mục trong manifest (dump, cài đặt và 2.000
+tệp). Khôi phục khớp số dòng mọi bảng, tổng tiền, từng lô và toàn bộ SHA-256;
+phiên đăng nhập về 0 và thêm đúng một sự kiện `backup_restored`.
+
+Truy vấn Quản lý đo một lần làm nóng + năm mẫu trên **cùng máy Ubuntu CI**,
+cùng dữ liệu, trước/sau so kết quả giống nhau. Số C4 cũ là 0,935643 s
+(trung vị), 0,995045 s (mẫu chậm nhất) tại
+[run 49](https://github.com/illiousd-web/phong-kham-minh-duc/actions/runs/42734103351).
+
+| Quản lý, run 60 | Trung vị trước | Trung vị sau | Chậm nhất trước / sau |
+|---|---:|---:|---:|
+| Một năm, đã đủ, trang vượt cuối | 0,859789 s | 0,177250 s | 0,893099 / 0,178309 s |
+| Trung vị cao nhất mọi truy vấn sau (một năm, đã đủ) | — | 0,186076 s | — / 0,292322 s |
+
+Mọi ca sau C5 đạt trung vị ≤ **0,5 s**, mẫu chậm nhất ≤ 2,5 s. Tên có dấu,
+không dấu, chữ hoa, lọc tiền, trang cuối và trang trống đều đúng số lượt.
+JSON `manager-timings.json` và `manager-explain.json` nằm trong artifact
+`synthetic-clinic-test-evidence` của cùng run 60.
 
 Các bài bảo vệ: `test_tu_choi_ten_csdl_khong_phai_dich_c5`,
 `test_bat_buoc_xac_nhan_va_loopback_va_thu_muc_moi`,
@@ -186,4 +218,9 @@ Các bài bảo vệ: `test_tu_choi_ten_csdl_khong_phai_dich_c5`,
 `test_p95_nearest_rank_va_khong_dung_mau_tot_nhat`,
 `test_chuan_bi_khong_cong_hai_thao_tac_va_loi_chuan_bi_van_khong_dat`,
 `test_lan_backup_nested_paths_are_portable_and_hashes_stay_required`,
-`test_loi_manifest_duoc_ghi_la_khong_dat_khong_co_so_khoi_phuc`, cùng toàn bộ C4 và phân quyền.
+`test_loi_manifest_duoc_ghi_la_khong_dat_khong_co_so_khoi_phuc`,
+`test_known_render_count_skips_only_duplicate_query_and_poll_remains_complete`,
+`test_known_render_counts_do_not_extend_or_bypass_expired_session`,
+`test_price_query_covers_every_input_of_effective_view`,
+`test_price_query_matches_view_and_expected_amounts_sqlite`,
+`test_price_query_matches_view_and_expected_amounts_postgresql`, cùng toàn bộ C4 và phân quyền.
