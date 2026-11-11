@@ -209,7 +209,7 @@ def redact_reason(c,o,reason):
     import re
     p=c.execute('SELECT citizen_id,document_number FROM patients WHERE id=?',(o['patient_id'],)).fetchone()
     for value in dict(p).values():
-        if value:reason=reason.replace(str(value),'[đã ẩn]')
+        if value:reason=re.sub(re.escape(str(value)),'[đã ẩn]',reason,flags=re.IGNORECASE)
     return re.sub(r'\b(?:[A-Za-z]{1,3})?\d{6,}\b','[đã ẩn]',reason)
 
 

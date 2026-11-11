@@ -29,6 +29,8 @@ def check_m5(clients,ids,db,service):
     opened=t.post(f'/api/lab/orders/{order_id}/reports');assert opened.status_code==201,opened.text
     rid=opened.json()['id'];url=f'/api/lab/reports/{rid}'
     assert len(t.get(url).json()['items'])==3
+    assert t.get(f'/api/lab/queue?visit_id={visit}&status=waiting_sample').json()['total']==1
+    assert t.get(f'/api/lab/queue?visit_id={visit}&status=working').json()['total']==0
     assert d.get(url).json()['items']==[]
     assert r.get(url).status_code==403
     assert d.get(url+'/review').status_code==409
@@ -40,8 +42,11 @@ def check_m5(clients,ids,db,service):
     assert items[tid]['value']=='21.50' and items[tid]['flag']=='H' and items[tid]['reference']['sex']=='Nữ'
     assert items[oid]['flag']=='' and items[oid]['reference_text']=='Chưa có khoảng tham chiếu'
     assert items[qid]['flag']=='Bất thường'
-    assert t.get('/api/lab/queue?status=working').json()['total']>=1
+    assert t.get(f'/api/lab/queue?visit_id={visit}&status=working').json()['total']==1
+    assert t.get(f'/api/lab/queue?visit_id={visit}&status=waiting_sample').json()['total']==0
     assert t.post(url+'/submit',json={'version':1}).status_code==200
+    assert t.get(f'/api/lab/queue?visit_id={visit}&status=pending_review').json()['total']==1
+    assert t.get(f'/api/lab/queue?visit_id={visit}&status=approved').json()['total']==0
     assert d.get(url).json()['items']==[]
     listed=next(x for x in d.get('/api/orders',params={'visit_id':visit}).json() if x['id']==order_id)
     assert listed['result_text'] is None and listed['file_name'] is None
@@ -56,6 +61,8 @@ def check_m5(clients,ids,db,service):
     assert t.put(f'/api/orders/{order_id}/result',json={'result_text':'không được sửa'}).status_code==409
     assert d.post(f'/api/orders/{order_id}/approve').status_code==409
     approved=d.post(url+'/approve',json={'version':2});assert approved.status_code==200,approved.text
+    assert t.get(f'/api/lab/queue?visit_id={visit}&status=approved').json()['total']==1
+    assert t.get(f'/api/lab/queue?visit_id={visit}&status=pending_review').json()['total']==0
     snapshot=d.get(url).json()
     assert snapshot['status']=='approved' and snapshot['performer_name'] and snapshot['approver_name']
     assert t.put(url,json={**data,'version':3}).status_code==409
