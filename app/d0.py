@@ -1,5 +1,5 @@
 """Source-file-only standard catalogs. Preview proof binds bytes, mapping and metadata."""
-import hashlib,json,re
+import hashlib,json,re,io,zipfile
 from datetime import date
 from fastapi import Depends,File,Form,HTTPException,Query,UploadFile
 from pydantic import BaseModel,ConfigDict,Field,StrictBool,field_validator
@@ -29,22 +29,33 @@ class Metadata(BaseModel):
 
 def parse(raw,filename,kind,mapping,header_row):
     if kind not in COLUMNS:raise ValueError('Danh mục không hợp lệ')
-    rows=read_rows(raw,filename,header_row)
+    sheet=mapping.get('__sheet','')
+    if not isinstance(sheet,str):raise ValueError('Tên sheet phải là chữ')
+    rows=read_source_rows(raw,filename,header_row,sheet)
     if filename.lower().endswith('.csv'):rows=rows[header_row-1:]
     if not rows:raise ValueError('Không có dòng tiêu đề')
     labels=[text(x) for x in rows[0][1]];cols={}
-    unknown=set(mapping)-set(COLUMNS[kind])
+    unknown=set(mapping)-set(COLUMNS[kind])-{'__sheet'}
     if unknown:raise ValueError('Trường ánh xạ không hợp lệ: '+', '.join(sorted(unknown)))
-    missing=[mapping.get(f,LABELS[f]) for f in COLUMNS[kind] if labels.count(mapping.get(f,LABELS[f]))!=1]
+    def column(field):
+        spec=mapping.get(field,LABELS[field])
+        if isinstance(spec,str):return spec
+        if not isinstance(spec,dict) or set(spec)-{'column','values'} or not isinstance(spec.get('column'),str) or not isinstance(spec.get('values',{}),dict) or not all(isinstance(k,str) and isinstance(v,str) for k,v in spec.get('values',{}).items()):raise ValueError('Ánh xạ cột/giá trị không hợp lệ: '+field)
+        if spec.get('values') and field not in (*FLAGS,'sex','kind'):raise ValueError('Chỉ ánh xạ giá trị cờ, giới tính hoặc cấp hành chính; không đổi mã/tên trong file gốc')
+        return spec['column']
+    missing=[column(f) for f in COLUMNS[kind] if labels.count(column(f))!=1]
     if missing:raise ValueError('Thiếu hoặc trùng cột: '+', '.join(missing))
     for field in COLUMNS[kind]:
-        label=mapping.get(field,LABELS[field])
+        label=column(field)
         if labels.count(label)!=1:raise ValueError('Thiếu hoặc trùng cột: '+label)
         cols[field]=labels.index(label)
     result=[];errors=[];seen=set()
     for line,row in rows[1:]:
         if not any(text(v) for v in row):continue
         value={key:text(row[i]) if i<len(row) else '' for key,i in cols.items()}
+        for field in value:
+            spec=mapping.get(field)
+            if isinstance(spec,dict):value[field]=spec.get('values',{}).get(value[field],value[field])
         try:
             if not value['code'] or not value.get('name_vi',value.get('name')):raise ValueError('Thiếu mã hoặc tên')
             if any(len(x)>1000 for x in value.values()) or len(value['code'])>80:raise ValueError('Giá trị quá dài')
@@ -133,11 +144,11 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
     @app.post('/api/standards/{kind}/import')
     def import_file(kind:str,file:UploadFile=File(...),metadata:str=Form(...),mapping:str=Form('{}'),header_row:int=Form(1),preview:bool=Form(True),proof:str=Form(''),u=Depends(principal)):
         require(u,'admin')
-        raw=file.file.read(2*1024*1024+1)
-        if len(raw)>2*1024*1024:raise HTTPException(413,'Tệp tối đa 2 MB')
+        raw=file.file.read(8*1024*1024+1)
+        if len(raw)>8*1024*1024:raise HTTPException(413,'Tệp tối đa 8 MB')
         try:
             meta=Metadata.model_validate_json(metadata).model_dump(mode='json');mp=json.loads(mapping)
-            if not isinstance(mp,dict) or not all(isinstance(k,str) and isinstance(v,str) for k,v in mp.items()) or not 1<=header_row<=100:raise ValueError('Ánh xạ hoặc dòng tiêu đề không hợp lệ')
+            if not isinstance(mp,dict) or not all(isinstance(k,str) and isinstance(v,(str,dict)) for k,v in mp.items()) or not 1<=header_row<=100:raise ValueError('Ánh xạ hoặc dòng tiêu đề không hợp lệ')
         except (ValueError,TypeError):
             raise HTTPException(422,'Metadata/ánh xạ hoặc tệp không hợp lệ; cần đủ số văn bản, ngày ISO, nguồn, phiên bản và các cột: '+', '.join(LABELS[f] for f in COLUMNS.get(kind,[]))) from None
         try:rows,errors=parse(raw,file.filename or '',kind,mp,header_row)
@@ -270,3 +281,25 @@ def search_catalog(c,kind,q,limit=30,offset=0):
     where="active=1 AND search_key LIKE ? ESCAPE '!'";args=('%'+needle+'%',)
     total=c.execute(f'SELECT COUNT(*) FROM {kind} WHERE '+where,args).fetchone()[0]
     return {'total':total,'items':[dict(r) for r in c.execute(f'SELECT * FROM {kind} WHERE '+where+' ORDER BY code LIMIT ? OFFSET ?',(*args,limit,offset))]}
+
+
+def read_source_rows(raw,filename,header_row,sheet):
+    if not sheet:return read_rows(raw,filename,header_row)
+    if not filename.lower().endswith('.xlsx'):raise ValueError('Chọn sheet chỉ áp dụng cho Excel .xlsx')
+    from openpyxl import load_workbook
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            if len(z.infolist())>1000 or sum(x.file_size for x in z.infolist())>20*1024*1024:raise ValueError('Excel vượt giới hạn giải nén 20 MB')
+        book=load_workbook(io.BytesIO(raw),read_only=True,data_only=False,keep_links=False)
+        try:
+            if sheet not in book.sheetnames:raise ValueError('Không có sheet đã chọn: '+sheet)
+            ws=book[sheet];ws.reset_dimensions();result=[]
+            for line,cells in enumerate(ws.iter_rows(max_col=200),1):
+                if line>20003:raise ValueError('Dòng 20004: tối đa 20.000 dòng dữ liệu')
+                if line<header_row:continue
+                if any(c.data_type in ('f','e') for c in cells):raise ValueError('Dòng '+str(line)+': không dùng công thức hoặc ô lỗi')
+                result.append((line,[c.value for c in cells]))
+            return result
+        finally:book.close()
+    except ValueError:raise
+    except Exception:raise ValueError('Không đọc được Excel; kiểm tra tệp gốc và sheet') from None

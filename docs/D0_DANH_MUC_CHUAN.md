@@ -4,11 +4,11 @@ Migration 10 chỉ thêm danh mục chuẩn, lịch sử nạp và các liên k�
 
 ## Nhập file gốc
 
-Quản trị → Danh mục → D0. Chọn loại, số văn bản, ngày (dd/mm/yyyy), nguồn, phiên bản, dòng tiêu đề; ánh xạ JSON trường nội bộ → tiêu đề thực tế của file gốc. Mẫu CSV UTF-8 rỗng ở `templates/nhap_lieu/d0_*.csv`; Excel .xlsx một sheet cũng nhận, không công thức/ô lỗi. Mã phải là ô chữ (đặc biệt 7 chữ số CLS và số 0 đầu). Không tự sinh mã. Chỉ nhập tệp của cơ quan ban hành đã đối chiếu; dữ liệu giả lập dùng riêng cho test.
+Quản trị → Danh mục → D0. Chọn loại, số văn bản, ngày (dd/mm/yyyy), nguồn, phiên bản, dòng tiêu đề; ánh xạ JSON trường nội bộ → tiêu đề thực tế của file gốc. Mẫu CSV UTF-8 rỗng ở `templates/nhap_lieu/d0_*.csv`; Excel .xlsx cũng nhận (tệp nhiều sheet chọn bằng `"__sheet":"Tên sheet gốc"` trong ánh xạ), không công thức/ô lỗi. Tệp tối đa 8 MB, Excel giải nén tối đa 20 MB. Mã phải là ô chữ (đặc biệt 7 chữ số CLS và số 0 đầu). Không tự sinh mã. Chỉ nhập tệp của cơ quan ban hành đã đối chiếu; dữ liệu giả lập dùng riêng cho test.
 
 Bấm Xem trước; lỗi báo dòng/cột, không ghi dở. Chỉ sau xem trước thành công mới hiện xác nhận. Máy chủ ràng buộc SHA-256 với bytes, loại, metadata, ánh xạ, dòng tiêu đề và bằng chứng đã xem của cùng tài khoản. Ghi thiếu/sai mã, đổi tệp/nguồn/ánh xạ đều 422. Mỗi lần nạp lưu nguồn, số/ngày văn bản, phiên bản, hash, người và thời điểm; ghi audit. Nạp là phiên bản đầy đủ: cập nhật theo mã, mục thiếu đánh dấu ngừng dùng, không xóa liên kết cũ. Nhãn chẩn đoán/snapshot đã khóa giữ nguyên.
 
-ICD-10: cờ dùng 0/1; giới tính để trống (chung), Nam hoặc Nữ. `replacement_codes` giữ chuỗi mã thay thế từ file. Ánh xạ cột 24–29 phải đối chiếu file gốc; không suy diễn giá trị cờ. Chờ file thật để kiểm cấu trúc, cách biểu diễn và ngữ nghĩa chính xác.
+ICD-10: cờ dùng 0/1; giới tính để trống (chung), Nam hoặc Nữ. `replacement_codes` giữ chuỗi mã thay thế từ file. Ánh xạ có thể là tên cột hoặc cấu hình như `"not_primary":{"column":"Cột hạn chế gốc","values":{"X":"1"}}`; giá trị chỉ đổi theo ánh xạ tường minh do Quản trị khai, không suy đoán. Giữ nguyên bytes file gốc, kể cả nhiều sheet. Ánh xạ cột 24–29 phải đối chiếu file gốc; không suy diễn giá trị cờ. Chờ file thật để kiểm cấu trúc, cách biểu diễn và ngữ nghĩa chính xác.
 
 ## Dùng trong hồ sơ
 
