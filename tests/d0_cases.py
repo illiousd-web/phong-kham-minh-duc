@@ -43,9 +43,11 @@ def check_d0(clients,ids,db,service):
     assert d.post(f'/api/visits/{vid}/complete',json={'version':2}).status_code==422 # deactivated code is not selectable at closure
     assert d.put(f'/api/visits/{vid}/diagnosis-codes',json={'version':2,'primary':codes[0]['code']}).status_code==200
     assert d.post(f'/api/visits/{vid}/complete',json={'version':3}).status_code==200
-    tech='FAKE-TECH-'+suffix;upload(a,'tech_catalog',[{'code':tech,'name':'Kỹ thuật giả lập'}])
+    tech='FAKE-TECH-'+suffix;upload(a,'tech_catalog',[{'code':tech,'name':'Kỹ thuật giả lập'},{'code':tech+'-PACK','name':'Kỹ thuật trong gói giả lập'}])
     with db() as c:old=dict(c.execute('SELECT * FROM service_catalog WHERE id=?',(service,)).fetchone())
     assert a.put('/api/standards/services/'+str(service),json={'codes':[tech]}).status_code==200
+    assert a.put('/api/standards/services/'+str(service),json={'codes':[tech,tech+'-PACK']}).status_code==422
+    assert a.put('/api/standards/services/'+str(service),json={'codes':[tech,tech+'-PACK'],'package':True}).status_code==200
     with db() as c:assert dict(c.execute('SELECT * FROM service_catalog WHERE id=?',(service,)).fetchone())==old
     shared='7654321';upload(a,'shared_lab_codes',[{'code':shared,'name':'Chỉ số giả lập','tech_code':tech,'loinc':'FAKE-LOINC','unit':'đv giả lập'}])
     tid=a.get('/api/standards/unlinked/lab-tests').json()[0]['id']
