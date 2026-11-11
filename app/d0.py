@@ -122,7 +122,12 @@ class CodesInput(BaseModel):
     version:int=Field(ge=0)
     primary:str|None=None
     secondary:list[str]=Field(default_factory=list,max_length=30)
-class Links(BaseModel):
+class ReviewInput(BaseModel):
+    confirmed:StrictBool=False
+    reason:str=Field(default="",max_length=1000)
+    exception_confirmed:StrictBool=False
+
+class Links(ReviewInput):
     model_config=ConfigDict(extra='forbid')
     codes:list[str]=Field(max_length=50)
     package:StrictBool=False
@@ -132,13 +137,18 @@ class Links(BaseModel):
     def row_ids(cls,values):
         if any(not re.fullmatch(r'[1-9][0-9]*',x) for x in values):raise ValueError('ID dòng PL02 phải là số dương nội bộ')
         return values
-class CodeLink(BaseModel):
+class CodeLink(ReviewInput):
     code:str|None=None
 class Settings(BaseModel):
     require_primary_icd10:StrictBool
-class GeoLink(BaseModel):
+class GeoLink(ReviewInput):
     tms_code:str
     official_code:str
+
+
+def require_review(data,exception=False):
+    if not (data.exception_confirmed if exception else data.confirmed) or len(data.reason.strip())<8:
+        raise HTTPException(422,'Cần xác nhận và lý do ít nhất 8 ký tự')
 
 
 def install_d0(app,db,principal,require,audit,visit_access,now):
@@ -246,6 +256,29 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
             revision(c,vid,u,now,'clinical','Lưu mã chẩn đoán');audit(c,u,'diagnosis_codes_updated','visit',vid,dump({'fields':['primary_icd10','diagnosis_codes'],'secondary_count':len(data.secondary)}))
         return {'version':data.version+1,'warnings':warnings}
 
+    @app.get('/api/standards/links/{kind}')
+    def all_links(kind:str,status:str='all',u=Depends(principal)):
+        require(u,'admin')
+        if kind not in ('services','lab-tests') or status not in ('all','unlinked','inactive'):raise HTTPException(422,'Bộ lọc không hợp lệ')
+        with db() as c:
+            items=[]
+            table='service_catalog' if kind=='services' else 'lab_tests'
+            for row in c.execute('SELECT id,name FROM '+table+' ORDER BY id'):
+                item=dict(row);links=[]
+                if kind=='services':
+                    for x in c.execute('SELECT l.tech_code AS code,t.active FROM service_tech_codes l LEFT JOIN tech_catalog t ON t.code=l.tech_code WHERE l.service_id=?',(row['id'],)):
+                        links.append({'code':x['code'],'catalog':'PL01','status':'missing' if x['active'] is None else 'active' if x['active'] else 'inactive'})
+                    for x in c.execute('SELECT l.pl02_id,p.stt,p.active FROM service_pl02_codes l LEFT JOIN tech_catalog_pl02 p ON p.id=l.pl02_id WHERE l.service_id=?',(row['id'],)):
+                        links.append({'code':x['stt'],'id':x['pl02_id'],'catalog':'PL02','status':'missing' if x['active'] is None else 'active' if x['active'] else 'inactive'})
+                else:
+                    x=c.execute('SELECT l.shared_code,s.active FROM lab_tests l LEFT JOIN shared_lab_codes s ON s.code=l.shared_code WHERE l.id=?',(row['id'],)).fetchone()
+                    if x['shared_code']:links.append({'code':x['shared_code'],'catalog':'CLS','status':'missing' if x['active'] is None else 'active' if x['active'] else 'inactive'})
+                item['links']=links
+                if status=='unlinked' and links:continue
+                if status=='inactive' and not any(x['status']!='active' for x in links):continue
+                items.append(item)
+            return {'items':items,'total':len(items)}
+
     @app.get('/api/standards/unlinked/services')
     def unlinked_services(u=Depends(principal)):
         require(u,'admin')
@@ -264,11 +297,25 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
             if data.pl02_ids and not data.codes:raise HTTPException(422,'Cần chọn mã PL01 trước khi gắn dòng PL02')
             old_pl02=[r[0] for r in c.execute('SELECT pl02_id FROM service_pl02_codes WHERE service_id=?',(sid,))]
             old=[r[0] for r in c.execute('SELECT tech_code FROM service_tech_codes WHERE service_id=?',(sid,))]
+            if (old or old_pl02) and (set(old)!=set(data.codes) or set(map(str,old_pl02))!=set(data.pl02_ids)):
+                require_review(data)
+            for pid in data.pl02_ids:
+                matched=c.execute('SELECT pl01_code FROM tech_pl02_links WHERE pl02_id=? AND needs_review=0',(pid,)).fetchall()
+                valid=bool(set(r[0] for r in matched).intersection(data.codes))
+                uncertain=c.execute('SELECT 1 FROM tech_pl02_links WHERE pl02_id=? AND needs_review=1',(pid,)).fetchone() or not matched
+                key=dump({'pl02_id':pid,'codes':sorted(set(data.codes))})
+                reviewed=c.execute("SELECT 1 FROM audit_log WHERE event='pl02_relationship_reviewed' AND details=?",(key,)).fetchone()
+                if not valid or uncertain:
+                    if not reviewed:
+                        if not uncertain:raise HTTPException(422,'PL02 không khớp mã PL01 đang chọn')
+                        require_review(data,exception=True)
+                        audit(c,u,'pl02_relationship_review_reason','catalog',int(pid),dump({'reason':data.reason,'codes':data.codes}))
+                        audit(c,u,'pl02_relationship_reviewed','catalog',int(pid),key)
             c.execute('DELETE FROM service_tech_codes WHERE service_id=?',(sid,))
             for code in sorted(set(data.codes)):c.execute('INSERT INTO service_tech_codes(service_id,tech_code) VALUES(?,?)',(sid,code))
             c.execute('DELETE FROM service_pl02_codes WHERE service_id=?',(sid,))
             for stt in sorted(set(data.pl02_ids)):c.execute('INSERT INTO service_pl02_codes(service_id,pl02_id) VALUES(?,?)',(sid,stt))
-            audit(c,u,'service_standard_linked','catalog',sid,dump({'old':old,'new':data.codes,'package':data.package,'pl02_ids':data.pl02_ids,'old_pl02_ids':old_pl02}))
+            audit(c,u,'service_standard_linked','catalog',sid,dump({'old':old,'new':data.codes,'package':data.package,'pl02_ids':data.pl02_ids,'old_pl02_ids':old_pl02,'reason':data.reason}))
         return {'ok':True}
 
     @app.get('/api/standards/unlinked/lab-tests')
@@ -283,7 +330,8 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
             if data.code and not c.execute('SELECT 1 FROM shared_lab_codes WHERE code=? AND active=1',(data.code,)).fetchone():raise HTTPException(422,'Mã dùng chung không hợp lệ')
             old=c.execute('SELECT shared_code FROM lab_tests WHERE id=?',(tid,)).fetchone()
             if not old:raise HTTPException(404,'Không có chỉ số')
-            c.execute('UPDATE lab_tests SET shared_code=? WHERE id=?',(data.code,tid));audit(c,u,'lab_standard_linked','catalog',tid,dump({'old':old[0],'new':data.code}))
+            if old[0] and old[0]!=(data.code or None):require_review(data)
+            c.execute('UPDATE lab_tests SET shared_code=? WHERE id=?',(data.code,tid));audit(c,u,'lab_standard_linked','catalog',tid,dump({'old':old[0],'new':data.code,'reason':data.reason}))
         return {'ok':True}
 
     @app.get('/api/standards/geography/unmatched')
@@ -298,8 +346,15 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
             target=c.execute("SELECT * FROM official_addresses WHERE code=? AND kind='commune' AND active=1",(data.official_code,)).fetchone()
             source=c.execute("SELECT * FROM patient_catalog WHERE kind='commune' AND code=?",(data.tms_code,)).fetchone()
             if not target or not source:raise HTTPException(422,'Không có mã xã chính thức/TMS')
+            parent=c.execute("SELECT name FROM patient_catalog WHERE kind='province' AND code=?",(source['parent_code'],)).fetchone()
+            from .d0_sources import province_name
+            def normalized(value):
+                value=fold_name(province_name(value))
+                return re.sub(r'^tp[.]?\s+', 'thanh pho ',value)
+            different=not parent or normalized(parent[0])!=normalized(target['province_name'])
+            if different:require_review(data,exception=True)
             c.execute("UPDATE patient_catalog SET official_code=? WHERE kind='commune' AND code=?",(data.official_code,data.tms_code))
-            audit(c,u,'official_address_linked','catalog',None,dump(data.model_dump()))
+            audit(c,u,'official_address_linked','catalog',None,dump({**data.model_dump(),'exception':'ngoại lệ khác tỉnh' if different else '', 'old':source['official_code'],'new':data.official_code}))
         return {'ok':True}
 
 
