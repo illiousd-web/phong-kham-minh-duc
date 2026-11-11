@@ -145,8 +145,8 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
     @app.post('/api/standards/{kind}/import')
     def import_file(kind:str,file:UploadFile=File(...),metadata:str=Form(...),mapping:str=Form('{}'),header_row:int=Form(1),preview:bool=Form(True),proof:str=Form(''),u=Depends(principal)):
         require(u,'admin')
-        raw=file.file.read(8*1024*1024+1)
-        if len(raw)>8*1024*1024:raise HTTPException(413,'Tệp tối đa 8 MB')
+        raw=file.file.read(5*1024*1024+1)
+        if len(raw)>5*1024*1024:raise HTTPException(413,'Tệp tối đa 5 MB')
         try:
             meta=Metadata.model_validate_json(metadata).model_dump(mode='json');mp=json.loads(mapping)
             if not isinstance(mp,dict) or not all(isinstance(k,str) and isinstance(v,(str,dict)) for k,v in mp.items()) or not 1<=header_row<=100:raise ValueError('Ánh xạ hoặc dòng tiêu đề không hợp lệ')

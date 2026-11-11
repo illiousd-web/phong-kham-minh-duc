@@ -13,7 +13,6 @@ def test_d0_main_upgrade_full_c5_and_icd_search_p95(tmp_path):
     from app.patient_catalog import migrate_public_catalog
     from app.m6_migration import migrate_m6
     from app.m5_migration import migrate_m5
-    from app.d0_migration import migrate_d0
     from app.d0 import search_catalog
     from app.manager_visits import fold_name
     name='clinic_perf_test_'+secrets.token_hex(6);source=urlunsplit(urlsplit(SOURCE)._replace(path='/postgres'));url=urlunsplit(urlsplit(SOURCE)._replace(path='/'+name))
@@ -33,7 +32,9 @@ def test_d0_main_upgrade_full_c5_and_icd_search_p95(tmp_path):
                     for r in con.execute(sql.SQL('SELECT {} FROM {} ORDER BY id').format(sql.SQL(',').join(map(sql.Identifier,columns[table])),sql.Identifier(table))):h.update(repr(list(r.values())).encode())
                     result[table]=h.hexdigest()
                 return result
-            before=fingerprint();migrate_d0(c,postgres=True);migrate_d0(c,postgres=True);assert fingerprint()==before
+            from scripts.do_hieu_nang import migrate_profile_schema
+            before=fingerprint();migrate_profile_schema(c);assert fingerprint()==before
+            assert c.execute("SELECT 1 FROM schema_migrations WHERE version=10").fetchone()
             assert con.execute('SELECT COUNT(*) FROM visits').fetchone()[0]==22000
             c.execute("INSERT INTO catalog_imports(kind,document_number,document_date,source,version,fingerprint,mapping,created_at) VALUES('icd10','GIẢ LẬP','2026-01-01','C5 giả lập','fake','fake','{}','2026-01-01')")
             iid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
