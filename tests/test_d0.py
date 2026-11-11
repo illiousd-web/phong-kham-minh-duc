@@ -18,7 +18,7 @@ def test_d0_migration_preserves_main_data_and_is_idempotent(tmp_path):
 
 def test_d0_missing_column_mapping_and_12000_search_p95():
     from tests.d0_cases import upload,raw
-    import time,statistics,json
+    import time,statistics,json,math
     clients,_=context();a=clients['admin']
     rows=[{'code':'FAKE'+str(i).zfill(5),'name_vi':'Bệnh mô phỏng tìm kiếm '+str(i)} for i in range(12500)]
     upload(a,'icd10',rows)
@@ -26,7 +26,7 @@ def test_d0_missing_column_mapping_and_12000_search_p95():
     for i in range(30):
         start=time.perf_counter();result=a.get('/api/standards/icd10?q=benh mo phong&limit=20&offset=20');samples.append(time.perf_counter()-start)
         assert result.status_code==200 and result.json()['total']==12500 and len(result.json()['items'])==20
-    p95=sorted(samples)[int(len(samples)*.95)-1];assert p95<.3,p95
+    p95=sorted(samples)[math.ceil(len(samples)*.95)-1];assert p95<.3,p95
     meta=json.dumps({'document_number':'Giả lập','document_date':'2026-01-01','source':'Giả lập','version':'fake'})
     bad=a.post('/api/standards/icd10/import',data={'metadata':meta},files={'file':('bad.csv',b'Ma sai\nFAKE\n')})
     assert bad.status_code==422 and 'Tên tiếng Việt' in bad.text
