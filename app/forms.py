@@ -90,7 +90,7 @@ def multiline(doc,header,content,lines=4):
     return found
 
 def format_patient_address(p):
-    parts = [clean(p.get(key)) for key in ('address_detail', 'commune', 'province')]
+    parts = [clean(p.get('address_detail')) or clean(p.get('address')), clean(p.get('commune')), clean(p.get('province'))]
     return ', '.join(x for x in parts if x) or clean(p.get('address')) or '—'
 
 

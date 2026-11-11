@@ -44,9 +44,9 @@ def test_v050_all_workflows_https_browser(clients,visit):
                     assert page.evaluate("showDay('2026-11-08T18:30:01.123456+00:00')")=='09/11/2026 01:30'
                     page.locator('[name="username"]').fill('test_'+role);page.locator('[name="password"]').fill(PASSWORDS[role])
                     page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for();settle(page)
-                    # Một menu theo việc cho mỗi vai trò, không còn menu "Quy trình v0.5".
+                    # Chỉ các menu công việc được phép; M6 thêm đọc đơn đã khóa cho bác sĩ/dược.
                     nav=page.locator('#navigation [data-action="navigate"]')
-                    assert nav.count()==1 and nav.first.get_attribute('data-page')==expected[role]
+                    assert [nav.nth(i).get_attribute('data-page') for i in range(nav.count())]==[expected[role]]+(['m6-list'] if role in ('doctor','pharmacy') else [])
                     assert 'v0.5' not in page.locator('body').inner_text().replace('v0.5.0','')
                     assert page.evaluate('typeof v050Workflows')=='undefined'
                 d=go(pages['doctor'],'doctor');pick(d,'visit',visit)
@@ -64,6 +64,7 @@ def test_v050_all_workflows_https_browser(clients,visit):
                 tech.locator('[data-form="result"] [name="result_text"]').fill('Glucose | 5,0 | mmol/L | 3,9–5,6 |\nKết luận: Kết quả giả lập')
                 submit(tech,'result','Đã chuyển kết quả')
                 d=go(d,'doctor');send(d,d.locator(f'[data-action="approve"][data-id="{order["id"]}"]'),'Đã duyệt kết quả')
+                d.get_by_text('Kê / cấp thuốc từ kho (quy trình hiện có)',exact=True).click()
                 d.locator('[data-form="rx"] [name="medicine_id"]').select_option(str(mid))
                 expect(d.locator('[data-form="rx"] [name="unit_id"] option')).to_have_count(2)
                 d.locator('[data-form="rx"] [name="unit_id"]').select_option(str(unit));d.locator('[data-form="rx"] [name="quantity"]').fill('2');d.locator('[data-form="rx"] [name="directions"]').fill('Chỉ dùng giả lập')

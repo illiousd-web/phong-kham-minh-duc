@@ -58,4 +58,4 @@ def test_masked_short_documents_and_address_fallback():
     assert masked_document(None) is None
     assert format_patient_address({}) == '—'
     assert format_patient_address({'address': ' Địa chỉ cũ giả lập '}) == 'Địa chỉ cũ giả lập'
-    assert format_patient_address({'address': 'Cũ', 'commune': ' Xã giả lập '}) == 'Xã giả lập'
+    assert format_patient_address({'address': 'Cũ', 'commune': ' Xã giả lập '}) == 'Cũ, Xã giả lập'

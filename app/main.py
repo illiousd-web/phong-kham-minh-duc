@@ -56,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=7").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=8").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -75,6 +75,8 @@ def init_db():
         migrate_administrative(c)
         from .patient_catalog import migrate_public_catalog
         migrate_public_catalog(c)
+        from .m6_migration import migrate_m6
+        migrate_m6(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -1107,3 +1109,6 @@ if LAN:
 @app.exception_handler(StorageLimitError)
 async def storage_full(request,exc):
     return JSONResponse(status_code=507,content={'detail':str(exc)})
+
+from .m6 import install_m6
+install_m6(app,db,principal,require,audit,visit_access,NOW)

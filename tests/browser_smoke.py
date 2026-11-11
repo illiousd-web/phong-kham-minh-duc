@@ -86,6 +86,7 @@ with sync_playwright() as p:
   dl.value.save_as(str(EVIDENCE/'phieu_kham_chromium.pdf'))
   page.locator('[data-form="order"] [name="service_id"]').select_option(index=0)
   page.locator('[data-form="order"] button').click();done('Đã lập chỉ định')
+  page.get_by_text('Kê / cấp thuốc từ kho (quy trình hiện có)',exact=True).click()
   page.locator('[data-form="rx"] [name="quantity"]').fill('2')
   page.locator('[data-form="rx"] [name="instructions"]').fill('Không dùng để điều trị')
   page.locator('[data-form="rx"] button.btn').click();done('Đã lưu đơn thuốc')
