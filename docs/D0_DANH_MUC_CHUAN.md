@@ -14,7 +14,7 @@ ICD-10: cờ dùng 0/1; giới tính để trống (chung), Nam hoặc Nữ. `re
 
 Bác sĩ tìm mã hoặc tên không dấu, chọn bệnh chính/bệnh kèm và lưu mã riêng; ô chẩn đoán chữ giữ nguyên. API kiểm mã còn dùng, vị trí chính, tử vong, giới tính và mã chi tiết thay thế; không khuyến khích bệnh chính chỉ cảnh báo. Hoàn tất lượt/khóa đơn M6 kiểm lại. Bắt buộc mã bệnh chính mặc định BẬT; Quản trị có thể tắt chạy song song, mỗi lần đổi ghi audit. Khi nâng cấp chưa có file ICD, phải nạp file trước hoặc chủ động bật chế độ song song; phần mềm không tự tắt. Hồ sơ cũ hiện “Chưa mã hóa”. Mã và tên lúc chọn in cùng mô tả chữ; đơn khóa/JSON giữ snapshot. Không tự sửa bản đã khóa.
 
-Dịch vụ chưa gắn mã: chọn dịch vụ và một/nhiều mã kỹ thuật đã nạp (gói dùng nhiều mã). Chỉ số chưa gắn mã: chọn mã dùng chung đã nạp; mã LOINC/thuộc tính lấy theo dòng đó. Không ghi vào cột giá. Phiếu M5 đã duyệt giữ mã và phiên bản trong snapshot, sửa danh mục không sửa phiếu.
+Dịch vụ chưa gắn mã: chọn dịch vụ và một/nhiều mã kỹ thuật đã nạp (gói dùng nhiều mã khi đánh dấu xác nhận dịch vụ gói; dịch vụ lẻ nhiều mã bị 422, loại liên kết gói suy ra từ số mã và lưu xác nhận trong audit, không đổi logic tính tiền). Chỉ số chưa gắn mã: chọn mã dùng chung đã nạp; mã LOINC/thuộc tính lấy theo dòng đó. Không ghi vào cột giá. Phiếu M5 đã duyệt giữ mã và phiên bản trong snapshot, sửa danh mục không sửa phiếu.
 
 ĐVHC: bảng chính thức độc lập mã TMS. Ghép duy nhất theo tên tỉnh + tên xã không dấu; mục mơ hồ/không có báo để Quản trị ghép tay bằng mã trong file đã nạp. Không đoán mã. Hồ sơ mới/cập nhật giữ mã chính thức song song; JSON M6 có official_province_code/official_commune_code; không thay bằng TMS khi mã chính thức trống. Hồ sơ cũ không bị tự gán hàng loạt.
 

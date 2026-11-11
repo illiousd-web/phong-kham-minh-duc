@@ -113,6 +113,7 @@ class CodesInput(BaseModel):
 class Links(BaseModel):
     model_config=ConfigDict(extra='forbid')
     codes:list[str]=Field(max_length=50)
+    package:StrictBool=False
 class CodeLink(BaseModel):
     code:str|None=None
 class Settings(BaseModel):
@@ -203,6 +204,7 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
     @app.put('/api/standards/services/{sid}')
     def link_service(sid:int,data:Links,u=Depends(principal)):
         require(u,'admin')
+        if len(set(data.codes))>1 and not data.package:raise HTTPException(422,'Dịch vụ lẻ chỉ gắn một mã; xác nhận dịch vụ gói để gắn nhiều mã')
         with db(True) as c:
             if not c.execute('SELECT 1 FROM service_catalog WHERE id=?',(sid,)).fetchone():raise HTTPException(404,'Không có dịch vụ')
             for code in data.codes:
@@ -210,7 +212,7 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
             old=[r[0] for r in c.execute('SELECT tech_code FROM service_tech_codes WHERE service_id=?',(sid,))]
             c.execute('DELETE FROM service_tech_codes WHERE service_id=?',(sid,))
             for code in sorted(set(data.codes)):c.execute('INSERT INTO service_tech_codes(service_id,tech_code) VALUES(?,?)',(sid,code))
-            audit(c,u,'service_standard_linked','catalog',sid,dump({'old':old,'new':data.codes}))
+            audit(c,u,'service_standard_linked','catalog',sid,dump({'old':old,'new':data.codes,'package':data.package}))
         return {'ok':True}
 
     @app.get('/api/standards/unlinked/lab-tests')
