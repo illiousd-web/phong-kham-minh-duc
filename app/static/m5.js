@@ -39,7 +39,7 @@ document.addEventListener('click',async event=>{const b=event.target.closest('[d
  if(action==='remove-ref'){b.closest('fieldset').remove();return}
  if(action==='open'){M5.review=false;M5.selected=id||(await M6.request('/lab/orders/'+b.dataset.order+'/reports',{method:'POST'})).id;}
  if(action==='submit'){if(b.closest('form').dataset.dirty)throw Error('Lưu các thay đổi trước khi gửi duyệt');await M6.request('/lab/reports/'+id+'/submit',{method:'POST',body:{version}});}
- if(action==='approve'){await M6.request('/lab/reports/'+id+'/approve',{method:'POST',body:{version}});b.closest('dialog').remove();M5.review=false;}
+ if(action==='approve'){const result=await M6.request('/lab/reports/'+id+'/approve',{method:'POST',body:{version}});const warning=(result.warnings||[]).join(' ');if(warning){scopeWarnings.set(M5.current.order_id,warning);notify(warning,true)}b.closest('dialog').remove();M5.review=false;}
  if(action==='adjust'){const reason=prompt('Lý do điều chỉnh (ít nhất 8 ký tự)');if(!reason)return;M5.selected=(await M6.request('/lab/reports/'+id+'/adjust',{method:'POST',body:{version,reason}})).id;}
  if(action==='prev')M5.offset=Math.max(0,M5.offset-30);if(action==='next')M5.offset+=30;
  await render();

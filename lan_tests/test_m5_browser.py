@@ -12,8 +12,12 @@ from app.database import db
 
 
 @pytest.mark.parametrize('width',[1366,390])
-def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,width):
+def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,request,width):
     suffix=secrets.token_hex(4);a,r,d,t=[clients[k] for k in ('admin','reception','doctor','technician')]
+    from app.practitioners import COLUMNS
+    old=next(x for x in a.get('/api/practitioners').json()['items'] if x['id']==IDS['doctor'])
+    request.addfinalizer(lambda:a.put('/api/practitioners/'+str(IDS['doctor']),json={k:old[k] for k in COLUMNS}))
+    assert a.put('/api/practitioners/'+str(IDS['doctor']),json={**{k:old[k] for k in COLUMNS},'practice_scopes':[]}).status_code==200
     test={'code':'BROWSER-'+suffix,'name':'Chỉ số giao diện giả lập '+suffix,'abbreviation':'FAKE','group_name':'hematology','result_type':'number','unit':'đv giả lập','decimals':1,'references':[{'sex':'chung','lower_value':'10','upper_value':'20'}]}
     tid=a.post('/api/lab/catalog',json=test).json()['id']
     with db(True) as c:
@@ -52,6 +56,7 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,w
         with page.expect_response(lambda x:x.url.endswith('/approve')) as response:page.locator('dialog [data-m5=approve]').click()
         assert response.value.status==200;settle(page)
         expect(page.locator('#doctor-results .m5-abnormal')).to_contain_text('21.5')
+        expect(page.locator(f'[data-scope-warning="{oid}"]')).to_contain_text('Xét nghiệm')
         page.locator('#doctor-results [data-m5=history]').click();expect(page.locator('dialog')).to_contain_text('21.5');page.locator('dialog [data-m5=close]').click()
         page.screenshot(path=str(target/f'ket-qua-{width}.png'),full_page=True);no_horizontal_scroll(page)
         page.locator('#logout').click();login('reception');go(page,'m5-queue');page.locator(f'[data-m5=open][data-id="{rid}"]').click();settle(page)
