@@ -129,7 +129,10 @@ class ReviewInput(BaseModel):
 
 class Links(ReviewInput):
     model_config=ConfigDict(extra='forbid')
-    codes:list[str]=Field(max_length=50)
+    mode:str="replace"
+    removed_codes:list[str]=Field(default_factory=list,max_length=50)
+    removed_pl02_ids:list[str]=Field(default_factory=list,max_length=50)
+    codes:list[str]=Field(default_factory=list,max_length=50)
     package:StrictBool=False
     pl02_ids:list[str]=Field(default_factory=list,max_length=50)
     @field_validator('pl02_ids')
@@ -290,16 +293,28 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
         if max(len(set(data.codes)),len(set(data.pl02_ids)))>1 and not data.package:raise HTTPException(422,'Dịch vụ lẻ chỉ gắn một mã; xác nhận dịch vụ gói để gắn nhiều mã')
         with db(True) as c:
             if not c.execute('SELECT 1 FROM service_catalog WHERE id=?',(sid,)).fetchone():raise HTTPException(404,'Không có dịch vụ')
-            for code in data.codes:
-                if not c.execute('SELECT 1 FROM tech_catalog WHERE code=? AND active=1',(code,)).fetchone():raise HTTPException(422,'Mã kỹ thuật không hợp lệ')
-            for stt in data.pl02_ids:
-                if not c.execute('SELECT 1 FROM tech_catalog_pl02 WHERE id=? AND active=1',(stt,)).fetchone():raise HTTPException(422,'STT PL02 không có hoặc ngừng dùng')
-            if data.pl02_ids and not data.codes:raise HTTPException(422,'Cần chọn mã PL01 trước khi gắn dòng PL02')
             old_pl02=[r[0] for r in c.execute('SELECT pl02_id FROM service_pl02_codes WHERE service_id=?',(sid,))]
             old=[r[0] for r in c.execute('SELECT tech_code FROM service_tech_codes WHERE service_id=?',(sid,))]
+            if data.mode not in ('add','remove','replace'):raise HTTPException(422,'Chế độ sửa không hợp lệ')
+            incoming=set(data.codes);incoming_pl02=set(data.pl02_ids)
+            if data.mode=='add':
+                data.codes=sorted(set(old)|incoming);data.pl02_ids=sorted(set(map(str,old_pl02))|incoming_pl02)
+            elif data.mode=='remove':
+                data.codes=sorted(set(old)-incoming);data.pl02_ids=sorted(set(map(str,old_pl02))-incoming_pl02)
+            else:
+                if 'codes' not in data.model_fields_set:data.codes=old
+                if 'pl02_ids' not in data.model_fields_set:data.pl02_ids=list(map(str,old_pl02))
+            removed=set(old)-set(data.codes);removed_pl02=set(map(str,old_pl02))-set(data.pl02_ids)
+            if removed or removed_pl02:
+                require_review(data)
+                if removed!=set(data.removed_codes) or removed_pl02!=set(data.removed_pl02_ids):raise HTTPException(422,'Phải xác nhận chính xác từng mã bị bỏ')
+            for code in set(data.codes)-set(old):
+                if not c.execute('SELECT 1 FROM tech_catalog WHERE code=? AND active=1',(code,)).fetchone():raise HTTPException(422,'Mã kỹ thuật không hợp lệ')
+            for pid in set(data.pl02_ids)-set(map(str,old_pl02)):
+                if not c.execute('SELECT 1 FROM tech_catalog_pl02 WHERE id=? AND active=1',(pid,)).fetchone():raise HTTPException(422,'Dòng PL02 không có hoặc ngừng dùng')
             if (old or old_pl02) and (set(old)!=set(data.codes) or set(map(str,old_pl02))!=set(data.pl02_ids)):
                 require_review(data)
-            for pid in data.pl02_ids:
+            for pid in set(data.pl02_ids)-set(map(str,old_pl02)):
                 matched=c.execute('SELECT pl01_code FROM tech_pl02_links WHERE pl02_id=? AND needs_review=0',(pid,)).fetchall()
                 valid=bool(set(r[0] for r in matched).intersection(data.codes))
                 uncertain=c.execute('SELECT 1 FROM tech_pl02_links WHERE pl02_id=? AND needs_review=1',(pid,)).fetchone() or not matched
@@ -315,13 +330,13 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
             for code in sorted(set(data.codes)):c.execute('INSERT INTO service_tech_codes(service_id,tech_code) VALUES(?,?)',(sid,code))
             c.execute('DELETE FROM service_pl02_codes WHERE service_id=?',(sid,))
             for stt in sorted(set(data.pl02_ids)):c.execute('INSERT INTO service_pl02_codes(service_id,pl02_id) VALUES(?,?)',(sid,stt))
-            audit(c,u,'service_standard_linked','catalog',sid,dump({'old':old,'new':data.codes,'package':data.package,'pl02_ids':data.pl02_ids,'old_pl02_ids':old_pl02,'reason':data.reason}))
+            audit(c,u,'service_standard_linked','catalog',sid,dump({'old':old,'new':data.codes,'package':data.package,'pl02_ids':data.pl02_ids,'old_pl02_ids':old_pl02,'reason':data.reason,'removed_codes':sorted(removed),'removed_pl02_ids':sorted(removed_pl02),'mode':data.mode}))
         return {'ok':True}
 
     @app.get('/api/standards/unlinked/lab-tests')
     def unlinked_tests(u=Depends(principal)):
         require(u,'admin')
-        with db() as c:return [dict(r) for r in c.execute('SELECT id,name FROM lab_tests WHERE shared_code IS NULL OR NOT EXISTS(SELECT 1 FROM shared_lab_codes s WHERE s.code=lab_tests.shared_code AND s.active=1) ORDER BY id')]
+        with db() as c:return [dict(r) for r in c.execute('SELECT id,name FROM lab_tests WHERE shared_code IS NULL OR shared_code='' ORDER BY id')]
 
     @app.put('/api/standards/lab-tests/{tid}')
     def link_test(tid:int,data:CodeLink,u=Depends(principal)):
