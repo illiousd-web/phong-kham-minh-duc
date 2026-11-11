@@ -53,7 +53,8 @@ document.addEventListener('input',event=>{const input=event.target,row=input.clo
  if(!['name','ingredient'].includes(input.name))return;clearTimeout(m6Timer);const seq=(m6Sequence.get(input)||0)+1;m6Sequence.set(input,seq);const result=input.closest('label').querySelector('.m6-suggestions');
  m6Timer=setTimeout(async()=>{try{const items=await api('/drugs?q='+encodeURIComponent(input.value)+'&limit=15');if(!input.isConnected||m6Sequence.get(input)!==seq)return;result.replaceChildren();for(const item of items){const button=document.createElement('button');button.type='button';button.className='ghost';button.textContent=input.name==='ingredient'?item.ingredient:item.name+' '+item.strength;if(!button.textContent.trim())continue;button.addEventListener('click',()=>{const values=input.name==='ingredient'?{ingredient:item.ingredient}:{name:item.name,ingredient:item.ingredient,brand_name:item.brand_name,strength:item.strength,unit:item.unit,route:item.route};row.querySelector('[name=allergy_acknowledged]').checked=false;row.querySelector('[name=allergy_reason]').value='';for(const [key,value]of Object.entries(values))row.querySelector(`[name="${key}"]`).value=value;result.replaceChildren();});result.append(button)}}catch(error){notify(error.message,true)}},180);
 });
-boot();
+// Wait for all deferred workflow scripts (including M5) before restoring a session.
+document.addEventListener('DOMContentLoaded',boot,{once:true});
 document.addEventListener('change',async event=>{const form=event.target.closest('[data-m6-form=rx]');if(form)form.dataset.dirty='1';if(event.target.matches('[data-m6-filter]')){M6.filter=event.target.value;M6.offset=0;await render()}});
 // Facility fields are also available in the existing Settings screen.
 const m6PreviousSettings=SCREENS.settings;
