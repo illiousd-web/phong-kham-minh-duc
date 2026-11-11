@@ -13,7 +13,7 @@ def mount_forms(app, db, principal, require, audit):
 
     def get_visit(c, vid):
         r=c.execute('''SELECT v.id AS visit_id,v.doctor_id,v.status AS visit_status,v.created_at,
-             v.chief_complaint,v.history,v.vitals,v.diagnosis,v.treatment,v.follow_up,
+             v.chief_complaint,v.history,v.vitals,v.primary_icd10,v.diagnosis_codes,v.diagnosis,v.treatment,v.follow_up,
              v.weight_kg,v.escort_name,v.escort_relationship,v.escort_phone,
              p.document_number,p.ethnicity,p.occupation,p.workplace,p.province,p.commune,p.address_detail,
              p.full_name,p.code,p.date_of_birth,p.sex,p.phone,p.citizen_id,p.address,
@@ -35,7 +35,7 @@ def mount_forms(app, db, principal, require, audit):
         if fmt not in ('docx','pdf'):raise HTTPException(422,'Chỉ hỗ trợ pdf hoặc docx')
         k={'reception':'intake','clinical':'visit'}.get(kind,kind)
         patient={key:ctx.get(key) for key in ('full_name','code','date_of_birth','sex','phone','citizen_id','address','document_number','ethnicity','occupation','workplace','province','commune','address_detail')}
-        visit={key:ctx.get(key) for key in ('chief_complaint','history','vitals','diagnosis','treatment','follow_up','created_at','weight_kg','escort_name','escort_relationship','escort_phone')}
+        visit={key:ctx.get(key) for key in ('chief_complaint','history','vitals','diagnosis','diagnosis_codes','primary_icd10','treatment','follow_up','created_at','weight_kg','escort_name','escort_relationship','escort_phone')}
         visit.update(id=ctx['visit_id'],doctor_id=ctx['doctor_id'],status=ctx['visit_status'])
         payload={'patient':patient,'visit':visit,'doctor_name':ctx['doctor_name'],
                  'service_label':'Khám ngoại trú (mô phỏng)','orders':ctx.get('orders',[]),'addenda':ctx.get('addenda',[])}

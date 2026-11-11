@@ -214,6 +214,8 @@ def report_data(c,r,o):
     items=[]
     for line in c.execute('SELECT * FROM lab_results WHERE report_id=? ORDER BY id',(r['id'],)):
         definition=json.loads(line['definition']);value=line['value']
+        standard=c.execute('SELECT s.* FROM lab_tests t JOIN shared_lab_codes s ON s.code=t.shared_code WHERE t.id=?',(line['test_id'],)).fetchone()
+        definition['standard_code']=dict(standard) if standard else None
         shown=value
         if value and definition['result_type']=='number':
             value=format(rounded_number(value,definition['decimals']),'.'+str(definition['decimals'])+'f')

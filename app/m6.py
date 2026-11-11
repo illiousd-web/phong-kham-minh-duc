@@ -212,6 +212,9 @@ def save_lines(c, rid, items, u, audit):
 def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
     errors = []
     def error(message, row=None, field=None): errors.append({'row': row, 'field': field, 'message': message})
+    from .d0 import diagnosis_guard
+    try:diagnosis_guard(c,visit)
+    except HTTPException as exc:error(exc.detail,field='primary_icd10')
     if not visit['diagnosis']: error('Cần chẩn đoán trước khi khóa đơn')
     if not practitioner['practice_license'] or not set(json.loads(practitioner['practice_scopes'] or '[]')).intersection(SCOPES):
         error('Người kê chưa có đủ giấy phép / phạm vi chuyên môn')
@@ -239,6 +242,7 @@ def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
 
 
 def payload(c, rx, code=None, locked_at=None):
+    from .d0 import diagnosis_text
     visit = dict(c.execute('SELECT * FROM visits WHERE id=?', (rx['visit_id'],)).fetchone())
     p = dict(c.execute('SELECT * FROM patients WHERE id=?', (visit['patient_id'],)).fetchone())
     practitioner = dict(c.execute('SELECT * FROM users WHERE id=?', (rx['doctor_id'],)).fetchone())
@@ -256,10 +260,10 @@ def payload(c, rx, code=None, locked_at=None):
             'patient': {'full_name': p['full_name'], 'document_type': p['document_type'],
                         'document_number': p['document_number'] or p['citizen_id'], 'date_of_birth': p['date_of_birth'],
                         'sex': p['sex'], 'weight_kg': visit['weight_kg'], 'health_insurance_number': '',
-                        'address': format_patient_address(p), 'contact_phone': (visit['escort_phone'] or p['phone']) if age is not None and age < 72 else p['phone'],
+                        'official_province_code':p['official_province_code'],'official_commune_code':p['official_commune_code'],'address': format_patient_address(p), 'contact_phone': (visit['escort_phone'] or p['phone']) if age is not None and age < 72 else p['phone'],
                         'age_months': age if age is not None and age < 72 else None,
                         'escort_name': visit['escort_name'] if age is not None and age < 72 else None},
-            'encounter': {'visit_id': visit['id'], 'diagnosis': visit['diagnosis']},
+            'encounter': {'visit_id': visit['id'], 'diagnosis': diagnosis_text(visit),'diagnosis_description':visit['diagnosis'],'primary_icd10':visit['primary_icd10'],'diagnosis_codes':json.loads(visit['diagnosis_codes'])},
             'prescriber': {'name': printed_name(c, rx['doctor_id']), 'practice_license': practitioner['practice_license'],
                            'practice_scopes': json.loads(practitioner['practice_scopes'] or '[]')},
             'items': items, 'advice': {k: rx[k] for k in ('lifestyle_advice', 'follow_up_advice', 'purchase_advice')},

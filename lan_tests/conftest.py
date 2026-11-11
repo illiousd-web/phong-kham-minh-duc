@@ -32,6 +32,8 @@ from app.accounts import AccountInput,create_account
 PASSWORDS={}
 IDS={}
 with db(True) as c:
+    # Legacy suites explicitly run in D0 parallel mode; D0 cases enable the guard.
+    c.execute("INSERT INTO prescription_settings(key,value) VALUES('require_primary_icd10','false') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
     for role in ('admin','manager','reception','doctor','technician','pharmacy','cashier','nurse'):
         PASSWORDS[role]=secrets.token_urlsafe(24)
         IDS[role]=create_account(c,AccountInput(username='test_'+role,full_name='Nhân viên giả lập '+role,password=PASSWORDS[role],roles=[role]),pw_hash)
