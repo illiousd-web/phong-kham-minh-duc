@@ -34,7 +34,7 @@ def test_only_count_polling_for_21_minutes_still_expires():
                 assert after == shifted, 'lệnh đếm không được gia hạn phiên'
                 if minute < 20:
                     assert response.status_code == 200, (minute, response.text)
-                    assert set(response.json()) == {'reception' if role == 'reception' else 'doctor'}
+                    assert set(response.json()) == ({'reception'} if role == 'reception' else {'doctor','lab_pending_review'})
                 else:
                     assert response.status_code == 401, (minute, response.text)
             assert client.get('/api/me').status_code == 401
