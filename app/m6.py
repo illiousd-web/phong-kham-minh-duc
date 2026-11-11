@@ -2,7 +2,6 @@
 import json
 import re
 import secrets
-import string
 import unicodedata
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -10,7 +9,7 @@ from io import BytesIO
 from typing import Literal
 
 from fastapi import Depends, HTTPException, Query, File, UploadFile, Form, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, StrictBool
 
 from .administrative import months_old
 from .domain import ensure_open
@@ -80,11 +79,13 @@ class LineInput(BaseModel):
     timing: str = Field(default='', max_length=180)
     days: str = Field(default='', max_length=80)
     notes: str = Field(default='', max_length=500)
+    allergy_acknowledged: StrictBool = False
+    allergy_reason: str = Field(default='', max_length=500)
 
     @field_validator('*', mode='before')
     @classmethod
     def text(cls, v):
-        return str(v).strip() if isinstance(v, (str, int, float)) else v
+        return v if isinstance(v, bool) else str(v).strip() if isinstance(v, (str, int, float)) else v
 
 
 class RxInput(BaseModel):
@@ -139,11 +140,50 @@ def lines(c, rid):
     return [dict(id=r['id'], drug_id=r['drug_id'], **json.loads(r['content'])) for r in c.execute('SELECT * FROM clinical_prescription_items WHERE prescription_id=? ORDER BY position', (rid,))]
 
 
+def allergy_matches(allergies, line):
+    """Conservative text matching, not inference about drug families or cross-allergy."""
+    terms = [fold(x) for x in re.split(r'[+;,\n|]', allergies or '') if fold(x)]
+    candidates = components(line.get('ingredient', '')) + [line.get('name', ''), line.get('brand_name', '')]
+    def contains(text, term):
+        return bool(term and re.search(r'(?<!\w)'+re.escape(term)+r'(?!\w)', text))
+    return sorted({term for term in terms for candidate in candidates
+                   if fold(candidate) and (contains(fold(candidate), term) or contains(term, fold(candidate)))})
+
+
+def patient_for_rx(c, rid):
+    return c.execute('SELECT p.* FROM patients p JOIN visits v ON v.patient_id=p.id JOIN clinical_prescriptions r ON r.visit_id=v.id WHERE r.id=?', (rid,)).fetchone()
+
+
+def allergy_warning(row, matches):
+    return {'row': row, 'field': 'ingredient', 'message': 'Trùng dị ứng thuốc: '+', '.join(matches)}
+
+
+def safe_reason(reason, patient):
+    for key in ('document_number', 'citizen_id'):
+        if patient[key]: reason = reason.replace(patient[key], '[đã che số giấy tờ]')
+    return re.sub(r'(?<![A-Za-z0-9])(?:[A-Za-z]{1,3}[0-9]{5,}|[0-9]{6,})(?![A-Za-z0-9])', '[đã che chuỗi định danh]', reason)
+
+
+def replacement_parent(c, rx, exclude_id=0):
+    old = c.execute('SELECT * FROM clinical_prescriptions WHERE id=?', (rx['replaces_id'],)).fetchone()
+    if not old or old['status'] != 'locked':
+        raise HTTPException(409, 'Đơn cũ đã hủy hoặc không còn được thay thế')
+    if c.execute("SELECT 1 FROM clinical_prescriptions WHERE replaces_id=? AND id<>? AND status IN ('draft','locked')", (old['id'], exclude_id)).fetchone():
+        raise HTTPException(409, 'Đơn cũ đã có đơn thay thế đang nháp/đã khóa')
+    return old
+
+
 def save_lines(c, rid, items, u, audit):
     c.execute('DELETE FROM clinical_prescription_items WHERE prescription_id=?', (rid,))
-    warnings = []; seen = set()
+    warnings = []; seen = set(); allergy_warnings = []
+    patient = patient_for_rx(c, rid)
     for pos, item in enumerate(items, 1):
         value = item.model_dump()
+        matches = allergy_matches(patient['allergies'], value)
+        value['allergy_basis'] = matches
+        if matches:
+            warning = allergy_warning(pos, matches)
+            allergy_warnings.append(warning); warnings.append('Dòng '+str(pos)+': '+warning['message'])
         value['quantity'] = value['quantity'] or quantity(value['dose'], value['frequency'], value['days'])
         key, strength = fold(item.name), fold(item.strength)
         drug = c.execute('SELECT * FROM drugs WHERE name_key=? AND strength_key=?', (key, strength)).fetchone()
@@ -166,7 +206,7 @@ def save_lines(c, rid, items, u, audit):
             if k in seen: warnings.append(f'Dòng {pos}: trùng hoạt chất {active}')
             seen.add(k)
         c.execute('INSERT INTO clinical_prescription_items(prescription_id,drug_id,position,content) VALUES(?,?,?,?)', (rid, did, pos, dump(value)))
-    return list(dict.fromkeys(warnings))
+    return list(dict.fromkeys(warnings)), allergy_warnings
 
 
 def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
@@ -181,6 +221,9 @@ def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
     if age is not None and age < 72 and (not visit['weight_kg'] or not (visit['escort_name'] or '').strip()):
         error('Trẻ dưới 72 tháng cần cân nặng và họ tên người đưa trẻ')
     for pos, line in enumerate(items, 1):
+        matches = allergy_matches(patient['allergies'], line)
+        if matches and not (line.get('allergy_acknowledged') is True and len(line.get('allergy_reason', '').strip()) >= 8 and line.get('allergy_basis') == matches):
+            error('Trùng dị ứng thuốc; cần xác nhận Đã biết dị ứng, vẫn kê và lý do ít nhất 8 ký tự', pos, 'allergy_reason')
         active = components(line['ingredient'])
         if not active: error('Bổ sung hoạt chất để in đúng tên theo TT 26/2025', pos, 'ingredient')
         if len(active) > 1 and not line['brand_name']: error('Thuốc nhiều hoạt chất phải có tên thương mại', pos, 'brand_name')
@@ -223,11 +266,14 @@ def payload(c, rx, code=None, locked_at=None):
             'created_at': rx['created_at'], 'locked_at': locked_at or rx['locked_at'], 'errors': errors}
 
 
+CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+
 def allocate_code(c, facility_code):
     if not facility_code:
         return None
     for _ in range(128):
-        code = facility_code+''.join(secrets.choice(string.ascii_lowercase+string.digits) for _ in range(7))+'-C'
+        code = facility_code+''.join(secrets.choice(CODE_ALPHABET) for _ in range(7))+'-C'
         if not c.execute('SELECT 1 FROM clinical_prescriptions WHERE local_code=?', (code,)).fetchone():
             return code
     raise HTTPException(503, 'Chưa cấp được mã đơn duy nhất; thử lại')
@@ -310,13 +356,14 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             visit = visit_access(c, u, data.visit_id, clinical=True); ensure_open(visit)
             if data.replaces_id:
                 old = access(c, data.replaces_id, u, True)
+                replacement_parent(c, {'replaces_id': data.replaces_id})
                 if old['visit_id'] != data.visit_id or not old['locked_at']: raise HTTPException(422, 'Đơn thay thế phải thuộc cùng lượt và đã từng khóa')
             c.execute('INSERT INTO clinical_prescriptions(visit_id,doctor_id,lifestyle_advice,follow_up_advice,purchase_advice,replaces_id,created_at,local_code) VALUES(?,?,?,?,?,?,?,?)',
                       (data.visit_id, u['id'], data.lifestyle_advice, data.follow_up_advice, data.purchase_advice, data.replaces_id, now(), allocate_code(c, settings(c)['clinic_facility_code'])))
             rid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
-            warnings = save_lines(c, rid, data.items, u, audit)
+            warnings, allergy_warnings = save_lines(c, rid, data.items, u, audit)
             audit(c, u, 'clinical_rx_created', 'clinical_prescription', rid)
-        return {'id': rid, 'version': 0, 'status': 'draft', 'warnings': warnings}
+        return {'id': rid, 'version': 0, 'status': 'draft', 'warnings': warnings, 'allergy_warnings': allergy_warnings}
 
     @app.put('/api/clinical-prescriptions/{rid}')
     def update(rid: int, data: RxInput, u=Depends(principal)):
@@ -325,10 +372,10 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             if rx['status'] != 'draft': raise HTTPException(409, 'Đơn đã khóa/hủy; lập đơn mới thay thế')
             if rx['version'] != data.version: raise HTTPException(409, 'Đơn đã thay đổi; tải lại')
             if rx['visit_id'] != data.visit_id or rx['replaces_id'] != data.replaces_id: raise HTTPException(422, 'Không được đổi lượt hay liên kết thay thế')
-            warnings = save_lines(c, rid, data.items, u, audit)
+            warnings, allergy_warnings = save_lines(c, rid, data.items, u, audit)
             c.execute('UPDATE clinical_prescriptions SET lifestyle_advice=?,follow_up_advice=?,purchase_advice=?,version=version+1 WHERE id=?', (data.lifestyle_advice, data.follow_up_advice, data.purchase_advice, rid))
             audit(c, u, 'clinical_rx_updated', 'clinical_prescription', rid)
-        return {'id': rid, 'version': data.version+1, 'warnings': warnings}
+        return {'id': rid, 'version': data.version+1, 'warnings': warnings, 'allergy_warnings': allergy_warnings}
 
     @app.get('/api/clinical-prescriptions')
     def listing(status: Literal['draft', 'locked', 'cancelled'] | None = None, visit_id: int | None = None,
@@ -350,19 +397,41 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         with db() as c:
             rx = access(c, rid, u)
             # Snapshot contains identifiers: detail endpoint never exposes it.
-            return {**{k: v for k, v in rx.items() if k != 'snapshot'}, 'items': lines(c, rid), 'printed_items': json.loads(rx['snapshot'])['items'] if rx['snapshot'] else None, 'integration_status': 'CHƯA LIÊN THÔNG'}
+            items = lines(c, rid); patient = patient_for_rx(c, rid); warnings = []
+            for pos, item in enumerate(items, 1):
+                matches = allergy_matches(patient['allergies'], item)
+                if matches:
+                    warning = allergy_warning(pos, matches); warnings.append(warning)
+                    item['allergy_message'] = warning['message']
+                if item.get('allergy_basis') != matches: item['allergy_acknowledged'] = False
+            return {**{k: v for k, v in rx.items() if k != 'snapshot'}, 'items': items, 'allergy_warnings': warnings, 'printed_items': json.loads(rx['snapshot'])['items'] if rx['snapshot'] else None, 'integration_status': 'CHƯA LIÊN THÔNG'}
 
     @app.post('/api/clinical-prescriptions/{rid}/lock')
     def lock(rid: int, data: Version, u=Depends(principal)):
         with db(True) as c:
             rx = access(c, rid, u, True); ensure_open(visit_access(c, u, rx['visit_id'], clinical=True))
             if rx['status'] != 'draft' or rx['version'] != data.version: raise HTTPException(409, 'Đơn đã đổi/khóa/hủy; tải lại')
+            parent = replacement_parent(c, rx, rid) if rx['replaces_id'] else None
             stamp = now(); clinic = settings(c)
             prefix = clinic['clinic_facility_code']
-            code = rx['local_code'] if prefix and rx['local_code'] and rx['local_code'].startswith(prefix) else allocate_code(c, prefix)
+            existing = rx['local_code'] or ''
+            code = existing if prefix and len(existing) == 14 and existing.startswith(prefix) and existing.endswith('-C') and set(existing[5:12]) <= set(CODE_ALPHABET) else allocate_code(c, prefix)
             value = payload(c, rx, code, stamp)
             if value['errors']: raise HTTPException(422, {'message': 'Chưa đủ điều kiện khóa đơn', 'errors': value['errors']})
             value.pop('errors')
+            patient = patient_for_rx(c, rid)
+            for item in value['items']:
+                if allergy_matches(patient['allergies'], item):
+                    item['allergy_confirmed_by'] = u['id']; item['allergy_confirmed_at'] = stamp
+                    content = {k: v for k, v in item.items() if k not in ('id','drug_id','toxic','display_name')}
+                    c.execute('UPDATE clinical_prescription_items SET content=? WHERE id=?', (dump(content), item['id']))
+                    audit(c, u, 'clinical_rx_allergy_acknowledged', 'clinical_prescription', rid,
+                          dump({'row': c.execute('SELECT position FROM clinical_prescription_items WHERE id=?', (item['id'],)).fetchone()[0], 'reason': safe_reason(item['allergy_reason'], patient)}), details_limit=3000)
+            if parent:
+                reason = 'Thay thế bởi đơn '+(code or '#'+str(rid))
+                c.execute("UPDATE clinical_prescriptions SET status='cancelled',version=version+1,cancellation_reason=?,cancelled_at=? WHERE id=?", (reason, stamp, parent['id']))
+                c.execute("UPDATE prescription_outbox SET status='cancelled' WHERE prescription_id=?", (parent['id'],))
+                audit(c, u, 'clinical_rx_replaced', 'clinical_prescription', parent['id'], dump({'replacement_id': rid, 'code': code}))
             c.execute("UPDATE clinical_prescriptions SET status='locked',version=version+1,local_code=?,locked_at=?,snapshot=? WHERE id=?", (code, stamp, dump(value), rid))
             c.execute('INSERT INTO prescription_outbox(prescription_id,schema_version,payload,created_at) VALUES(?,?,?,?)', (rid, value['schema_version'], dump(value), stamp))
             audit(c, u, 'clinical_rx_locked', 'clinical_prescription', rid)
@@ -398,6 +467,9 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         with db(True) as c:
             rx = access(c, rid, u)
             value = json.loads(rx['snapshot']) if rx['snapshot'] else payload(c, rx)
+            if rx['status'] == 'cancelled':
+                replacement = c.execute('SELECT id,local_code FROM clinical_prescriptions WHERE replaces_id=? AND locked_at IS NOT NULL ORDER BY id LIMIT 1', (rid,)).fetchone()
+                if replacement: value['replaced_by_code'] = replacement['local_code'] or '#'+str(replacement['id'])
             content = render(value, rx['status'], fmt)
             audit(c, u, 'clinical_rx_printed', 'clinical_prescription', rid, fmt)
         mime = 'application/pdf' if fmt == 'pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'

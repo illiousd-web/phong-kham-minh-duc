@@ -25,6 +25,7 @@ def test_m6_missing_ingredient_complete_on_row_and_lock(https_server,clients,req
     p=r.post('/api/patients',json={'full_name':'Người giả lập M6 giao diện '+str(width),'date_of_birth':'1990-01-01','sex':'Nữ','phone':'0900000000'}).json()['id']
     vid=r.post('/api/visits',json={'patient_id':p,'doctor_id':IDS['doctor'],'service_id':SERVICE}).json()['id']
     assert d.put(f'/api/visits/{vid}/clinical',json={'version':0,'diagnosis':'Chẩn đoán giả lập giao diện'}).status_code==200
+    assert d.put(f'/api/patients/{p}/allergies',json={'allergies':'Amoxicillin'}).status_code==200
     origin,certdir=https_server
     cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
     pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
@@ -47,10 +48,20 @@ def test_m6_missing_ingredient_complete_on_row_and_lock(https_server,clients,req
         expect(form.locator('.m6-row')).to_have_class('m6-row fields m6-invalid')
         expect(form.locator('[name=ingredient]')).to_have_attribute('aria-invalid','true')
         expect(form).to_contain_text('Bổ sung hoạt chất để in đúng tên theo TT 26/2025')
-        form.locator('[name=ingredient]').fill('Hoạt chất mới giả lập')
+        form.locator('[name=ingredient]').fill('Amoxicillin + Acid clavulanic')
+        form.locator('[name=brand_name]').fill('Tên thương mại giả lập')
         with page.expect_response(lambda x:'/api/clinical-prescriptions/' in x.url and x.request.method=='PUT') as response:form.locator('button.btn').click()
         assert response.value.status==200;settle(page)
         form=page.locator('[data-m6-form=rx]')
+        with page.expect_response(lambda x:x.url.endswith('/lock')) as response:form.locator('[data-m6=lock]').click()
+        assert response.value.status==422
+        expect(form).to_contain_text('Trùng dị ứng thuốc')
+        form.locator('[name=allergy_acknowledged]').check()
+        form.locator('[name=allergy_reason]').fill('Đã đánh giá nguy cơ giả lập')
+        with page.expect_response(lambda x:'/api/clinical-prescriptions/' in x.url and x.request.method=='PUT') as response:form.locator('button.btn').click()
+        assert response.value.status==200;settle(page)
+        form=page.locator('[data-m6-form=rx]')
+        expect(form.locator('[name=allergy_acknowledged]')).to_be_checked()
         with page.expect_response(lambda x:x.url.endswith('/lock')) as response:form.locator('[data-m6=lock]').click()
         assert response.value.status==200;settle(page)
         expect(page.locator('#doctor-rx')).to_contain_text('Đã khóa')

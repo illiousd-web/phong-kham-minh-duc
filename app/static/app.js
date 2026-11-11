@@ -52,7 +52,7 @@ const LABEL={restricted:'Theo phân quyền',requested:'Chờ bác sĩ duyệt c
  manual_price_entered:'Nhập giá khoản phải thu',manual_price_change_requested:'Đề nghị sửa giá nhập tay',manual_price_change_approved:'Duyệt sửa giá nhập tay',manual_price_change_rejected:'Từ chối sửa giá nhập tay',charge:'Khoản phải thu',procedure:'Thủ thuật',unpriced:'CHƯA CÓ GIÁ',consultation:'Khám',service:'Dịch vụ',service_import:'Lần nhập bảng giá',service_price_imported:'Đổi giá từ Excel',service_prices_imported:'Nhập bảng giá từ Excel',
  lab:'Xét nghiệm',ultrasound:'Siêu âm',xray:'X-quang',ecg:'Điện tim',cash:'Tiền mặt',transfer:'Chuyển khoản',discount:'Giảm phí',refund:'Hoàn tiền'};
 Object.assign(LABEL,{patient_catalog_seeded:'Nạp danh mục có sẵn',patient_document_viewed:'Xem đủ số giấy tờ',patient_administrative_updated:'Sửa hồ sơ hành chính',patient_catalog_imported:'Nạp danh mục hồ sơ',child_visit_updated:'Sửa cân nặng và người đưa trẻ',practitioner_updated:'Sửa hồ sơ người hành nghề',practitioner_scope_warning:'Cảnh báo phạm vi chuyên môn',patient:'Người bệnh',user:'Nhân viên',catalog:'Danh mục'});
-Object.assign(LABEL,{clinical_rx_created:'Tạo đơn thuốc nháp',clinical_rx_updated:'Sửa đơn thuốc nháp',clinical_rx_locked:'Khóa đơn thuốc',clinical_rx_cancelled:'Hủy đơn thuốc',clinical_rx_printed:'In / in lại đơn thuốc',clinical_rx_json_exported:'Xuất dữ liệu đơn thuốc',clinical_prescription:'Đơn thuốc',prescription_settings:'Cài đặt đơn thuốc',prescription_settings_changed:'Đổi thông tin cơ sở kê đơn',drug:'Thuốc',drug_updated:'Rà soát thuốc',drug_merged:'Gộp danh mục thuốc',drugs_imported:'Nhập danh mục thuốc'});
+Object.assign(LABEL,{clinical_rx_replaced:'Vô hiệu đơn cũ do thay thế',clinical_rx_allergy_acknowledged:'Xác nhận vẫn kê khi đã biết dị ứng',clinical_rx_created:'Tạo đơn thuốc nháp',clinical_rx_updated:'Sửa đơn thuốc nháp',clinical_rx_locked:'Khóa đơn thuốc',clinical_rx_cancelled:'Hủy đơn thuốc',clinical_rx_printed:'In / in lại đơn thuốc',clinical_rx_json_exported:'Xuất dữ liệu đơn thuốc',clinical_prescription:'Đơn thuốc',prescription_settings:'Cài đặt đơn thuốc',prescription_settings_changed:'Đổi thông tin cơ sở kê đơn',drug:'Thuốc',drug_updated:'Rà soát thuốc',drug_merged:'Gộp danh mục thuốc',drugs_imported:'Nhập danh mục thuốc'});
 LABEL.results_ready='Đã có kết quả';
 LABEL.patient_allergies_updated='Sửa dị ứng thuốc';
 LABEL.patient_history_viewed='Xem lịch sử khám';
@@ -447,6 +447,8 @@ async function managerScreen(){
 
 // ---------- Quản trị và cài đặt ----------
 function auditDetails(entry){
+ if(entry.event==='clinical_rx_replaced'){try{const d=JSON.parse(entry.details);return 'Thay thế bởi đơn '+(d.code||'#'+d.replacement_id)}catch{return 'Đơn đã được thay thế'}}
+ if(entry.event==='clinical_rx_allergy_acknowledged'){try{const d=JSON.parse(entry.details);return 'Dòng '+d.row+': '+d.reason}catch{return 'Xác nhận dị ứng thuốc'}}
  if(entry.event==='prescription_settings_changed'){try{const d=JSON.parse(entry.details);return 'Mã cơ sở: '+(d.old_facility_code||'Chưa khai')+' → '+(d.new_facility_code||'Chưa khai')}catch{return 'Đổi cài đặt đơn thuốc'}}
  if(entry.event==='drug_updated')return 'Cập nhật thông tin danh mục thuốc';
  if(entry.event==='drug_merged'){try{return 'Gộp vào mục #'+JSON.parse(entry.details).keep_id}catch{return 'Gộp danh mục thuốc'}}

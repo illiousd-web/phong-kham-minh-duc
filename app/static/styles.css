@@ -104,3 +104,5 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 .m6-invalid{border:2px solid #b3261e;background:#fff4f3}.m6-error,.m6-errors{color:#a51e18;font-weight:600}
 .m6-suggestions{display:flex;flex-direction:column;max-height:180px;overflow-y:auto}.m6-row input{max-width:100%;min-width:0}
 @media(max-width:600px){.m6-row.fields{grid-template-columns:1fr}.m6-row button{white-space:normal}}
+
+.m6-allergy{border:2px solid #b3261e;background:#fff4f3}

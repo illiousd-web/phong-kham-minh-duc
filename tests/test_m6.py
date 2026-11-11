@@ -57,3 +57,15 @@ def test_m6_migration_additive_idempotent(tmp_path):
     assert c.execute('SELECT version FROM schema_migrations ORDER BY version').fetchall()==[(7,),(8,)]
     for table in TABLES:assert c.execute('SELECT COUNT(*) FROM '+table).fetchone()[0]==0
     c.close()
+
+
+def test_replacement_atomic_chain_and_allergy_acknowledgement():
+    from tests.m6_followup_cases import check_followup
+    clients,ids=context();check_followup(clients,ids,db,1)
+
+
+def test_allergy_matching_by_component_case_and_accents():
+    from app.m6 import allergy_matches
+    assert allergy_matches('Amoxicillin',{'ingredient':'AMOXICILLIN + Acid clavulanic'})==['amoxicillin']
+    assert allergy_matches('Ámoxicillin',{'name':'Thuốc AMOXICILLIN 500 mg'})==['amoxicillin']
+    assert not allergy_matches('Amoxicillin',{'ingredient':'Pseudoamoxicillin'})

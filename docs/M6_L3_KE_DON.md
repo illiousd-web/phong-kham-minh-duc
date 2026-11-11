@@ -53,3 +53,11 @@ Snapshot khóa lưu thông tin người bệnh, người kê, cơ sở, thuốc 
 ## Kiểm thử
 
 SQLite và PostgreSQL: nâng cấp dữ liệu cũ, rollback giao dịch khi nhập Excel lỗi, snapshot bất biến khi khóa/gộp/sửa danh mục, tìm không dấu, chống trùng, số lượng tự tính và sửa tay, điều kiện khóa, mã duy nhất 14 ký tự, phân quyền tại API, audit không có số giấy tờ, xuất JSON không gọi mạng, sao lưu/khôi phục chính xác. Word/PDF phải đủ mục 4.1–4.8. Chromium 109 kiểm 1366px/390px; COUNT và danh sách dùng cùng điều kiện SQL. Giữ nguyên tiêu chí C4, C5, M0 và 5 job CI.
+
+## Sửa tiếp PR #17: thay thế và dị ứng
+
+Không thêm migration, bảng hoặc cột. Khi tạo đơn thay thế, API trả 409 nếu đơn gốc đã hủy/không còn khóa hoặc đã có đơn thay thế khác đang nháp/khóa. Giao dịch ghi hiện có tuần tự hóa các yêu cầu cạnh tranh trên SQLite/PostgreSQL. Khi khóa, API kiểm lại điều kiện, hủy đơn cũ với lý do Thay thế bởi đơn <mã mới>, đổi outbox cũ thành cancelled và ghi audit cả hai đơn trong cùng giao dịch. Lỗi kiểm hoặc lỗi ghi outbox làm quay lại toàn bộ; bản in cũ có dấu ĐƠN ĐÃ HỦY – ĐÃ ĐƯỢC THAY THẾ BỞI <mã mới>. Nội dung snapshot cũ không bị viết lại.
+
+Dị ứng M0 được so không dấu/không phân biệt hoa thường với hoạt chất, tên thuốc và tên thương mại; hoạt chất tách bằng dấu +. Đây là đối chiếu chữ bảo thủ, không suy đoán dị ứng chéo theo nhóm dược lý. Lưu nháp trả cảnh báo có số dòng và hiện đỏ. Khóa kiểm lại dị ứng hiện tại: mỗi dòng trùng cần tick **Đã biết dị ứng, vẫn kê** và lý do ít nhất 8 ký tự. `allergy_acknowledged`, `allergy_reason`, cơ sở đối chiếu và thông tin xác nhận lưu trong content JSON/snapshot; audit lý do được che số giấy tờ. Nếu dị ứng M0 thay đổi, xác nhận cũ không tự áp dụng cho nội dung trùng mới; đổi tên/hoạt chất hoặc tạo đơn thay thế trên giao diện bỏ tick cũ để bác sĩ xác nhận lại.
+
+Bảy ký tự ngẫu nhiên mới dùng `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`, không O/0/I/1. Mã đã khóa không bị sửa. Nháp có mã kiểu cũ được cấp lại đúng bộ ký tự khi khóa.

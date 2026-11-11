@@ -18,7 +18,7 @@ def content(p, status):
             ('Tên đơn vị', f['clinic_name']), ('Địa chỉ cơ sở', f['clinic_address']), ('Điện thoại cơ sở', f['clinic_phone'])]
     head.append(('', 'ĐƠN THUỐC'))
     if status == 'draft': head.append(('', 'NHÁP – CHƯA CÓ GIÁ TRỊ'))
-    if status == 'cancelled': head.append(('', 'ĐƠN ĐÃ HỦY – KHÔNG CÓ GIÁ TRỊ'))
+    if status == 'cancelled': head.append(('', 'ĐƠN ĐÃ HỦY – ĐÃ ĐƯỢC THAY THẾ BỞI '+p['replaced_by_code'] if p.get('replaced_by_code') else 'ĐƠN ĐÃ HỦY – KHÔNG CÓ GIÁ TRỊ'))
     head += [('Họ tên', person['full_name']), ('Số định danh/CCCD/căn cước/hộ chiếu (nếu có)', person['document_number'] or ''),
              ('Ngày sinh', fmt_date(person['date_of_birth'])), ('Cân nặng', str(person['weight_kg'])+' kg' if person['weight_kg'] else ''),
              ('Giới tính', person['sex']), ('Mã số BHYT', ''), ('Nơi thường trú/tạm trú/ở hiện tại', person['address']),
