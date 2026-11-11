@@ -41,14 +41,16 @@ def test_d0_excel_mapping_row_errors_and_metadata_proof():
     from openpyxl import Workbook
     clients,_=context();a=clients['admin'];b=Workbook();w=b.active
     from app.d0 import COLUMNS,LABELS
-    headers=[LABELS[x] for x in COLUMNS['icd10']];headers[0]='Mã từ file giả lập';w.append(['Tệp giả lập']);w.append(headers);w.append(['FAKE-MAP','Tên giả lập','','','0','0','0','','0',''])
+    headers=[LABELS[x] for x in COLUMNS['icd10']];headers[0]='Mã từ file giả lập';w.title='MaGoc';b.create_sheet('GhiChu');w.append(['Tệp giả lập']);w.append(headers);w.append(['FAKE-MAP','Tên giả lập','','','X','0','0','','0',''])
     out=io.BytesIO();b.save(out);content=out.getvalue()
     meta={'document_number':'Giả lập','document_date':'2026-01-01','source':'Nguồn giả lập','version':'fake'}
-    data={'metadata':json.dumps(meta),'mapping':json.dumps({'code':headers[0]}),'header_row':'2'}
+    data={'metadata':json.dumps(meta),'mapping':json.dumps({'__sheet':'MaGoc','code':headers[0],'not_primary':{'column':headers[4],'values':{'X':'1'}}}),'header_row':'2'}
     def post(preview=True,proof='',**changes):return a.post('/api/standards/icd10/import',files={'file':('fake.xlsx',content)},data={**data,'preview':str(preview).lower(),'proof':proof,**changes})
     pre=post();assert pre.status_code==200,pre.text
+    assert post(mapping=json.dumps({'__sheet':'MaGoc','code':{'column':headers[0],'values':{'FAKE-MAP':'MA-TU-TAO'}}})).status_code==422
     assert post(False,pre.json()['fingerprint'],metadata=json.dumps({**meta,'version':'changed'})).status_code==422
     assert post(False,pre.json()['fingerprint']).status_code==200
+    with db() as c:assert c.execute("SELECT not_primary FROM icd10 WHERE code='FAKE-MAP'").fetchone()[0]==1
     w.append(['FAKE-MAP','Dòng trùng giả lập']);out=io.BytesIO();b.save(out);content=out.getvalue()
     with db() as c:before=c.execute('SELECT COUNT(*) FROM catalog_imports').fetchone()[0]
     error=post();assert error.status_code==422 and error.json()['detail']['errors'][0]['row']==4
