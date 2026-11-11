@@ -4,7 +4,7 @@ Migration 10 chỉ thêm danh mục chuẩn, lịch sử nạp và các liên k�
 
 ## Nhập file gốc
 
-Quản trị → Danh mục → D0. Chọn loại, số văn bản, ngày (dd/mm/yyyy), nguồn, phiên bản, dòng tiêu đề; ánh xạ JSON trường nội bộ → tiêu đề thực tế của file gốc. Mẫu CSV UTF-8 rỗng ở `templates/nhap_lieu/d0_*.csv`; Excel .xlsx cũng nhận (tệp nhiều sheet chọn bằng `"__sheet":"Tên sheet gốc"` trong ánh xạ), không công thức/ô lỗi. Tệp tối đa 8 MB, Excel giải nén tối đa 20 MB. Mã phải là ô chữ (đặc biệt 7 chữ số CLS và số 0 đầu). Không tự sinh mã. Chỉ nhập tệp của cơ quan ban hành đã đối chiếu; dữ liệu giả lập dùng riêng cho test.
+Quản trị → Danh mục → D0. Chọn loại, số văn bản, ngày (dd/mm/yyyy), nguồn, phiên bản, dòng tiêu đề; ánh xạ JSON trường nội bộ → tiêu đề thực tế của file gốc. Mẫu CSV UTF-8 rỗng ở `templates/nhap_lieu/d0_*.csv`; Excel .xlsx cũng nhận (tệp nhiều sheet chọn bằng `"__sheet":"Tên sheet gốc"` trong ánh xạ), không công thức/ô lỗi. Tệp tối đa 5 MB (giữ trong giới hạn toàn bộ yêu cầu 6 MB), Excel giải nén tối đa 20 MB. Mã phải là ô chữ (đặc biệt 7 chữ số CLS và số 0 đầu). Không tự sinh mã. Chỉ nhập tệp của cơ quan ban hành đã đối chiếu; dữ liệu giả lập dùng riêng cho test.
 
 Bấm Xem trước; lỗi báo dòng/cột, không ghi dở. Chỉ sau xem trước thành công mới hiện xác nhận. Máy chủ ràng buộc SHA-256 với bytes, loại, metadata, ánh xạ, dòng tiêu đề và bằng chứng đã xem của cùng tài khoản. Ghi thiếu/sai mã, đổi tệp/nguồn/ánh xạ đều 422. Mỗi lần nạp lưu nguồn, số/ngày văn bản, phiên bản, hash, người và thời điểm; ghi audit. Nạp là phiên bản đầy đủ: cập nhật theo mã, mục thiếu đánh dấu ngừng dùng, không xóa liên kết cũ. Nhãn chẩn đoán/snapshot đã khóa giữ nguyên.
 
@@ -25,3 +25,5 @@ Nghề nghiệp: tìm/chọn khi đã nạp danh mục; chữ tự do vẫn nh�
 Chưa có file gốc ICD-10 TT 06/2026, kỹ thuật, mã dùng chung CLS, ĐVHC chính thức hoặc nghề nghiệp; repo không có mã thật của các danh mục này. Tỉnh/xã TMS và dân tộc công khai đã được chủ dự án cho phép từ L1 giữ nguyên. Xem [sổ văn bản](SO_DANG_KY_VAN_BAN.md); mọi ngày/hiệu lực chưa xác minh đều đánh dấu cần đối chiếu. Không gọi mạng liên thông; không thêm diễn giải điều luật.
 
 Chỉ mục `(active,search_key)` chứa tên/mã đã bỏ dấu; tìm kiếm/phân trang/COUNT ở SQL, không tải cả ICD vào dropdown. Kiểm p95 trên 12.000+ dòng giả lập; số đo CI không thay nghiệm thu máy Windows thật. Chrome 109/390px kiểm tìm/chọn, nhập/xem trước và không tràn ngang.
+
+Mã giao diện D0 gộp vào app.js hiện có để không thêm yêu cầu tài nguyên song song vào giới hạn kết nối LAN. Bộ chuẩn bị C5 gọi đủ migration 10 trước profile mới; không đổi thuật toán đo/ngưỡng, số mẫu hay dữ liệu C5.

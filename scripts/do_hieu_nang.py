@@ -138,6 +138,19 @@ def measure(label, action, *, samples=20, prepare=lambda:None):
     return result
 
 
+def migrate_profile_schema(c):
+    """Only prepare the current schema; measurement and limits stay unchanged."""
+    from app.m0_migration import migrate_m0
+    from app.administrative_migration import migrate_administrative
+    from app.patient_catalog import migrate_public_catalog
+    from app.m6_migration import migrate_m6
+    from app.m5_migration import migrate_m5
+    from app.d0_migration import migrate_d0
+    for _ in range(2):
+        migrate_m0(c);migrate_administrative(c);migrate_public_catalog(c)
+        migrate_m6(c,postgres=True);migrate_m5(c,postgres=True);migrate_d0(c,postgres=True)
+
+
 def database_state(url):
     with psycopg.connect(url) as c:
         tables=[r[0] for r in c.execute("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")]
@@ -383,31 +396,20 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
             if label == 'after':
                 # M0 migration is deliberately applied only AFTER the old-code profile.
                 # Same populated C5 database, no regenerated or reduced dataset.
-                from app.m0_migration import migrate_m0
-                from app.administrative_migration import migrate_administrative
-                from app.patient_catalog import migrate_public_catalog
-                from app.m6_migration import migrate_m6, TABLES
-                from app.m5_migration import migrate_m5, TABLES as M5_TABLES, FRAMEWORK
+                from app.m6_migration import TABLES
+                from app.m5_migration import TABLES as M5_TABLES, FRAMEWORK
+                from app.d0_migration import TABLES as D0_TABLES
                 from app.database import PGConnection, record_factory
                 old_state = database_state(url)
                 with psycopg.connect(url, row_factory=record_factory) as con:
                     started = time.perf_counter()
-                    migrate_m0(PGConnection(con))
-                    migrate_administrative(PGConnection(con))
-                    migrate_public_catalog(PGConnection(con))
-                    migrate_m6(PGConnection(con), postgres=True)
-                    migrate_m5(PGConnection(con), postgres=True)
-                    migrate_m0(PGConnection(con))
-                    migrate_administrative(PGConnection(con))
-                    migrate_public_catalog(PGConnection(con))
-                    migrate_m6(PGConnection(con), postgres=True)
-                    migrate_m5(PGConnection(con), postgres=True)
+                    migrate_profile_schema(PGConnection(con))
                     migration_seconds = time.perf_counter() - started
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 5
-                expected_state['tables'].update({name: 0 for name in TABLES+M5_TABLES})
+                expected_state['tables']['schema_migrations'] += 6
+                expected_state['tables'].update({name: 0 for name in TABLES+M5_TABLES+D0_TABLES})
                 expected_state['tables']['lab_tests'] = sum(len(v) for v in FRAMEWORK.values())
                 expected_state['tables']['audit_log'] += 1
                 expected_state['tables']['patient_catalog'] = 3411
