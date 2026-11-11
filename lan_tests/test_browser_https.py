@@ -64,7 +64,7 @@ def test_real_https_three_browser_roles_and_pdf():
                     assert page.evaluate("sessionStorage.getItem('md_token')") is None
                     assert '__Host-clinic=' not in page.evaluate('document.cookie')
                 # Mỗi vai trò vào thẳng màn hình công việc, chỉ thấy menu của mình, không còn menu mang số phiên bản.
-                expected={'reception':['reception','prices'],'doctor':['doctor'],'cashier':['cashier'],'technician':['lab'],'pharmacy':['pharmacy'],'admin':['admin','price-management','settings']}
+                expected={'reception':['reception','prices','m6-list'],'doctor':['doctor','m6-list'],'cashier':['cashier'],'technician':['lab'],'pharmacy':['pharmacy','m6-list'],'admin':['admin','price-management','settings','m6-admin']}
                 for role,page in pages.items():
                     settle(page)
                     nav=page.locator('#navigation [data-action="navigate"]')
@@ -126,6 +126,7 @@ def test_real_https_three_browser_roles_and_pdf():
                 send(d,d.locator('[data-action="approve"]').first,'Đã duyệt kết quả')
                 with d.expect_download() as download:d.locator('[data-kind="lab"][data-format="pdf"]').first.click()
                 download.value.save_as(str(evidence/'result.pdf'))
+                d.get_by_text('Kê / cấp thuốc từ kho (quy trình hiện có)',exact=True).click()
                 d.locator('[data-form="rx"] [name="quantity"]').fill('2')
                 submit(d,'rx','Đã lưu đơn thuốc')
                 with d.expect_download() as download:d.locator('[data-kind="rx"][data-format="pdf"]').first.click()

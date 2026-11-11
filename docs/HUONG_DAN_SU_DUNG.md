@@ -30,7 +30,7 @@ Hàng chờ là các lượt được giao cho bạn và chưa hoàn tất. Bấ
 
 1. **Phiếu khám**: ghi lý do khám, sinh hiệu, chẩn đoán, hướng điều trị. Bấm **Lưu phiếu khám**. Cảnh báo sinh hiệu (huyết áp cao, sốt...) hiện ngay khi gõ.
 2. **Chỉ định cận lâm sàng**: chọn dịch vụ, bấm **Thêm chỉ định**. Dịch vụ giá nhập khi thu tạo khoản **CHƯA CÓ GIÁ**; bác sĩ không nhập số tiền. Chọn "Lưu nháp" nếu chưa muốn ghi tiền; sau đó bấm **Duyệt chỉ định / ghi phí**. Khi kỹ thuật viên gửi kết quả, nội dung hiện ngay dưới tên chỉ định; bấm **Duyệt kết quả**, rồi tải phiếu kết quả PDF.
-3. **Đơn thuốc**: lưu chẩn đoán trước. Chọn thuốc, đơn vị, số lượng, cách dùng. Bấm **Lưu đơn thuốc**. Mỗi lượt có một đơn. Đơn chưa cấp có thể hủy có lý do; đơn đã hủy không lập lại.
+3. **Đơn thuốc M6**: gõ tên và các ô cách dùng riêng, có gợi ý danh mục; chưa có danh mục vẫn lưu nháp. Bổ sung hoạt chất ngay trên dòng (nhiều hoạt chất tách bằng +), không phải chờ quản trị. Lưu nháp trước khi Khóa đơn thuốc; dòng thiếu được tô đỏ. Đơn khóa không sửa, muốn đổi thì kê đơn mới thay thế. Lời dặn gồm ba ô riêng. Đơn kho cũ/cấp thuốc vẫn ở mục **Kê / cấp thuốc từ kho (quy trình hiện có)**, giữ nguyên quy tắc tiền và tồn. Xem [hướng dẫn M6 + L3](M6_L3_KE_DON.md).
 4. **Điều dưỡng**: chọn điều dưỡng, bấm **Phân công**, rồi giao y lệnh. Y lệnh chưa làm có thể hủy có lý do.
 5. **Hoàn tất**: bấm **Hoàn tất và khóa phiếu khám** khi đã có chẩn đoán và không còn chỉ định hoặc y lệnh đang chờ. Hoàn tất khám không có nghĩa đã thu tiền hay đã cấp thuốc.
 
@@ -129,3 +129,7 @@ Cài đặt lưu trong tệp `caidat/ui_settings.json` cạnh thư mục tệp �
 ## Ảnh màn hình
 
 Ảnh từng vai trò trên máy tính và điện thoại ở thư mục [giao-dien](giao-dien/). Ảnh giao diện cũ ở [giao-dien/truoc](giao-dien/truoc/). Chụp lại bằng `python -m scripts.ui_screenshots --out docs/giao-dien`.
+
+## Đơn thuốc đã khóa và danh mục M6
+
+Bác sĩ, lễ tân và dược có menu Đơn thuốc đã khóa, lọc trạng thái và phân trang; lễ tân/dược chỉ xem và in đơn M6 đã khóa. Bác sĩ xuất JSON nội bộ, luôn CHƯA LIÊN THÔNG. Quản trị nhập mã cơ sở và thông tin đơn vị ở Cài đặt; vào Thuốc chưa rà soát để xem trước/nhập Excel, sửa, gộp hoặc ngừng dùng danh mục. Danh mục không tự đổi nội dung đơn đã khóa. Chưa có ký số, liên thông thật, đơn N/H hoặc kê 90 ngày.

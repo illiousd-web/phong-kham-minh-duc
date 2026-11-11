@@ -98,3 +98,9 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 .catalog-results button small{display:block;font-weight:normal;color:#617a80;line-height:1.4}
 .catalog-results button:hover,.catalog-results .catalog-active{background:#e5f5f1}
 .catalog-results p{padding:10px}
+
+/* M6: bounded suggestions and row-specific accessible errors, Chrome 109. */
+.m6-row{min-width:0;margin:12px 0;padding:12px;border:1px solid #b5cfcb;border-radius:8px}
+.m6-invalid{border:2px solid #b3261e;background:#fff4f3}.m6-error,.m6-errors{color:#a51e18;font-weight:600}
+.m6-suggestions{display:flex;flex-direction:column;max-height:180px;overflow-y:auto}.m6-row input{max-width:100%;min-width:0}
+@media(max-width:600px){.m6-row.fields{grid-template-columns:1fr}.m6-row button{white-space:normal}}

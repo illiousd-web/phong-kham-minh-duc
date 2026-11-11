@@ -260,6 +260,7 @@ class Day:
         items = self.medicines[:1] if ui else self.medicines
         quantities = {mid: (3 if mid == self.medicines[0][0] else 2) for mid, _ in items}
         if ui:
+            d.get_by_text('Kê / cấp thuốc từ kho (quy trình hiện có)',exact=True).click()
             d.locator('[data-form="rx"] [name="medicine_id"]').select_option(str(items[0][0]))
             d.locator('[data-form="rx"] [name="quantity"]').fill('3')
             d.locator('[data-form="rx"] [name="directions"]').fill('Giả lập C4, không dùng điều trị')

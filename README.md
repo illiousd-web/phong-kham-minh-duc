@@ -2,6 +2,7 @@
 
 Danh mục/chỉ định và công nợ; đơn thuốc cấu trúc, quy đổi, cấp/trả và kiểm soát riêng; điều dưỡng được phân công; hoàn tất, khóa và phụ lục có phiên bản. Chỉ dùng dữ liệu giả lập. Giữ profile Windows 11 / i3 / 8 GB / SSD 256 GB.
 
+- [Kê đơn M6 + L3, phạm vi và điểm cần đối chiếu](docs/M6_L3_KE_DON.md)
 - [Hồ sơ hành chính và người hành nghề (L1–L2)](docs/L1_L2_HO_SO.md)
 - [Nguồn main và đối chiếu ZIP v0.4.1](docs/V050_SOURCE.md)
 - [Hướng dẫn sử dụng theo vai trò](docs/HUONG_DAN_SU_DUNG.md)
