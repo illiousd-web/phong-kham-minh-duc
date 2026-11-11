@@ -38,6 +38,12 @@ def test_m6_excel_preview_errors_atomic_and_example_rows():
     with db() as c:assert c.execute('SELECT COUNT(*) FROM drugs').fetchone()[0]==before
     missing=book([],HEADERS[:-1]);result=a.post('/api/drugs/import',**upload(missing));assert result.status_code==422 and 'Ghi chú' in result.text
     result=a.post('/api/drugs/import',**upload(raw,'false'));assert result.status_code==200 and result.json()['added']==1
+    from app.m6 import DrugInput
+    item=next(x for x in a.get('/api/drugs',params={'q':'Mat hang gia lap Excel'}).json() if x['name']=='Mặt hàng giả lập Excel')
+    values={k:item[k] for k in DrugInput.model_fields};values['national_code']='MA-QUOC-GIA-GIA-LAP'
+    assert a.put('/api/drugs/'+str(item['id']),json=values).status_code==200
+    assert a.post('/api/drugs/import',**upload(raw,'false')).status_code==200
+    with db() as c:assert c.execute('SELECT national_code FROM drugs WHERE id=?',(item['id'],)).fetchone()[0]=='MA-QUOC-GIA-GIA-LAP'
 
 
 def test_m6_migration_additive_idempotent(tmp_path):

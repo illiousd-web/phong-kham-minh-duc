@@ -69,7 +69,7 @@ def install_import(app, db, principal, require, audit):
                 old = c.execute('SELECT * FROM drugs WHERE name_key=? AND strength_key=?', key).fetchone()
                 # Import never silently overwrites a reviewed/inactive/merged item.
                 if old and old['review_status'] != 'unreviewed': continue
-                values = {k: v for k, v in d.items() if k not in ('toxic', 'controlled_type', 'review_status')}
+                values = {k: v for k, v in d.items() if k not in ('toxic', 'controlled_type', 'review_status', 'national_code')}
                 values.update(name_key=key[0], strength_key=key[1], ingredient_key=fold(d['ingredient']), brand_key=fold(d['brand_name']))
                 if old:
                     c.execute('UPDATE drugs SET '+','.join(k+'=?' for k in values)+' WHERE id=?', (*values.values(), old['id'])); updated += 1
