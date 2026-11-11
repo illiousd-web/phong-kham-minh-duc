@@ -56,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=8").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=9").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -77,6 +77,8 @@ def init_db():
         migrate_public_catalog(c)
         from .m6_migration import migrate_m6
         migrate_m6(c)
+        from .m5_migration import migrate_m5
+        migrate_m5(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -483,7 +485,9 @@ def list_orders(u=Depends(principal),visit_id:int|None=None,history:bool=False):
             where.append('v.doctor_id=?');args=[u['id']]
         if visit_id is not None:where.append('o.visit_id=?');args.append(visit_id)
         if visit_id is None:where.append('NOT ('+ACTIVE_ORDERS+')' if history else ACTIVE_ORDERS)
-        return [dict(x) for x in c.execute(orders_sql(' AND '.join(where),hide_results,limit=100 if history else None),args)]
+        rows=[dict(x) for x in c.execute(orders_sql(' AND '.join(where),hide_results,limit=100 if history else None),args)]
+        from .m5 import decorate_orders
+        return decorate_orders(c,rows)
 
 class ResultInput(BaseModel):
     result_text:str=Field(min_length=1,max_length=10000)
@@ -495,6 +499,7 @@ def submit_result(order_id:int,data:ResultInput,u=Depends(principal)):
         order=c.execute('SELECT o.status,v.status AS visit_status FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
         if order and order['visit_status'] in ('completed','cancelled'):raise HTTPException(409,'Lượt khám đã kết thúc')
         if not order:raise HTTPException(404,'Không có chỉ định')
+        if c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(order_id,)).fetchone():raise HTTPException(409,'Phiếu theo chỉ số phải sửa / điều chỉnh trong Xét nghiệm M5')
         if order['status'] not in ('ordered','pending_review'):raise HTTPException(409,'Kết quả đã duyệt, không được sửa trực tiếp')
         c.execute("UPDATE orders SET result_text=?,result_by=?,status='pending_review' WHERE id=?",(data.result_text,u['id'],order_id))
         audit(c,u,'result_submitted','order',order_id)
@@ -506,6 +511,7 @@ def approve_result(order_id:int,u=Depends(principal)):
     with db(True) as c:
         o=c.execute('SELECT o.*,v.doctor_id FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
         if not o:raise HTTPException(404,'Không có chỉ định')
+        if c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(order_id,)).fetchone():raise HTTPException(409,'Duyệt phiếu theo chỉ số trong Xét nghiệm M5')
         if o['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ phụ trách')
         if c.execute("SELECT status FROM visits WHERE id=?",(o['visit_id'],)).fetchone()['status'] in ('completed','cancelled'):raise HTTPException(409,'Lượt khám đã kết thúc')
         if o['status']!='pending_review' or not o['result_text'].strip():raise HTTPException(409,'Chưa có kết quả chờ duyệt')
@@ -533,6 +539,7 @@ def add_attachment(order_id:int,file:UploadFile=File(...),u=Depends(principal)):
             o=c.execute('SELECT o.status,o.file_key,v.status AS visit_status FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
             if o and o['visit_status'] in ('completed','cancelled'):raise HTTPException(409,'Lượt khám đã kết thúc')
             if not o:raise HTTPException(404,'Không có chỉ định')
+            if c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(order_id,)).fetchone():raise HTTPException(409,'Phiếu theo chỉ số không nhận sửa qua tệp kết quả cũ')
             if o['status'] in ('approved','cancelled','requested'):raise HTTPException(409,'Kết quả đã duyệt')
             if LAN:check_upload(FILES,len(raw))
             previous=o['file_key']
@@ -572,6 +579,7 @@ def get_attachment(order_id:int,u=Depends(principal)):
         o=c.execute('SELECT o.*,v.doctor_id FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
         if not o or not o['file_key']:raise HTTPException(404,'Không có tệp')
         if 'doctor' in u['roles'] and o['doctor_id']!=u['id'] and 'technician' not in u['roles']:raise HTTPException(403,'Không có quyền')
+        if o['category']=='lab' and o['status']!='approved' and 'technician' not in u['roles'] and c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(order_id,)).fetchone():raise HTTPException(403,'Kết quả chưa duyệt')
         audit(c,u,'attachment_viewed','order',order_id)
         target=FILES/o['file_key']
         if not target.is_file():raise HTTPException(404,'Tệp không tồn tại')
@@ -1039,6 +1047,7 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
             if v['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ được phân công')
         if kind=='rx' and 'doctor' not in u['roles'] and 'pharmacy' not in u['roles']:
             raise HTTPException(403,'Không được truy cập đơn')
+        if kind=='lab' and c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(object_id,)).fetchone():raise HTTPException(409,'Chọn nhóm và in phiếu theo chỉ số trong Xét nghiệm M5')
         if kind in ('lab','ultrasound','xray','ecg'):
             if 'doctor' in u['roles'] and v['doctor_id']!=u['id'] and 'technician' not in u['roles']:
                 raise HTTPException(403,'Không phải bác sĩ được phân công')
@@ -1112,3 +1121,6 @@ async def storage_full(request,exc):
 
 from .m6 import install_m6
 install_m6(app,db,principal,require,audit,visit_access,NOW)
+
+from .m5 import install_m5
+install_m5(app,db,principal,require,audit,visit_access,NOW)

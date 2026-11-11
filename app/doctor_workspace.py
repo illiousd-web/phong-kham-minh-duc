@@ -101,7 +101,7 @@ def install_doctor_workspace(app, db, principal, require, audit, visit_access, n
                 marks = ','.join('?' for _ in indexed)
                 for r in c.execute(f'SELECT visit_id,drug_lines,instructions,status FROM prescriptions WHERE visit_id IN ({marks})', tuple(indexed)):
                     indexed[r['visit_id']]['prescriptions'].append(dict(r))
-                for r in c.execute(f"SELECT visit_id,name,result_text,status FROM orders WHERE visit_id IN ({marks}) AND result_text IS NOT NULL AND result_text<>''", tuple(indexed)):
+                for r in c.execute(f"SELECT visit_id,name,result_text,status FROM orders WHERE visit_id IN ({marks}) AND result_text IS NOT NULL AND result_text<>'' AND (status='approved' OR NOT EXISTS(SELECT 1 FROM lab_reports lr WHERE lr.order_id=orders.id))", tuple(indexed)):
                     indexed[r['visit_id']]['results'].append(dict(r))
             audit(c, u, 'patient_history_viewed', 'visit', vid)
             return result

@@ -106,3 +106,7 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 @media(max-width:600px){.m6-row.fields{grid-template-columns:1fr}.m6-row button{white-space:normal}}
 
 .m6-allergy{border:2px solid #b3261e;background:#fff4f3}
+
+/* M5: structured result entry, readable on a 390px workstation. */
+.m5-abnormal{color:#a00;background:#fff0f0;font-weight:bold}.m5-result-row{min-width:0;margin:8px 0}.m5-result-row input{min-width:0;width:100%}.m5-dialog{width:min(920px,94vw);max-height:90vh;overflow:auto}.m5-link-list{display:grid;gap:8px;max-height:420px;overflow:auto;margin:12px 0}.m5-reference{min-width:0;margin:10px 0}.m5-errors{color:#a00}.m5-result-rows{min-width:0}
+[data-m5-test],[data-m5-service]{display:block;width:100%;max-width:100%;min-width:0}[data-m5-form] input[type=file]{max-width:100%}[data-m5-form] label{min-width:0;overflow-wrap:anywhere}.m5-reference input,.m5-reference select{max-width:100%}

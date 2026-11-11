@@ -46,7 +46,7 @@ def test_v050_all_workflows_https_browser(clients,visit):
                     page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for();settle(page)
                     # Chỉ các menu công việc được phép; M6 thêm đọc đơn đã khóa cho bác sĩ/dược.
                     nav=page.locator('#navigation [data-action="navigate"]')
-                    assert [nav.nth(i).get_attribute('data-page') for i in range(nav.count())]==[expected[role]]+(['m6-list'] if role in ('doctor','pharmacy') else [])
+                    assert [nav.nth(i).get_attribute('data-page') for i in range(nav.count())]==[expected[role]]+(['m6-list'] if role in ('doctor','pharmacy') else ['m5-queue'] if role=='technician' else [])
                     assert 'v0.5' not in page.locator('body').inner_text().replace('v0.5.0','')
                     assert page.evaluate('typeof v050Workflows')=='undefined'
                 d=go(pages['doctor'],'doctor');pick(d,'visit',visit)
