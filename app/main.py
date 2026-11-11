@@ -56,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=9").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=10").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -79,6 +79,8 @@ def init_db():
         migrate_m6(c)
         from .m5_migration import migrate_m5
         migrate_m5(c)
+        from .d0_migration import migrate_d0
+        migrate_d0(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -287,6 +289,7 @@ def patient_detail(patient_id:int,u=Depends(principal)):
             if not allowed:raise HTTPException(403,'Không được xem hồ sơ này')
         if 'nurse' in u['roles'] and not {'doctor','reception','admin'}.intersection(u['roles']):return {k:p[k] for k in ('id','code','full_name','date_of_birth','sex')}
         data=dict(p)
+        data['occupation_standardized']=bool(data.get('occupation_code'))
         data['age_months']=months_old(data['date_of_birth'])
         if {'reception','doctor'}.intersection(u['roles']):
             if document_value(data):audit(c,u,'patient_document_viewed','patient',patient_id)
@@ -384,6 +387,7 @@ def visit_detail(visit_id:int,u=Depends(principal)):
         if 'doctor' in u['roles']:
             audit(c,u,'clinical_viewed','visit',visit_id)
             data=dict(v)
+            data['diagnosis_coding_status']='đã mã hóa' if data.get('primary_icd10') else 'chưa mã hóa'
             data['age_months']=months_old(v['patient_dob'])
             return data
         brief={'id':v['id'],'patient_id':v['patient_id'],'patient_name':v['patient_name'],'patient_code':v['patient_code'],'status':v['status'],'doctor_id':v['doctor_id'],'created_at':v['created_at']}
@@ -1124,3 +1128,6 @@ install_m6(app,db,principal,require,audit,visit_access,NOW)
 
 from .m5 import install_m5
 install_m5(app,db,principal,require,audit,visit_access,NOW)
+
+from .d0 import install_d0
+install_d0(app,db,principal,require,audit,visit_access,NOW)

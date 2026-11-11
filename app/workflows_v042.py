@@ -228,6 +228,8 @@ def install_workflows(app, db, principal, require, audit, visit_access, now):
             from .config import LAN
             if LAN and data is None:raise HTTPException(422,'Cần phiên bản bác sĩ đã đọc trước khi khóa')
             if data and data.version!=v['version']:raise HTTPException(409,'Hồ sơ đã đổi; tải lại trước khi khóa')
+            from .d0 import diagnosis_guard
+            diagnosis_guard(c,v)
             if not (v['diagnosis'] or '').strip():raise HTTPException(409,'Bác sĩ cần kết luận chẩn đoán trước khi hoàn tất')
             if c.execute("SELECT 1 FROM orders WHERE visit_id=? AND status IN ('requested','ordered','pending_review')",(visit_id,)).fetchone():
                 raise HTTPException(409,'Còn chỉ định chưa có kết quả duyệt hoặc chưa hủy')

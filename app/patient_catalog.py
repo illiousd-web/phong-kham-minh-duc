@@ -173,6 +173,7 @@ def migrate_public_catalog(c):
 
 
 def resolve_patient_catalog(c, data, old=None):
+    from .d0 import resolve_patient_standards
     old = dict(old) if old is not None else {}
     for kind in ('province', 'commune', 'ethnicity'):
         number, name = getattr(data, kind+'_code'), getattr(data, kind)
@@ -198,6 +199,7 @@ def resolve_patient_catalog(c, data, old=None):
         setattr(data, kind+'_code', number)
         setattr(data, kind, old.get(kind) if old.get(kind+'_code') == number and old.get(kind) else row['name'])
 
+    resolve_patient_standards(c,data,old)
 
 def search_catalog(c, kind='', province_code='', q='', limit=30):
     if kind == 'commune' and not province_code: return []

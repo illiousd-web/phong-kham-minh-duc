@@ -45,6 +45,9 @@ class AdministrativeFields(BaseModel):
     commune_code: str | None = Field(default=None, max_length=40)
     ethnicity: str | None = Field(default=None, max_length=180)
     occupation: str | None = Field(default=None, max_length=180)
+    official_province_code: str | None = Field(default=None,max_length=80)
+    official_commune_code: str | None = Field(default=None,max_length=80)
+    occupation_code: str | None = Field(default=None,max_length=80)
     workplace: str | None = Field(default=None, max_length=300)
     province: str | None = Field(default=None, max_length=180)
     commune: str | None = Field(default=None, max_length=180)
@@ -123,7 +126,7 @@ def install_administrative(app, db, principal, require, audit, visit_access, now
         supplied = data.model_dump(exclude_unset=True)
         if not supplied:
             raise HTTPException(422, 'Cần gửi ít nhất một trường hành chính')
-        if complete and set(supplied) != set(AdministrativeFields.model_fields):
+        if complete and not (set(AdministrativeFields.model_fields)-{'official_province_code','official_commune_code','occupation_code'}).issubset(supplied):
             raise HTTPException(422, 'PUT cần đủ các trường hành chính; dùng PATCH để sửa từng trường')
         with db(True) as c:
             row = c.execute('SELECT * FROM patients WHERE id=?', (pid,)).fetchone()
@@ -157,6 +160,11 @@ def install_administrative(app, db, principal, require, audit, visit_access, now
                 raise HTTPException(422, '; '.join(e['msg'] for e in exc.errors())) from None
             if any(k in touched for k in ('province', 'commune', 'ethnicity', 'province_code', 'commune_code', 'ethnicity_code')):
                 resolve_patient_catalog(c, validated, old)
+            from .d0 import resolve_patient_standards
+            if 'occupation' in supplied and 'occupation_code' not in supplied:validated.occupation_code=None
+            resolve_patient_standards(c,validated,old)
+            touched.update(('official_province_code','official_commune_code'))
+            if {'occupation','occupation_code'} & supplied.keys():touched.update(('occupation','occupation_code'))
             warnings = duplicate_warning(c, validated, pid)
             values = {k: v for k, v in validated.model_dump().items() if k in touched and v != old[k]}
             if values:

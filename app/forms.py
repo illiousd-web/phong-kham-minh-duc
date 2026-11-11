@@ -137,6 +137,8 @@ def rx_rows(ctx):
     return result
 
 def generate_docx(kind, ctx):
+    from .d0 import diagnosis_text
+    ctx={**ctx,'visit':{**ctx['visit'],'diagnosis':diagnosis_text(ctx['visit'])}}
     if kind not in TEMPLATE_BY_TYPE:raise ValueError('Biểu mẫu không hợp lệ')
     doc=Document(TEMPLATE_DIR/TEMPLATE_BY_TYPE[kind])
     doc.core_properties.title=TITLES[kind]+' (thử nghiệm)'
@@ -318,6 +320,8 @@ def font_name():
 def pdf_safe(s):return xml_escape(clean(s)).replace('\n','<br/>')
 
 def generate_pdf(kind,ctx):
+    from .d0 import diagnosis_text
+    ctx={**ctx,'visit':{**ctx['visit'],'diagnosis':diagnosis_text(ctx['visit'])}}
     if kind not in TEMPLATE_BY_TYPE:raise ValueError('Biểu mẫu không hợp lệ')
     p=ctx['patient'];v=ctx['visit'];o=ctx.get('order') or {};r=ctx.get('rx') or {}
     font=font_name();size=A5 if kind in ('rx','followup') else A4
