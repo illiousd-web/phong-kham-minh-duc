@@ -193,7 +193,7 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
                 snapshot.append({'code':code,'name':row['name_vi'],'version':row['version'],'import_id':row['import_id'],'primary':code==data.primary})
             changed=c.execute('UPDATE visits SET primary_icd10=?,diagnosis_codes=?,version=version+1 WHERE id=? AND version=?',(data.primary,dump(snapshot),vid,data.version))
             if changed.rowcount!=1:raise HTTPException(409,'Hồ sơ đã đổi; tải lại')
-            revision(c,vid,u,now,'clinical','Lưu mã chẩn đoán');audit(c,u,'diagnosis_codes_updated','visit',vid,dump({'codes':codes}))
+            revision(c,vid,u,now,'clinical','Lưu mã chẩn đoán');audit(c,u,'diagnosis_codes_updated','visit',vid,dump({'fields':['primary_icd10','diagnosis_codes'],'secondary_count':len(data.secondary)}))
         return {'version':data.version+1,'warnings':warnings}
 
     @app.get('/api/standards/unlinked/services')

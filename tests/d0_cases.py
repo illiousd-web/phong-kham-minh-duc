@@ -34,6 +34,9 @@ def check_d0(clients,ids,db,service):
         assert d.put(f'/api/visits/{vid}/diagnosis-codes',json={'version':1,'primary':codes[i]['code']}).status_code==422
     assert r.put(f'/api/visits/{vid}/diagnosis-codes',json={'version':1,'primary':codes[0]['code']}).status_code==403
     warn=d.put(f'/api/visits/{vid}/diagnosis-codes',json={'version':1,'primary':codes[5]['code'],'secondary':[codes[1]['code']]});assert warn.status_code==200 and warn.json()['warnings']
+    with db() as c:
+        entry=c.execute("SELECT details FROM audit_log WHERE event='diagnosis_codes_updated' AND object_id=? ORDER BY id DESC LIMIT 1",(vid,)).fetchone()[0]
+        assert 'primary_icd10' in entry and codes[5]['code'] not in entry and codes[1]['code'] not in entry
     for fmt in ('docx','pdf'):
         txt=document_text(d.get(f'/api/visits/{vid}/forms/clinical?format={fmt}'),fmt)
         assert codes[5]['code'] in txt and 'Mô tả chữ giả lập' in txt
