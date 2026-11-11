@@ -262,6 +262,8 @@ class Day:
         if ui:
             d.get_by_text('Kê / cấp thuốc từ kho (quy trình hiện có)',exact=True).click()
             d.locator('[data-form="rx"] [name="medicine_id"]').select_option(str(items[0][0]))
+            # The existing UI blocks save until its asynchronous unit lookup completes.
+            expect(d.locator('[data-form="rx"] [name="unit_id"]')).to_be_enabled()
             d.locator('[data-form="rx"] [name="quantity"]').fill('3')
             d.locator('[data-form="rx"] [name="directions"]').fill('Giả lập C4, không dùng điều trị')
             rid = submit(d, 'rx').json()['id']
