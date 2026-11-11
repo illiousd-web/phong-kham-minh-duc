@@ -4,9 +4,15 @@ Năm tệp công khai được chủ dự án cho phép đưa vào `data/danh_mu
 
 ## Cài đặt và cập nhật
 
-Sao lưu đã xác minh, nâng cấp bằng quy trình hiện có. LAN chạy `python -m scripts.manage migrate` bằng chủ CSDL trước khi web khởi động. Migration 10 tạo nền danh mục; migration 11 mở rộng đúng cấu trúc nguồn và tự nạp đủ 5 tệp trong một giao dịch. Chạy lại không nạp trùng. Không đổi giá, tiền, vai trò hay quyền. Bộ cài/cập nhật vẫn bỏ qua data nói chung, chỉ chép đúng năm CSV công khai đã kiểm SHA-256. Khi nâng cấp từ main cũ, dùng CAP_NHAT.bat trong bộ mới tải về/giải nén để có bước chép nguồn này, chọn tệp ZIP mới; sao lưu trước khi chạy. Không tự gắn mã cho dịch vụ/chỉ số hoặc đoán mã bệnh của hồ sơ cũ.
+Sao lưu đã xác minh, nâng cấp bằng quy trình hiện có. LAN chạy `python -m scripts.manage migrate` bằng chủ CSDL trước khi web khởi động. Migration 10 tạo nền danh mục; migration 11 mở rộng đúng cấu trúc nguồn và tự nạp đủ 5 tệp trong một giao dịch. Chạy lại không nạp trùng. Không đổi giá, tiền, vai trò hay quyền. Bộ cài/cập nhật vẫn bỏ qua data nói chung, chỉ chép đúng năm CSV công khai đã kiểm SHA-256. Khi nâng cấp từ main cũ, sao lưu trước rồi mở PowerShell bằng quyền Quản trị và chạy trực tiếp `deploy/windows/CapNhat.ps1` từ bộ mới giải nén, chỉ rõ `-ThuMucMa` là thư mục đã cài và `-TepZip` là ZIP mới. Không bấm batch từ thư mục giải nén vì batch lấy thư mục chứa nó làm đích cập nhật. Sau lần nâng cấp này, dùng CAP_NHAT.bat trong thư mục đã cài như thường lệ. Không tự gắn mã cho dịch vụ/chỉ số hoặc đoán mã bệnh của hồ sơ cũ.
 
 ICD 15.844, CLS 2.964, PL01 19.438, PL02 9.128, xã chính thức 3.321. Ghi số/ngày văn bản, nguồn, phiên bản, số dòng, SHA-256 và audit mỗi lần nạp. CSV không có ngày ban hành đầy đủ: NULL có nghĩa “Chưa đối chiếu ngày”; không dùng ngày hôm nay hoặc suy từ tên tệp. Các mục đã có liên kết mà bị bỏ khỏi phiên bản mới chỉ ngừng dùng, không xóa hồ sơ lịch sử.
+
+Ví dụ đường dẫn giả lập cho bản cài mặc định (thay đường dẫn tệp tải về theo máy):
+
+```powershell
+& "C:\BoMoi\deploy\windows\CapNhat.ps1" -ThuMucMa "C:\MinhDuc" -TepZip "C:\BoMoi.zip"
+```
 
 ## Nạp lại
 

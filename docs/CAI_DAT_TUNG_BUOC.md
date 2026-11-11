@@ -136,6 +136,8 @@ Windows 7 đã hết hỗ trợ từ 01/2020; bản Chrome cuối cho Windows 7 
    - Thấy **CẬP NHẬT THÀNH CÔNG** là xong.
    - Thấy **ĐÃ QUAY VỀ BẢN CŨ**: phần mềm vẫn chạy bản trước, dữ liệu được khôi phục về lúc trước cập nhật. Gửi thư mục `C:\ProgramData\MinhDuc\nhatky` cho người hỗ trợ.
 
+**Riêng nâng cấp lần đầu sang D0:** bản cũ chưa chép năm CSV công khai vào thư mục mã. Người hỗ trợ cần dùng script cập nhật từ bộ mới giải nén, chỉ rõ thư mục đã cài; xem [hướng dẫn D0](D0_DANH_MUC_CHUAN.md#cài-đặt-và-cập-nhật). Các lần sau dùng batch đã cài như các bước trên.
+
 ## 6a. Gia hạn hoặc phục hồi chứng chỉ HTTPS
 
 Dùng khi tệp cảnh báo hoặc `KIEM_TRA` báo *"Chứng chỉ HTTPS còn … ngày"* hoặc *"Không đọc được chứng chỉ (thiếu hoặc hỏng)"*. **Máy trạm không phải cài lại** (CA giữ nguyên).
