@@ -172,9 +172,9 @@ principal = install_auth(app, db, LAN, NOW)
 def require(u, *roles):
     if not set(roles).intersection(u['roles']):raise HTTPException(403,'Không có quyền thực hiện chức năng')
 
-def audit(c,u,event,typ,obj,details=''):
+def audit(c,u,event,typ,obj,details='',*,details_limit=500):
     c.execute('INSERT INTO audit_log(user_id,event,object_type,object_id,details,created_at) VALUES(?,?,?,?,?,?)',
-              (u['id'],event,typ,obj,details[:500],NOW()))
+              (u['id'],event,typ,obj,details[:details_limit],NOW()))
 
 def visit_access(c,u,vid:int,*,clinical=False):
     v=c.execute('''SELECT visits.*,patients.full_name AS patient_name,patients.code AS patient_code,

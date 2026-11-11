@@ -1,17 +1,18 @@
 """Administrative patient fields, file-supplied catalogs and child prescribing guard."""
+import json
 import re
 from datetime import date, datetime
 from typing import Literal
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
 
 from .labels import VN_TZ
 from .domain import ensure_open, revision
 
 
 def masked_document(value):
-    return ('••••' + value[-4:]) if value else None
+    return ('••••' + value[-4:] if len(value) > 4 else '••••') if value else None
 
 
 def document_value(patient):
@@ -34,7 +35,7 @@ def months_old(birthday, now=None):
     return (today.year-born.year)*12 + today.month-born.month - (today.day < born.day)
 
 
-class AdministrativePatient(BaseModel):
+class AdministrativeFields(BaseModel):
     document_type: Literal['identity', 'passport', 'none'] | None = None
     document_number: str | None = Field(default=None, max_length=40)
     # Legacy API input stays supported; full numbers never leave a list endpoint.
@@ -54,6 +55,8 @@ class AdministrativePatient(BaseModel):
     def trim(cls, value):
         return (value.strip() or None) if isinstance(value, str) else value
 
+
+class AdministrativePatient(AdministrativeFields):
     @model_validator(mode='after')
     def documents(self):
         if self.citizen_id and self.document_number and self.citizen_id != self.document_number:
@@ -68,8 +71,8 @@ class AdministrativePatient(BaseModel):
             raise ValueError('Đã chọn loại giấy tờ thì phải nhập số giấy tờ')
         elif self.document_type == 'identity' and not re.fullmatch(r'[0-9]{12}', self.document_number):
             raise ValueError('CCCD / số định danh phải đúng 12 chữ số')
-        elif self.document_type == 'passport' and not re.fullmatch(r'[A-Za-z0-9]+', self.document_number):
-            raise ValueError('Số hộ chiếu chỉ gồm chữ hoặc số')
+        elif self.document_type == 'passport' and not re.fullmatch(r'[A-Za-z0-9]{6,40}', self.document_number):
+            raise ValueError('Số hộ chiếu cần 6–40 ký tự, chỉ gồm chữ hoặc số')
         self.citizen_id = self.document_number if self.document_type == 'identity' else None
         return self
 
@@ -115,20 +118,62 @@ def install_administrative(app, db, principal, require, audit, visit_access, now
     from .patient_catalog import install_patient_catalog, resolve_patient_catalog
     install_patient_catalog(app, db, principal, require, audit)
 
-    @app.put('/api/patients/{pid}/administrative')
-    def update_patient(pid: int, data: AdministrativePatient, u=Depends(principal)):
+    def save_patient(pid, data, u, *, complete=False):
         require(u, 'reception')
+        supplied = data.model_dump(exclude_unset=True)
+        if not supplied:
+            raise HTTPException(422, 'Cần gửi ít nhất một trường hành chính')
+        if complete and set(supplied) != set(AdministrativeFields.model_fields):
+            raise HTTPException(422, 'PUT cần đủ các trường hành chính; dùng PATCH để sửa từng trường')
         with db(True) as c:
-            old=c.execute('SELECT * FROM patients WHERE id=?',(pid,)).fetchone()
-            if not old:
+            row = c.execute('SELECT * FROM patients WHERE id=?', (pid,)).fetchone()
+            if not row:
                 raise HTTPException(404, 'Không có bệnh nhân')
-            resolve_patient_catalog(c, data, old)
-            warnings = duplicate_warning(c, data, pid)
-            values = data.model_dump()
-            c.execute('UPDATE patients SET '+','.join(k+'=?' for k in values)+' WHERE id=?', (*values.values(), pid))
-            # No document values in audit or operational logs.
-            audit(c, u, 'patient_administrative_updated', 'patient', pid)
+            old = dict(row)
+            merged = {k: old[k] for k in AdministrativeFields.model_fields}
+            merged.update(supplied)
+            # These two columns represent the same identity number. A canonical
+            # document edit must not inherit the previous identity alias.
+            if {'document_type', 'document_number'} & supplied.keys() and 'citizen_id' not in supplied:
+                merged['citizen_id'] = None
+            if 'citizen_id' in supplied and 'document_number' not in supplied:
+                merged['document_number'] = supplied['citizen_id']
+            document_fields = {'document_type', 'document_number', 'citizen_id'}
+            touched = set(supplied)
+            if document_fields & touched:
+                touched.update(document_fields)
+            for kind in ('province', 'commune', 'ethnicity'):
+                if {kind, kind+'_code'} & supplied.keys():
+                    touched.update((kind, kind+'_code'))
+                    if kind+'_code' not in supplied:
+                        merged[kind+'_code'] = None
+                    elif kind not in supplied:
+                        merged[kind] = None
+            try:
+                model = AdministrativePatient if document_fields & supplied.keys() else AdministrativeFields
+                validated = model.model_validate(merged)
+            except ValidationError as exc:
+                # Validation messages only: never return/log the document input.
+                raise HTTPException(422, '; '.join(e['msg'] for e in exc.errors())) from None
+            if any(k in touched for k in ('province', 'commune', 'ethnicity', 'province_code', 'commune_code', 'ethnicity_code')):
+                resolve_patient_catalog(c, validated, old)
+            warnings = duplicate_warning(c, validated, pid)
+            values = {k: v for k, v in validated.model_dump().items() if k in touched and v != old[k]}
+            if values:
+                c.execute('UPDATE patients SET '+','.join(k+'=?' for k in values)+' WHERE id=?', (*values.values(), pid))
+            safe = ('occupation', 'ethnicity', 'province', 'commune')
+            details = {'fields': sorted(values), 'changes': {k: {'old': old[k], 'new': values[k]} for k in safe if k in values}}
+            audit(c, u, 'patient_administrative_updated', 'patient', pid,
+                  json.dumps(details, ensure_ascii=False), details_limit=3000)
         return {'ok': True, 'warnings': warnings}
+
+    @app.patch('/api/patients/{pid}/administrative')
+    def patch_patient(pid: int, data: AdministrativeFields, u=Depends(principal)):
+        return save_patient(pid, data, u)
+
+    @app.put('/api/patients/{pid}/administrative')
+    def put_patient(pid: int, data: AdministrativeFields, u=Depends(principal)):
+        return save_patient(pid, data, u, complete=True)
 
     @app.put('/api/visits/{vid}/child-details')
     def child_details(vid: int, data: ChildVisitInput, u=Depends(principal)):

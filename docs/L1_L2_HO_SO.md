@@ -14,9 +14,13 @@ Muốn quay lại: dừng dịch vụ và dùng quy trình khôi phục bản sa
 
 ## Lễ tân
 
-Ở Tiếp đón, mở hồ sơ đã chọn để bổ sung loại/số giấy tờ, dân tộc, nghề nghiệp, nơi làm việc/học tập và ba phần nơi cư trú. Địa chỉ cũ vẫn hiển thị riêng. Không có giấy tờ thì chọn **Không có**, để trống số. Chọn CCCD/số định danh thì phải nhập đúng 12 chữ số ASCII; hộ chiếu nhập số gồm chữ hoặc số. Trùng số với hồ sơ khác hiện cảnh báo nhưng vẫn lưu.
+Ở Tiếp đón, mở hồ sơ đã chọn để bổ sung loại/số giấy tờ, dân tộc, nghề nghiệp, nơi làm việc/học tập và ba phần nơi cư trú. Địa chỉ cũ vẫn hiển thị riêng. Không có giấy tờ thì chọn **Không có**, để trống số. Chọn CCCD/số định danh thì phải nhập đúng 12 chữ số ASCII; hộ chiếu nhập 6–40 ký tự gồm chữ hoặc số. Trùng số với hồ sơ khác hiện cảnh báo nhưng vẫn lưu.
 
-Ô tìm nhận đủ số giấy tờ và chỉ so số giấy tờ theo toàn bộ chuỗi; các cách tìm tên, mã, điện thoại vẫn giữ nguyên. Danh sách chỉ trả/hiện bốn ký tự cuối. Lễ tân và bác sĩ có quyền xem hồ sơ mới được nhận đủ số trong chi tiết; mỗi lần nhận đủ số có sự kiện `patient_document_viewed`, không ghi số vào nhật ký. Quản trị đơn thuần chỉ nhận số đã che. Điều dưỡng giữ giới hạn hồ sơ như trước. Biểu mẫu xuất che số giấy tờ để không tạo đường lấy đủ số ngoài chi tiết hồ sơ. Launcher demo và LAN đều tắt nhật ký truy cập HTTP để không ghi số được gõ vào ô tìm.
+Ô tìm nhận đủ số giấy tờ và chỉ so số giấy tờ theo toàn bộ chuỗi; các cách tìm tên, mã, điện thoại vẫn giữ nguyên. Số giấy tờ dài hơn bốn ký tự chỉ hiện bốn ký tự cuối; số cũ có tối đa bốn ký tự được che toàn bộ bằng `••••`. Lễ tân và bác sĩ có quyền xem hồ sơ mới được nhận đủ số trong chi tiết; mỗi lần nhận đủ số có sự kiện `patient_document_viewed`, không ghi số vào nhật ký. Quản trị đơn thuần chỉ nhận số đã che. Điều dưỡng giữ giới hạn hồ sơ như trước. Biểu mẫu xuất che số giấy tờ để không tạo đường lấy đủ số ngoài chi tiết hồ sơ. Launcher demo và LAN đều tắt nhật ký truy cập HTTP để không ghi số được gõ vào ô tìm.
+
+Biểu mẫu dùng địa chỉ cấu trúc theo thứ tự chi tiết, xã/phường, tỉnh/thành; thiếu toàn bộ địa chỉ cấu trúc mới dùng địa chỉ cũ. Thông tin hành chính nằm trong phần người bệnh, không nối cuối Word.
+
+API cập nhật dùng `PATCH /api/patients/{id}/administrative`: chỉ gửi trường cần sửa; trường không gửi giữ nguyên, gửi `null` để xóa rõ ràng. Gửi rỗng trả 422. PUT cũ chỉ nhận khi gửi đủ mọi trường hành chính, gồm cả `citizen_id` và các mã danh mục; thiếu trường trả 422. Nhật ký `patient_administrative_updated` ghi tên trường thực sự đổi; chỉ nghề nghiệp, dân tộc, tỉnh, xã có giá trị cũ/mới. Không ghi giá trị số giấy tờ. Lượt sửa tiếp này không thêm migration hoặc đổi schema.
 
 ## Danh mục có sẵn và nạp lại
 

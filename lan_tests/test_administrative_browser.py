@@ -59,7 +59,7 @@ def test_administrative_practitioner_and_refund_ui(https_server, clients, reques
             expect(page.locator('[data-form=patient-administrative] [name=document_number]')).to_have_value('000000001234')
             expect(page.locator('[data-form=patient-administrative]')).to_contain_text('Địa chỉ cũ giả lập')
             page.locator('[data-form=patient-administrative] [name=occupation]').fill('Nghề giả lập giao diện')
-            with page.expect_response(lambda res:'/administrative' in res.url and res.request.method=='PUT') as saved:
+            with page.expect_response(lambda res:'/administrative' in res.url and res.request.method=='PATCH') as saved:
                 page.locator('[data-form=patient-administrative] button').click()
             assert saved.value.status==200;settle(page);no_horizontal_scroll(page)
             page.screenshot(path=str(evidence/f'reception-{width}.png'),full_page=True)

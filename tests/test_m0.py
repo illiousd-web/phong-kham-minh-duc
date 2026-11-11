@@ -8,6 +8,7 @@ from tests.m0_cases import check_m0
 class RoleClient:
     def __init__(self, name): self.headers = token(name)
     def get(self, path, **kw): return client.get(path, headers=self.headers, **kw)
+    def patch(self, path, **kw): return client.patch(path, headers=self.headers, **kw)
     def put(self, path, **kw): return client.put(path, headers=self.headers, **kw)
     def post(self, path, **kw): return client.post(path, headers=self.headers, **kw)
 

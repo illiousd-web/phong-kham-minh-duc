@@ -19,3 +19,13 @@ def test_child_prescribing_vietnam_boundary(clients):
 
 def test_scope_warning_and_opt_in_block(clients):
     check_scopes(clients,IDS,db,SERVICE)
+
+
+def test_patch_preserves_omitted_fields_and_redacts_audit(clients):
+    from tests.administrative_revision_cases import check_patch_preserves_administrative_and_private_audit
+    check_patch_preserves_administrative_and_private_audit(clients, IDS, db, SERVICE)
+
+
+def test_structured_address_in_word_and_pdf_patient_section(clients):
+    from tests.administrative_revision_cases import check_structured_address_print_position
+    check_structured_address_print_position(clients, IDS, db, SERVICE)

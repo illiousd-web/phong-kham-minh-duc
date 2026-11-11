@@ -50,9 +50,9 @@ def check_administrative(clients, ids, db, service_id):
         events = [dict(x) for x in c.execute("SELECT * FROM audit_log WHERE event='patient_document_viewed' AND object_id=?", (pid,))]
         assert {e['user_id'] for e in events} == {ids['doctor'], ids['reception']}
         assert all(number not in x['details'] for x in events)
-    assert d.put(f'/api/patients/{pid}/administrative', json=payload).status_code == 403
-    assert a.put(f'/api/patients/{pid}/administrative', json=payload).status_code == 403
-    changed = r.put(f'/api/patients/{pid}/administrative', json={k: v for k,v in payload.items() if k not in base and k!='address'})
+    assert d.patch(f'/api/patients/{pid}/administrative', json=payload).status_code == 403
+    assert a.patch(f'/api/patients/{pid}/administrative', json=payload).status_code == 403
+    changed = r.patch(f'/api/patients/{pid}/administrative', json={k: v for k,v in payload.items() if k not in base and k!='address'})
     assert changed.status_code == 200 and changed.json()['warnings']
     # Metadata cannot be changed by doctors, reception, manager, or self-service account routes.
     practitioner = {'printed_name': 'Nguyễn Giả Lập', 'printed_title': 'BSCKI',
@@ -124,11 +124,11 @@ def check_catalog(clients, db):
             assert c.execute("SELECT active FROM patient_catalog WHERE kind='commune' AND code='98001'").fetchone()[0]==0
         assert a.get('/api/patient-catalog',params={'kind':'commune','province_code':'98'}).json()==[]
         body={k:kept[k] for k in ('province','commune','province_code','commune_code','ethnicity','ethnicity_code')}
-        assert r.put(f'/api/patients/{kept_pid}/administrative',json=body).status_code==200
+        assert r.patch(f'/api/patients/{kept_pid}/administrative',json=body).status_code==200
         assert r.post('/api/patients',json={'full_name':'Người mới giả lập','date_of_birth':'1990-01-01','sex':'Nam','phone':'0900000000','province_code':'98','commune_code':'98001'}).status_code==422
         moved=content(GEO_HEADERS,[['99','Tỉnh giả lập đổi tên','98001','Xã được chuyển giả lập','Huyện cũ khác']])
         assert a.post('/api/patient-catalog/import',**upload(moved)).status_code==200
-        assert r.put(f'/api/patients/{kept_pid}/administrative',json=body).status_code==200
+        assert r.patch(f'/api/patients/{kept_pid}/administrative',json=body).status_code==200
         assert r.get(f'/api/patients/{kept_pid}').json()['province']=='Tỉnh khác giả lập'
 
         # Workbook headers are located by name, ignoring surrounding spaces.

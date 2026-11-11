@@ -35,3 +35,27 @@ def test_certificate_warning_30_day_boundary_in_vietnam():
     assert certificate_warning('2026-11-11',now)=='Chứng thư số còn 0 ngày hết hạn'
     assert certificate_warning('2026-11-10',now)=='Chứng thư số đã hết hạn'
     assert certificate_warning(None,now) is None
+
+
+def test_patch_preserves_omitted_fields_and_redacts_audit():
+    from tests.administrative_revision_cases import check_patch_preserves_administrative_and_private_audit
+    clients, ids = context()
+    check_patch_preserves_administrative_and_private_audit(clients, ids, db, 1)
+
+
+def test_structured_address_in_word_and_pdf_patient_section():
+    from tests.administrative_revision_cases import check_structured_address_print_position
+    clients, ids = context()
+    check_structured_address_print_position(clients, ids, db, 1)
+
+
+def test_masked_short_documents_and_address_fallback():
+    from app.administrative import masked_document
+    from app.forms import format_patient_address
+    for value in ('A', 'AB', 'ABC', 'ABCD'):
+        assert masked_document(value) == '••••'
+    assert masked_document('AB1234') == '••••1234'
+    assert masked_document(None) is None
+    assert format_patient_address({}) == '—'
+    assert format_patient_address({'address': ' Địa chỉ cũ giả lập '}) == 'Địa chỉ cũ giả lập'
+    assert format_patient_address({'address': 'Cũ', 'commune': ' Xã giả lập '}) == 'Xã giả lập'
