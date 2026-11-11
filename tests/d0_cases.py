@@ -67,6 +67,13 @@ def check_d0(clients,ids,db,service):
     with db() as c:
         p=c.execute('SELECT * FROM patients WHERE id=?',(pid,)).fetchone();assert p['official_commune_code']=='OFF-C-'+suffix and p['commune_code']==cc
         assert c.execute('SELECT COUNT(*) FROM catalog_imports').fetchone()[0]>=6
+    upload(a,'official_addresses',[{'code':'OFF-P-'+suffix,'name':'Tỉnh giả lập '+suffix,'province_name':'Tỉnh giả lập '+suffix,'province_code':'OFF-P-'+suffix,'kind':'province'}],version='removed-commune')
+    with db() as c:
+        assert c.execute('SELECT official_commune_code FROM patients WHERE id=?',(pid,)).fetchone()[0]=='OFF-C-'+suffix
+        assert c.execute("SELECT official_code FROM patient_catalog WHERE kind='commune' AND code=?",(cc,)).fetchone()[0] is None
+        assert c.execute('SELECT active FROM official_addresses WHERE code=?',('OFF-C-'+suffix,)).fetchone()[0]==0
+    new=r.post('/api/patients',json={'full_name':'Người mới D0 giả lập '+suffix,'date_of_birth':'1990-01-01','sex':'Nữ','phone':'0900000000','province_code':pc,'commune_code':cc});assert new.status_code==201,new.text
+    with db() as c:assert c.execute('SELECT official_commune_code FROM patients WHERE id=?',(new.json()['id'],)).fetchone()[0] is None
     assert a.put('/api/standards/settings',json={'require_primary_icd10':False}).status_code==200
     with db() as c:assert c.execute("SELECT 1 FROM audit_log WHERE event='icd10_requirement_changed'").fetchone()
 

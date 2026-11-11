@@ -248,9 +248,13 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
 
 
 def match_geography(c,write=True):
+    if write:
+        c.execute("""UPDATE patient_catalog SET official_code=NULL WHERE kind IN ('province','commune') AND official_code IS NOT NULL
+            AND NOT EXISTS(SELECT 1 FROM official_addresses a WHERE a.code=patient_catalog.official_code AND a.kind=patient_catalog.kind AND a.active=1)""")
     provinces={r['code']:r['name'] for r in c.execute("SELECT code,name FROM patient_catalog WHERE kind='province'")}
-    official={}
+    official={};active_codes=set()
     for r in c.execute("SELECT * FROM official_addresses WHERE active=1"):
+        active_codes.add(r['code'])
         key=(fold_name(r['province_name']),fold_name(r['name']),r['kind']);official.setdefault(key,[]).append(r)
     unmatched=[]
     for r in c.execute("SELECT * FROM patient_catalog WHERE kind IN ('province','commune') AND active=1"):
@@ -258,7 +262,7 @@ def match_geography(c,write=True):
         candidates=official.get((fold_name(pn),fold_name(r['name']),r['kind']),[])
         if len(candidates)==1:
             if write:c.execute('UPDATE patient_catalog SET official_code=? WHERE kind=? AND code=?',(candidates[0]['code'],r['kind'],r['code']))
-        elif not r['official_code']:unmatched.append({'kind':r['kind'],'tms_code':r['code'],'name':r['name'],'province':pn,'reason':'Không ghép duy nhất theo tên tỉnh + tên xã'})
+        elif not r['official_code'] or r['official_code'] not in active_codes:unmatched.append({'kind':r['kind'],'tms_code':r['code'],'name':r['name'],'province':pn,'reason':'Không ghép duy nhất theo tên tỉnh + tên xã'})
     return unmatched
 
 

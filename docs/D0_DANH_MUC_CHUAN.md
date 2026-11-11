@@ -16,7 +16,7 @@ Bác sĩ tìm mã hoặc tên không dấu, chọn bệnh chính/bệnh kèm và
 
 Dịch vụ chưa gắn mã: chọn dịch vụ và một/nhiều mã kỹ thuật đã nạp (gói dùng nhiều mã khi đánh dấu xác nhận dịch vụ gói; dịch vụ lẻ nhiều mã bị 422, loại liên kết gói suy ra từ số mã và lưu xác nhận trong audit, không đổi logic tính tiền). Chỉ số chưa gắn mã: chọn mã dùng chung đã nạp; mã LOINC/thuộc tính lấy theo dòng đó. Không ghi vào cột giá. Phiếu M5 đã duyệt giữ mã và phiên bản trong snapshot, sửa danh mục không sửa phiếu.
 
-ĐVHC: bảng chính thức độc lập mã TMS. Ghép duy nhất theo tên tỉnh + tên xã không dấu; mục mơ hồ/không có báo để Quản trị ghép tay bằng mã trong file đã nạp. Không đoán mã. Hồ sơ mới/cập nhật giữ mã chính thức song song; JSON M6 có official_province_code/official_commune_code; không thay bằng TMS khi mã chính thức trống. Hồ sơ cũ không bị tự gán hàng loạt.
+ĐVHC: bảng chính thức độc lập mã TMS. Ghép duy nhất theo tên tỉnh + tên xã không dấu; mục mơ hồ/không có báo để Quản trị ghép tay bằng mã trong file đã nạp. Không đoán mã. Hồ sơ mới/cập nhật giữ mã chính thức song song; JSON M6 có official_province_code/official_commune_code; không thay bằng TMS khi mã chính thức trống. Hồ sơ cũ không bị tự gán hàng loạt. Khi bản nạp mới bỏ mã chính thức, mã đó ngừng dùng và bỏ liên kết gợi ý TMS cho hồ sơ mới; mã đã lưu trên người bệnh cũ giữ nguyên.
 
 Nghề nghiệp: tìm/chọn khi đã nạp danh mục; chữ tự do vẫn nhận, occupation_code trống là cờ “chưa chuẩn hóa”. Không mặc định nghề. Danh mục nghề Bộ Y tế [CẦN ĐỐI CHIẾU] nguồn và văn bản.
 
