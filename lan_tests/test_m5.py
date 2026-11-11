@@ -64,3 +64,18 @@ def test_m5_upgrade_main_schema_8_preserves_legacy_results_and_money():
             assert c.execute('SELECT COUNT(*) FROM lab_reference_ranges').fetchone()[0]==0
     finally:
         with psycopg.connect(URL,autocommit=True) as c:c.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name)))
+
+
+def test_m5_closed_correction_rounding_snapshot_audit_and_print(clients):
+    from tests.m5_revision_cases import check_closed_correction
+    check_closed_correction(clients,IDS,db,SERVICE)
+
+
+def test_m5_cancelled_visit_blocks_all_result_writes(clients):
+    from tests.m5_revision_cases import check_cancelled_writes
+    check_cancelled_writes(clients,IDS,db,SERVICE)
+
+
+def test_m5_import_requires_issued_preview_of_exact_file(clients):
+    from tests.m5_revision_cases import check_preview_gate
+    check_preview_gate(clients)

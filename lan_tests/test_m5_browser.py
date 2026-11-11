@@ -46,7 +46,7 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
         login('technician');go(page,'m5-queue')
         page.locator(f'[data-m5=open][data-id="{rid}"]').click();settle(page)
         form=page.locator('[data-m5-form=result]');expect(form.locator('[name=value]')).to_have_attribute('inputmode','decimal')
-        form.locator('[name=sample_at]').fill('02/01/2026 08:00');form.locator('[name=result_at]').fill('02/01/2026 09:00');form.locator('[name=value]').fill('21,5');form.locator('[name=note]').fill('Ghi chú giao diện giả lập');form.locator('[name=comment]').fill('Nhận xét giao diện giả lập')
+        form.locator('[name=sample_at]').fill('02/01/2026 08:00');form.locator('[name=result_at]').fill('02/01/2026 09:00');form.locator('[name=value]').fill('21,55');expect(form.locator('.m5-rounding')).to_contain_text('Sẽ làm tròn thành 21,6');form.locator('[name=value]').fill('21,5');form.locator('[name=note]').fill('Ghi chú giao diện giả lập');form.locator('[name=comment]').fill('Nhận xét giao diện giả lập')
         with page.expect_response(lambda x:x.url.endswith('/lab/reports/'+str(rid)) and x.request.method=='PUT') as response:form.locator('button.btn').click()
         assert response.value.status==200;settle(page)
         expect(page.locator('.m5-result-row [name=value]')).to_have_value('21.5');expect(page.locator('.m5-result-row .m5-abnormal')).to_contain_text('H')
@@ -57,13 +57,37 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
         assert d.get(f'/api/lab/reports/{rid}').json()['items']==[]
         logout();login('doctor');pick(page,'visit',vid)
         expect(page.locator('#doctor-results')).to_contain_text('Đang làm')
-        expect(page.locator('#doctor-results')).not_to_contain_text('21.5')
-        page.locator(f'[data-m5=review][data-id="{rid}"]').click();expect(page.locator('dialog')).to_contain_text('21.5')
+        expect(page.locator('#doctor-results')).not_to_contain_text('21,5')
+        page.locator(f'[data-m5=review][data-id="{rid}"]').click();expect(page.locator('dialog')).to_contain_text('21,5')
         with page.expect_response(lambda x:x.url.endswith('/approve')) as response:page.locator('dialog [data-m5=approve]').click()
         assert response.value.status==200;settle(page)
-        expect(page.locator('#doctor-results .m5-abnormal')).to_contain_text('21.5')
+        expect(page.locator('#doctor-results .m5-abnormal')).to_contain_text('21,5')
         expect(page.locator(f'[data-scope-warning="{oid}"]')).to_contain_text('Xét nghiệm')
-        page.locator('#doctor-results [data-m5=history]').click();expect(page.locator('dialog')).to_contain_text('21.5');page.locator('dialog [data-m5=close]').click()
+        page.locator('#doctor-results [data-m5=history]').click();expect(page.locator('dialog')).to_contain_text('21,5');page.locator('dialog [data-m5=close]').click()
+        state=d.get(f'/api/visits/{vid}').json()
+        assert d.put(f'/api/visits/{vid}/clinical',json={'version':state['version'],'diagnosis':'Chẩn đoán đóng lượt giả lập'}).status_code==200
+        state=d.get(f'/api/visits/{vid}').json()
+        assert d.post(f'/api/visits/{vid}/complete',json={'version':state['version']}).status_code==200
+        old_rid=rid
+        rid=t.post(f'/api/lab/reports/{old_rid}/adjust',json={'version':3,'reason':'Điều chỉnh sau đóng lượt giả lập'}).json()['id']
+        correction={'version':0,'sample_at':'2026-01-02T08:00:00+07:00','result_at':'2026-01-02T09:00:00+07:00','items':[{'test_id':tid,'value':'22.555'}]}
+        assert t.put(f'/api/lab/reports/{rid}',json=correction).status_code==200
+        assert t.post(f'/api/lab/reports/{rid}/submit',json={'version':1}).status_code==200
+        assert d.get(f'/api/visits/{vid}').json()['status']=='completed'
+        assert t.get(f'/api/lab/queue?visit_id={vid}&status=pending_review').json()['total']==0
+        go(page,'doctor')
+        page.get_by_text('Lượt đã kết thúc (100 gần nhất)',exact=True).click()
+        page.locator('#visit_choose').select_option(str(vid));settle(page)
+        page.locator(f'[data-m5=review][data-id="{rid}"]').click()
+        with page.expect_response(lambda x:x.url.endswith('/approve')) as response:page.locator('dialog [data-m5=approve]').click()
+        assert response.value.status==200;settle(page)
+        expect(page.locator('#doctor-results')).to_contain_text('Có kết quả điều chỉnh sau khi đóng lượt')
+        expect(page.locator('#doctor-results .m5-abnormal')).to_contain_text('22,6')
+        assert d.get(f'/api/visits/{vid}').json()['status']=='completed'
+        next_vid=r.post('/api/visits',json={'patient_id':p,'doctor_id':IDS['doctor'],'service_id':SERVICE}).json()['id']
+        go(page,'doctor');pick(page,'visit',next_vid)
+        page.locator('[data-action=doctor-tab][data-target=history]').click()
+        expect(page.locator('#patient-history')).to_contain_text('Có kết quả điều chỉnh sau khi đóng lượt')
         page.screenshot(path=str(target/f'ket-qua-{width}.png'),full_page=True);no_horizontal_scroll(page)
         logout();login('reception');go(page,'m5-queue');page.locator(f'[data-m5=open][data-id="{rid}"]').click();settle(page)
         assert page.locator('[data-m5-form=result]').count()==0
@@ -76,4 +100,26 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
         expect(page.locator('[name=code]')).to_have_value(test['code']);expect(page.locator('.m5-reference [name=lower_value]')).to_have_value('10')
         with page.expect_download() as download:page.locator('[data-m5=template]').click()
         download.value.save_as(str(target/f'mau-rong-{width}.xlsx'));no_horizontal_scroll(page)
+        from app.m5 import TestInput
+        from app.m5_import import workbook
+        item=TestInput(code='UI-FILE-'+suffix,name='Chỉ số tệp giả lập',group_name='other').model_dump()
+        first=workbook([item]);second=workbook([{**item,'name':'Tệp đổi giả lập'}])
+        form=page.locator('[data-m5-form=import]')
+        expect(form.locator('.m5-import-confirm')).not_to_be_visible()
+        form.locator('[name=file]').set_input_files({'name':'fake.xlsx','mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','buffer':first})
+        with page.expect_response(lambda x:x.url.endswith('/lab/catalog-import')) as response:form.locator('button.btn').click()
+        assert response.value.status==200 and response.value.json()['fingerprint']
+        expect(form.locator('.m5-import-confirm')).to_be_visible()
+        form.locator('[name=commit]').check()
+        form.locator('[name=file]').set_input_files({'name':'changed.xlsx','mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','buffer':second})
+        expect(form.locator('.m5-import-confirm')).not_to_be_visible()
+        expect(form.locator('[name=commit]')).not_to_be_checked()
+        expect(form.locator('[name=commit]')).to_be_disabled()
+        with page.expect_response(lambda x:x.url.endswith('/lab/catalog-import')) as response:form.locator('button.btn').click()
+        assert response.value.status==200
+        form.locator('[name=commit]').check()
+        with page.expect_response(lambda x:x.url.endswith('/lab/catalog-import')) as response:form.locator('button.btn').click()
+        assert response.value.status==200 and 'rows' not in response.value.json()
+        expect(form.locator('.m5-preview')).to_contain_text('Đã nạp 1 chỉ số')
+        no_horizontal_scroll(page)
         assert not errors,errors;browser.close()

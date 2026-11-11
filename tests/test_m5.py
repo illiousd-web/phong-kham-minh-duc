@@ -50,14 +50,15 @@ def test_m5_excel_preview_atomic_error_rows_and_round_trip():
     raw=workbook([x]);upload=lambda b,preview:{'files':{'file':('fake.xlsx',b)},'data':{'preview':preview}}
     assert r.post('/api/lab/catalog-import',**upload(raw,'false')).status_code==403
     with db() as c:before=c.execute('SELECT COUNT(*) FROM lab_tests').fetchone()[0]
-    assert a.post('/api/lab/catalog-import',**upload(raw,'true')).json()['count']==1
+    preview=a.post('/api/lab/catalog-import',**upload(raw,'true')).json();assert preview['count']==1
     with db() as c:assert c.execute('SELECT COUNT(*) FROM lab_tests').fetchone()[0]==before
     w=load_workbook(BytesIO(raw));w['ThamChieu'].append(['không có','','','','','','']);b=BytesIO();w.save(b)
-    bad=a.post('/api/lab/catalog-import',**upload(b.getvalue(),'false'));assert bad.status_code==422 and bad.json()['detail']['errors'][0]['row']==3
+    bad=a.post('/api/lab/catalog-import',**upload(b.getvalue(),'true'));assert bad.status_code==422 and bad.json()['detail']['errors'][0]['row']==3
     with db() as c:assert c.execute('SELECT COUNT(*) FROM lab_tests').fetchone()[0]==before
     w['ChiSo'].cell(1,1).value='Sai tên cột';b=BytesIO();w.save(b)
-    bad=a.post('/api/lab/catalog-import',**upload(b.getvalue(),'false'));assert bad.status_code==422 and 'Mã chỉ số' in bad.text
-    assert a.post('/api/lab/catalog-import',**upload(raw,'false')).status_code==200
+    bad=a.post('/api/lab/catalog-import',**upload(b.getvalue(),'true'));assert bad.status_code==422 and 'Mã chỉ số' in bad.text
+    args=upload(raw,'false');args['data']['fingerprint']=preview['fingerprint']
+    assert a.post('/api/lab/catalog-import',**args).status_code==200
     export=a.get('/api/lab/catalog-file');assert export.status_code==200
     from app.m5_import import parse
     assert any(row['test']['code']==x['code'] and len(row['test']['references'])==1 for row in parse(export.content))
@@ -71,3 +72,18 @@ def test_m5_invalid_numbers_ranges_and_source_contract():
         with pytest.raises(ValueError):number(value)
     assert str(number('-2,5'))=='-2.5'
     with pytest.raises(ValueError):TestInput(code='FAKE',name='Giả lập',group_name='other',references=[{'sex':'Nam','age_from':0,'age_to':72,'lower_value':'1'},{'sex':'Nam','age_from':72,'lower_value':'2'}])
+
+
+def test_m5_closed_correction_rounding_snapshot_audit_and_print():
+    from tests.m5_revision_cases import check_closed_correction
+    clients,ids=context();check_closed_correction(clients,ids,db,1)
+
+
+def test_m5_cancelled_visit_blocks_all_result_writes():
+    from tests.m5_revision_cases import check_cancelled_writes
+    clients,ids=context();check_cancelled_writes(clients,ids,db,1)
+
+
+def test_m5_import_requires_issued_preview_of_exact_file():
+    from tests.m5_revision_cases import check_preview_gate
+    clients,_=context();check_preview_gate(clients)

@@ -1,4 +1,6 @@
 """Two-sheet workbook, complete validation before atomic upsert; no price columns."""
+import hashlib
+import hmac
 from io import BytesIO
 from zipfile import ZipFile
 from openpyxl import Workbook,load_workbook
@@ -86,6 +88,18 @@ def parse(raw):
         if w:w.close()
 
 
+IMPORT_TYPE='lab_catalog_upsert'
+
+
+def file_fingerprint(raw):
+    return hashlib.sha256(IMPORT_TYPE.encode('utf-8')+b'\x00'+raw).hexdigest()
+
+
+def preview_proof(fingerprint):
+    from .m5 import dump
+    return dump({'fingerprint':fingerprint,'import_type':IMPORT_TYPE})
+
+
 def install_import(app,db,principal,require,audit,now):
     @app.get('/api/lab/catalog-file')
     def export(template:bool=False,u=Depends(principal)):
@@ -94,10 +108,20 @@ def install_import(app,db,principal,require,audit,now):
         return Response(workbook(items),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="DANH_MUC_CHI_SO.xlsx"','Cache-Control':'no-store'})
 
     @app.post('/api/lab/catalog-import')
-    def import_file(file:UploadFile=File(...),preview:bool=Form(True),u=Depends(principal)):
-        require(u,'admin');rows=parse(file.file.read(2*1024*1024+1))
-        if preview:return {'count':len(rows),'rows':rows}
+    def import_file(file:UploadFile=File(...),preview:bool=Form(True),fingerprint:str=Form('',max_length=128),u=Depends(principal)):
+        require(u,'admin')
+        raw=file.file.read(2*1024*1024+1)
+        if len(raw)>2*1024*1024:raise HTTPException(413,'Tệp tối đa 2 MB')
+        actual=file_fingerprint(raw)
+        if not preview and (len(fingerprint)!=64 or any(ch not in '0123456789abcdef' for ch in fingerprint) or not hmac.compare_digest(fingerprint,actual)):
+            raise HTTPException(422,'Cần xem trước đúng tệp và gửi lại mã vân tay hợp lệ trước khi nạp')
+        rows=parse(raw)
         with db(True) as c:
+            if preview:
+                audit(c,u,'lab_catalog_previewed','lab_test',None,preview_proof(actual))
+                return {'count':len(rows),'rows':rows,'fingerprint':actual,'import_type':IMPORT_TYPE}
+            if not c.execute("SELECT 1 FROM audit_log WHERE user_id=? AND event='lab_catalog_previewed' AND object_type='lab_test' AND details=?",(u['id'],preview_proof(actual))).fetchone():
+                raise HTTPException(422,'Chưa xem trước tệp này bằng tài khoản hiện tại')
             for row in rows:
                 data=TestInput(**row['test']);old=c.execute('SELECT id FROM lab_tests WHERE code=?',(data.code,)).fetchone()
                 save_test(c,data,old['id'] if old else None)

@@ -96,6 +96,9 @@ def install_doctor_workspace(app, db, principal, require, audit, visit_access, n
                 WHERE patient_id=? AND doctor_id=? AND (created_at<? OR (created_at=? AND id<?))
                 ORDER BY created_at DESC,id DESC''', (v['patient_id'], u['id'], v['created_at'], v['created_at'], vid)).fetchall()
             result = [dict(r, prescriptions=[], results=[]) for r in rows]
+            from .m5 import after_close_visits
+            adjusted=after_close_visits(c,[r['id'] for r in result])
+            for r in result:r['adjusted_after_close']=r['id'] in adjusted
             indexed = {r['id']: r for r in result}
             if indexed:
                 marks = ','.join('?' for _ in indexed)

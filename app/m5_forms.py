@@ -19,10 +19,11 @@ def stamp(v):
 def content(p,group):
     person=p['patient'];head=[('Mã kết quả',f"XN-{p['id']}"),('Mã chỉ định',str(p['order_id'])),('Nhóm xét nghiệm',GROUPS[group])]
     if p['status']!='approved':head.append(('', 'NHÁP – CHƯA DUYỆT'))
+    if p.get('superseded_by'):head.append(('', 'ĐÃ ĐƯỢC THAY THẾ BỞI PHIẾU #'+str(p['superseded_by'])))
     if p['replaces_id']:head.append(('', 'BẢN ĐIỀU CHỈNH, thay thế phiếu XN-'+str(p['replaces_id'])))
     head += [('Họ và tên',person['full_name']),('Mã người bệnh',person['code']),('Mã lượt khám',str(p['visit_id'])),('Điện thoại',person['phone'] or '—'),('Bác sĩ phụ trách',p['ordering_doctor_name']),('Ngày sinh',fmt_date(person['date_of_birth'])),('Giới tính',person['sex']),('Địa chỉ',person['address']),('Lấy mẫu',stamp(p['sample_at']))]
     items=[x for x in p['items'] if x['group_name']==group]
-    rows=[[x['name']+(' ('+x['abbreviation']+')' if x['abbreviation'] else '')+('\nGhi chú: '+x['note'] if x['note'] else ''),x['value'],x['flag'],x['reference_text'],x['unit']] for x in items]
+    rows=[[x['name']+(' ('+x['abbreviation']+')' if x['abbreviation'] else '')+('\nGhi chú: '+x['note'] if x['note'] else ''),x.get('display_value',x['value']),x['flag'],x['reference_text'],x['unit']] for x in items]
     tail=[('Nhận xét chung',p['comment'] or '—'),('Thời điểm có kết quả',stamp(p['result_at'])),('Người thực hiện',p['performer_name'] or '—'),('Người duyệt',p['approver_name'] or '—'),('Thời điểm duyệt',stamp(p['approved_at']))]
     if p['replaces_id']:tail.append(('Lý do điều chỉnh',p['adjustment_reason']))
     return head,rows,tail

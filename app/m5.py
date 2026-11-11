@@ -1,7 +1,7 @@
 """Structured laboratory results. No price, charge or authorization mutations."""
 import json
 from datetime import datetime,date
-from decimal import Decimal,InvalidOperation
+from decimal import Decimal,InvalidOperation,ROUND_HALF_UP
 from typing import Literal
 from fastapi import Depends,HTTPException,Query,UploadFile,File,Form,Response
 from pydantic import BaseModel,ConfigDict,Field,model_validator,field_validator
@@ -13,7 +13,8 @@ from .forms import format_patient_address
 
 GROUPS={'hematology':'Huyết học','biochemistry':'Sinh hóa','urine':'Nước tiểu','other':'Khác'}
 STAGES={'waiting_sample':'Chờ lấy mẫu','working':'Đang làm','pending_review':'Chờ duyệt','approved':'Đã duyệt'}
-STAGE_SQL="""CASE WHEN r.status='approved' THEN 'approved' WHEN r.status='pending_review' THEN 'pending_review'
+AFTER_CLOSE_LABEL='Có kết quả điều chỉnh sau khi đóng lượt'
+STAGE_SQL="""CASE WHEN v.status='completed' THEN 'approved' WHEN r.status='approved' THEN 'approved' WHEN r.status='pending_review' THEN 'pending_review'
  WHEN r.sample_at IS NOT NULL THEN 'working' ELSE 'waiting_sample' END"""
 
 def dump(v): return json.dumps(v,ensure_ascii=False)
@@ -24,6 +25,15 @@ def number(v):
         if not n.is_finite() or abs(n)>Decimal('1e15') or n.as_tuple().exponent < -50: raise ValueError()
         return n
     except (InvalidOperation,ValueError): raise ValueError('Cần nhập số hữu hạn, dùng dấu phẩy hoặc chấm thập phân')
+
+def rounded_number(value,decimals):
+    rounded=number(value).quantize(Decimal(1).scaleb(-decimals),rounding=ROUND_HALF_UP)
+    return abs(rounded) if rounded==0 else rounded
+
+
+def display_number(value,decimals):
+    return format(rounded_number(value,decimals),'.'+str(decimals)+'f').replace('.',',')
+
 
 class Strict(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -164,11 +174,12 @@ def evaluate(definition,refs,value,sex,age):
         if value.strip() and value.strip().casefold()!=text.casefold(): flag='Bất thường'
     else:
         low,high=ref['lower_value'],ref['upper_value']
-        text=(str(low)+' – '+str(high)) if low is not None and high is not None else ('≥ '+str(low) if low is not None else '≤ '+str(high))
+        decimals=definition.get('decimals',2)
+        text=(display_number(low,decimals)+' – '+display_number(high,decimals)) if low is not None and high is not None else ('≥ '+display_number(low,decimals) if low is not None else '≤ '+display_number(high,decimals))
         if value.strip():
-            n=number(value)
-            if low is not None and n<number(low):flag='L'
-            if high is not None and n>number(high):flag='H'
+            n=rounded_number(value,decimals)
+            if low is not None and n<rounded_number(low,decimals):flag='L'
+            if high is not None and n>rounded_number(high,decimals):flag='H'
     return {'reference':{k:v for k,v in ref.items() if k not in ('id','test_id')},'reference_text':text,'flag':flag}
 
 
@@ -188,6 +199,11 @@ def report_access(c,u,rid,require,write=False):
     return r,o
 
 
+def closed_adjustment_only(r,o):
+    if o['visit_status']=='completed' and (not r['replaces_id'] or o['status']!='approved'):
+        raise HTTPException(409,'Lượt đã hoàn tất chỉ cho sửa bằng phiếu điều chỉnh của chỉ định đã duyệt')
+
+
 def report_data(c,r,o):
     if r['status']=='approved':return json.loads(r['snapshot'])
     p=dict(c.execute('SELECT full_name,code,date_of_birth,sex,phone,address,address_detail,province,commune FROM patients WHERE id=?',(o['patient_id'],)).fetchone())
@@ -198,8 +214,11 @@ def report_data(c,r,o):
     items=[]
     for line in c.execute('SELECT * FROM lab_results WHERE report_id=? ORDER BY id',(r['id'],)):
         definition=json.loads(line['definition']);value=line['value']
-        if value and definition['result_type']=='number': value=format(number(value),'.'+str(definition['decimals'])+'f')
-        items.append({**definition,'test_id':line['test_id'],'value':value,'note':line['note'],**evaluate(definition,refs.get(line['test_id'],[]),line['value'],p['sex'],p['age_months'])})
+        shown=value
+        if value and definition['result_type']=='number':
+            value=format(rounded_number(value,definition['decimals']),'.'+str(definition['decimals'])+'f')
+            shown=display_number(value,definition['decimals'])
+        items.append({**definition,'test_id':line['test_id'],'value':value,'raw_value':line['value'],'display_value':shown,'note':line['note'],**evaluate(definition,refs.get(line['test_id'],[]),line['value'],p['sex'],p['age_months'])})
     items.sort(key=lambda x:(list(GROUPS).index(x['group_name']),x['print_order'],x['test_id']))
     return {**dict(r),'visit_id':o['visit_id'],'ordering_doctor_name':printed_name(c,o['doctor_id']),'patient':p,'items':items,'performer_name':printed_name(c,r['performed_by']),'approver_name':printed_name(c,r['approved_by']),'order_name':o['name']}
 
@@ -213,19 +232,26 @@ def redact_reason(c,o,reason):
     return re.sub(r'\b(?:[A-Za-z]{1,3})?\d{6,}\b','[đã ẩn]',reason)
 
 
+def after_close_visits(c,ids):
+    if not ids:return set()
+    return {x[0] for x in c.execute("SELECT DISTINCT o.visit_id FROM lab_reports r JOIN orders o ON o.id=r.order_id WHERE o.visit_id IN ("+','.join('?' for _ in ids)+") AND EXISTS(SELECT 1 FROM audit_log a WHERE a.object_type='lab_report' AND a.object_id=r.id AND a.event='lab_adjusted_after_close')",tuple(ids))}
+
+
 def decorate_orders(c,rows):
     if not rows:return rows
     ids=[x['id'] for x in rows]
-    reports={x['order_id']:x['report_id'] for x in c.execute('SELECT order_id,MAX(id) AS report_id FROM lab_reports WHERE order_id IN ('+','.join('?' for _ in ids)+') GROUP BY order_id',ids)}
+    reports={x['order_id']:dict(x) for x in c.execute('SELECT r.order_id,r.id,r.status FROM lab_reports r WHERE r.order_id IN ('+','.join('?' for _ in ids)+') AND r.id=(SELECT MAX(n.id) FROM lab_reports n WHERE n.order_id=r.order_id)',ids)}
     for item in rows:
-        item['lab_report_id']=reports.get(item['id'])
+        report=reports.get(item['id'])
+        item['lab_report_id']=report['id'] if report else None
+        item['lab_report_status']=report['status'] if report else None
         if item['lab_report_id'] and item['status']!='approved':
             item['result_text']=None;item['file_name']=None
     return rows
 
 
 def queue(c,u,status,visit_id,limit,offset):
-    where=["o.category='lab'","o.status NOT IN ('requested','cancelled')","(r.id IS NOT NULL OR o.status='ordered')"]
+    where=["o.category='lab'","v.status<>'cancelled'","o.status NOT IN ('requested','cancelled')","(r.id IS NOT NULL OR o.status='ordered')"]
     args=[]
     if 'doctor' in u['roles'] and 'technician' not in u['roles'] and 'reception' not in u['roles']:
         where.append('v.doctor_id=?');args.append(u['id'])
@@ -237,7 +263,7 @@ def queue(c,u,status,visit_id,limit,offset):
         LEFT JOIN lab_reports r ON r.id=(SELECT MAX(x.id) FROM lab_reports x WHERE x.order_id=o.id)'''
     predicate=' AND '.join(where)
     total=c.execute('SELECT COUNT(*) '+joins+' WHERE '+predicate,args).fetchone()[0]
-    rows=c.execute('SELECT o.id AS order_id,o.visit_id,o.name,p.full_name AS patient_name,r.id AS report_id,r.version,'+STAGE_SQL+' AS stage '+joins+' WHERE '+predicate+' ORDER BY o.id DESC LIMIT ? OFFSET ?',(*args,limit,offset)).fetchall()
+    rows=c.execute('SELECT o.id AS order_id,o.visit_id,o.name,p.full_name AS patient_name,r.id AS report_id,r.version,r.status AS report_status,v.status AS visit_status,'+STAGE_SQL+' AS stage '+joins+' WHERE '+predicate+' ORDER BY o.id DESC LIMIT ? OFFSET ?',(*args,limit,offset)).fetchall()
     return {'items':[dict(x) for x in rows],'total':total}
 
 
@@ -327,6 +353,7 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
         require(u,'technician')
         with db(True) as c:
             r,o=report_access(c,u,rid,require,True)
+            closed_adjustment_only(r,o)
             if r['status']=='approved' or r['version']!=data.version:raise HTTPException(409,'Phiếu đã duyệt hoặc phiên bản đã đổi')
             rows={x['test_id']:x for x in c.execute('SELECT * FROM lab_results WHERE report_id=?',(rid,))}
             if set(rows)!={x.test_id for x in data.items}:raise HTTPException(422,'Cần đúng danh sách chỉ số trên phiếu')
@@ -339,7 +366,8 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
                 c.execute('UPDATE lab_results SET value=?,note=? WHERE report_id=? AND test_id=?',(value,line.note.strip(),rid,line.test_id))
             age_at(c.execute('SELECT date_of_birth FROM patients WHERE id=?',(o['patient_id'],)).fetchone()[0],data.sample_at)
             c.execute("UPDATE lab_reports SET status='draft',version=version+1,sample_at=?,result_at=?,comment=?,performed_by=? WHERE id=?",(data.sample_at,data.result_at,data.comment.strip(),u['id'],rid))
-            c.execute("UPDATE orders SET status='ordered' WHERE id=?",(o['id'],))
+            if o['visit_status']!='completed':
+                c.execute("UPDATE orders SET status='ordered' WHERE id=?",(o['id'],))
             audit(c,u,'lab_draft_updated','lab_report',rid,'Lưu kết quả nháp');return {'id':rid,'version':data.version+1}
 
     @app.post('/api/lab/reports/{rid}/submit')
@@ -347,10 +375,12 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
         require(u,'technician')
         with db(True) as c:
             r,o=report_access(c,u,rid,require,True)
+            closed_adjustment_only(r,o)
             if r['status']!='draft' or r['version']!=data.version:raise HTTPException(409,'Phiếu không còn là nháp hoặc phiên bản đã đổi')
             if not r['sample_at'] or not r['result_at'] or not r['performed_by'] or c.execute("SELECT 1 FROM lab_results WHERE report_id=? AND value=''",(rid,)).fetchone():raise HTTPException(422,'Cần đủ kết quả, thời điểm lấy mẫu / có kết quả và người thực hiện')
             c.execute("UPDATE lab_reports SET status='pending_review',version=version+1 WHERE id=?",(rid,))
-            c.execute("UPDATE orders SET status='pending_review' WHERE id=?",(o['id'],))
+            if o['visit_status']!='completed':
+                c.execute("UPDATE orders SET status='pending_review' WHERE id=?",(o['id'],))
             audit(c,u,'lab_draft_updated','lab_report',rid,'Gửi chờ duyệt');return {'version':data.version+1}
 
     @app.post('/api/lab/reports/{rid}/approve')
@@ -358,6 +388,7 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
         require(u,'doctor')
         with db(True) as c:
             r,o=report_access(c,u,rid,require,True)
+            closed_adjustment_only(r,o)
             if o['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ phụ trách duyệt')
             if r['status']!='pending_review' or r['version']!=data.version:raise HTTPException(409,'Phiếu chưa chờ duyệt hoặc phiên bản đã đổi')
             from .main import FILES
@@ -366,10 +397,14 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
             payload=report_data(c,r,o);payload.update(status='approved',version=data.version+1,approved_at=now(),approved_by=u['id'],approver_name=printed_name(c,u['id']))
             # Snapshot includes patient demographics, definition, references, flags, names.
             payload.pop('snapshot',None)
+            payload['adjusted_after_close']=o['visit_status']=='completed' and bool(r['replaces_id'])
             c.execute("UPDATE lab_reports SET status='approved',version=version+1,approved_at=?,approved_by=?,snapshot=? WHERE id=?",(payload['approved_at'],u['id'],dump(payload),rid))
-            summary='\n'.join(x['name']+': '+x['value']+' '+x['unit']+(' ['+x['flag']+']' if x['flag'] else '') for x in payload['items'])
-            c.execute("UPDATE orders SET status='approved',result_text=?,result_by=?,approved_by=?,approved_at=? WHERE id=?",(summary,r['performed_by'],u['id'],payload['approved_at'],o['id']))
-            status_refresh(c,o['visit_id'])
+            summary='\n'.join(x['name']+': '+x.get('display_value',x['value'])+' '+x['unit']+(' ['+x['flag']+']' if x['flag'] else '') for x in payload['items'])
+            status_sql="" if o['visit_status']=='completed' else "status='approved',"
+            c.execute("UPDATE orders SET "+status_sql+"result_text=?,result_by=?,approved_by=?,approved_at=? WHERE id=?",(summary,r['performed_by'],u['id'],payload['approved_at'],o['id']))
+            if o['visit_status']!='completed':status_refresh(c,o['visit_id'])
+            if payload['adjusted_after_close']:
+                audit(c,u,'lab_adjusted_after_close','lab_report',rid,dump({'old_report_id':r['replaces_id'],'new_report_id':rid}))
             audit(c,u,'lab_approved','lab_report',rid,'Duyệt kết quả theo chỉ số');return {'version':data.version+1,'warnings':warnings}
 
     @app.post('/api/lab/reports/{rid}/adjust',status_code=201)
@@ -394,7 +429,7 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
             for r in c.execute("SELECT r.* FROM lab_reports r JOIN orders o ON o.id=r.order_id WHERE o.visit_id=? AND r.status='approved' AND NOT EXISTS(SELECT 1 FROM lab_reports n WHERE n.replaces_id=r.id AND n.status='approved') ORDER BY r.id",(vid,)).fetchall():
                 reports.append(report_data(c,r,{}))
             waiting=c.execute("SELECT COUNT(*) FROM orders o WHERE o.visit_id=? AND o.category='lab' AND o.status IN ('ordered','pending_review')",(vid,)).fetchone()[0]
-            return {'reports':reports,'waiting':waiting}
+            return {'reports':reports,'waiting':waiting,'adjusted_after_close':vid in after_close_visits(c,[vid])}
 
     @app.get('/api/lab/visits/{vid}/history/{tid}')
     def history(vid:int,tid:int,u=Depends(principal)):
@@ -408,7 +443,7 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
             for row in rows:
                 p=json.loads(row['snapshot'])
                 for item in p['items']:
-                    if item['test_id']==tid:result.append({'report_id':p['id'],'sample_at':p['sample_at'],'value':item['value'],'flag':item['flag'],'unit':item['unit']})
+                    if item['test_id']==tid:result.append({'report_id':p['id'],'sample_at':p['sample_at'],'value':item['value'],'display_value':item.get('display_value',item['value']),'raw_value':item.get('raw_value',item['value']),'flag':item['flag'],'unit':item['unit'],'adjusted_after_close':p.get('adjusted_after_close',False)})
             audit(c,u,'lab_history_viewed','visit',vid,'Chỉ số #'+str(tid));return result
 
     @app.get('/api/lab/reports/{rid}/form')
@@ -419,6 +454,8 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
             r,o=report_access(c,u,rid,require)
             if r['status']!='approved' and 'technician' not in u['roles']:raise HTTPException(403,'Chỉ in phiếu đã duyệt')
             payload=report_data(c,r,o)
+            successor=c.execute("SELECT id FROM lab_reports WHERE replaces_id=? AND status='approved'",(rid,)).fetchone()
+            if successor:payload['superseded_by']=successor['id']
             if not any(x['group_name']==group for x in payload['items']):raise HTTPException(404,'Nhóm không có chỉ định trên phiếu')
             audit(c,u,'lab_printed','lab_report',rid,'Nhóm '+GROUPS[group]+'; '+fmt)
         raw=render(payload,group,fmt)
