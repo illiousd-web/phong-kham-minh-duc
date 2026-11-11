@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from .database import PGConnection
 from .domain import ensure_open, invoice, revision
 from .labels import parse_day
-from .manager_visits import fold_name, _utc_start
+from .manager_visits import fold_name, _utc_start, _day
 
 
 class AllergiesInput(BaseModel):
@@ -33,7 +33,7 @@ class CloseInput(BaseModel):
 
 def doctor_queue(c, uid, day='', q=''):
     try:
-        day = parse_day(day) or ''
+        day = _day(day, 'Ngày tiếp đón') or ''
         end = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat() if day else ''
     except ValueError:
         raise HTTPException(422, 'Ngày phải có thật, dạng dd/mm/yyyy')
@@ -58,7 +58,8 @@ def doctor_queue(c, uid, day='', q=''):
         WHERE v.doctor_id=? AND {status} ORDER BY v.created_at,v.id''',
         (*args, uid)).fetchall()
     needle = fold_name(q[:100])
-    return {'day': day, 'visits': [dict(r) for r in rows if needle in fold_name(r['patient_name'])]}
+    from .administrative import months_old
+    return {'day': day, 'visits': [dict(r,age_months=months_old(r['date_of_birth'])) for r in rows if needle in fold_name(r['patient_name'])]}
 
 
 def install_doctor_workspace(app, db, principal, require, audit, visit_access, now):

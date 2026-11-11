@@ -24,7 +24,7 @@ def ctx(tmp_path,monkeypatch):
         return {'Authorization':'Bearer '+x.json()['access_token']}
     h={name:role(name) for name in ('letan','bs_noi','bs_san','kythuat','duoc','thungan')}
     p=client.post('/api/patients',headers=h['letan'],json={'full_name':'Bệnh nhân mô phỏng Trần Ngọc A','sex':'Nữ',
-       'date_of_birth':'1991-09-20','phone':'0000000000','citizen_id':'DEMO-ID-567','address':'Địa chỉ giả lập'}).json()
+       'date_of_birth':'1991-09-20','phone':'0000000000','citizen_id':'000000000567','address':'Địa chỉ giả lập'}).json()
     doc=next(x['id'] for x in client.get('/api/staff',headers=h['letan']).json() if x['username']=='bs_noi')
     v=client.post('/api/visits',headers=h['letan'],json={'patient_id':p['id'],'doctor_id':doc,'service_id':1}).json()['id']
     clinical={'chief_complaint':'Triệu chứng mô phỏng','history':'Bệnh sử giả lập','vitals':'Mạch 72 lần/phút (giả lập)',

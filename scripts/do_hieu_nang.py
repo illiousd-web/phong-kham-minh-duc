@@ -384,17 +384,25 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                 # M0 migration is deliberately applied only AFTER the old-code profile.
                 # Same populated C5 database, no regenerated or reduced dataset.
                 from app.m0_migration import migrate_m0
+                from app.administrative_migration import migrate_administrative
+                from app.patient_catalog import migrate_public_catalog
                 from app.database import PGConnection, record_factory
                 old_state = database_state(url)
                 with psycopg.connect(url, row_factory=record_factory) as con:
                     started = time.perf_counter()
                     migrate_m0(PGConnection(con))
+                    migrate_administrative(PGConnection(con))
+                    migrate_public_catalog(PGConnection(con))
                     migrate_m0(PGConnection(con))
+                    migrate_administrative(PGConnection(con))
+                    migrate_public_catalog(PGConnection(con))
                     migration_seconds = time.perf_counter() - started
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 1
+                expected_state['tables']['schema_migrations'] += 3
+                expected_state['tables']['audit_log'] += 1
+                expected_state['tables']['patient_catalog'] = 3411
                 assert new_state == expected_state, 'Migration M0 làm đổi dữ liệu C5'
                 report['m0_migration'] = {'seconds': migration_seconds, 'preserved': True,
                     'visits': new_state['tables']['visits'], 'patients': new_state['tables']['patients']}

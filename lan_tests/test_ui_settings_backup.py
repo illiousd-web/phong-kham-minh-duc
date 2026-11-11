@@ -38,7 +38,7 @@ def test_backup_restore_keeps_ui_settings_and_defaults_on_bad_file(tmp_path, cli
     live = settings_path(Path(os.environ['CLINIC_UPLOAD_DIR']))
     key = tmp_path / 'key'
     key.write_bytes(secrets.token_bytes(32))
-    chosen = {'advance_payment': True, 'addendum': False, 'controlled_drugs': False}
+    chosen = {'default_province_code': None, 'block_practitioner_scope': False, 'advance_payment': True, 'addendum': False, 'controlled_drugs': False}
     created = []
     try:
         assert admin.put('/api/ui-settings', json=chosen).json() == {**chosen, 'source': 'file'}

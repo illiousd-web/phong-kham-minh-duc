@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from .resources import export_slot
+from .administrative import redact_document
+from .practitioners import printed_name
 from .forms import generate_docx, generate_pdf, TEMPLATE_BY_TYPE
 
 
@@ -12,12 +14,16 @@ def mount_forms(app, db, principal, require, audit):
     def get_visit(c, vid):
         r=c.execute('''SELECT v.id AS visit_id,v.doctor_id,v.status AS visit_status,v.created_at,
              v.chief_complaint,v.history,v.vitals,v.diagnosis,v.treatment,v.follow_up,
+             v.weight_kg,v.escort_name,v.escort_relationship,v.escort_phone,
+             p.document_number,p.ethnicity,p.occupation,p.workplace,p.province,p.commune,p.address_detail,
              p.full_name,p.code,p.date_of_birth,p.sex,p.phone,p.citizen_id,p.address,
              u.full_name AS doctor_name
              FROM visits v JOIN patients p ON p.id=v.patient_id JOIN users u ON u.id=v.doctor_id
              WHERE v.id=?''',(vid,)).fetchone()
         if not r:raise HTTPException(404,'Không có lượt khám')
-        return dict(r)
+        result=redact_document(dict(r))
+        result['doctor_name']=printed_name(c,result['doctor_id'])
+        return result
 
     def ensure_assigned(u,c,vid):
         v=get_visit(c,vid)
@@ -28,15 +34,16 @@ def mount_forms(app, db, principal, require, audit):
     def response(kind,ctx,fmt):
         if fmt not in ('docx','pdf'):raise HTTPException(422,'Chỉ hỗ trợ pdf hoặc docx')
         k={'reception':'intake','clinical':'visit'}.get(kind,kind)
-        patient={key:ctx.get(key) for key in ('full_name','code','date_of_birth','sex','phone','citizen_id','address')}
-        visit={key:ctx.get(key) for key in ('chief_complaint','history','vitals','diagnosis','treatment','follow_up','created_at')}
+        patient={key:ctx.get(key) for key in ('full_name','code','date_of_birth','sex','phone','citizen_id','address','document_number','ethnicity','occupation','workplace','province','commune','address_detail')}
+        visit={key:ctx.get(key) for key in ('chief_complaint','history','vitals','diagnosis','treatment','follow_up','created_at','weight_kg','escort_name','escort_relationship','escort_phone')}
         visit.update(id=ctx['visit_id'],doctor_id=ctx['doctor_id'],status=ctx['visit_status'])
         payload={'patient':patient,'visit':visit,'doctor_name':ctx['doctor_name'],
                  'service_label':'Khám ngoại trú (mô phỏng)','orders':ctx.get('orders',[]),'addenda':ctx.get('addenda',[])}
         if 'order_id' in ctx:
             payload['order']={'id':ctx['order_id'],'name':ctx['order_name'],'category':ctx['category'],
                               'status':ctx['order_status'],'result_text':ctx['result_text'],
-                              'created_at':ctx['order_created_at'],'file_name':ctx.get('file_name')}
+                              'created_at':ctx['order_created_at'],'file_name':ctx.get('file_name'),
+                              'approved_by_name':ctx.get('approved_by_name'),'result_by_name':ctx.get('result_by_name')}
         if 'rx_id' in ctx:
             payload['rx']={'id':ctx['rx_id'],'drug_lines':ctx['drug_lines'],'instructions':ctx['instructions'],
                            'follow_up':ctx.get('follow_up'),'created_at':ctx['rx_created_at']}
@@ -66,6 +73,7 @@ def mount_forms(app, db, principal, require, audit):
             if kind=='followup' and not ctx.get('follow_up'):
                 raise HTTPException(409,'Chưa có ngày hẹn tái khám')
             if kind=='clinical':ctx['addenda']=[dict(x) for x in c.execute("SELECT * FROM visit_addenda WHERE visit_id=? AND status='approved' ORDER BY id",(visit_id,))]
+            for appendix in ctx.get('addenda',[]):appendix['author_name']=printed_name(c,appendix['created_by'])
             result=response(kind,ctx,format)
             audit(c,u,'demo_form_exported','visit',visit_id,f'{kind}.{format}')
             return result
@@ -90,9 +98,11 @@ def mount_forms(app, db, principal, require, audit):
             else:
                 if o['status']!='approved':raise HTTPException(409,'Kết quả chưa duyệt')
                 render_kind=o['category']
+            ctx['approved_by_name']=printed_name(c,o['approved_by'])
+            ctx['result_by_name']=printed_name(c,o['result_by'])
             ctx.update(order_id=o['id'],order_name=o['name'],category=o['category'],
                        order_status=o['status'],result_text=o['result_text'],
-                       order_created_at=o['created_at'],approved_by_name=o['approved_by_name'],file_name=o['file_name'])
+                       order_created_at=o['created_at'],approved_by_name=ctx['approved_by_name'],file_name=o['file_name'])
             result=response(render_kind,ctx,format)
             audit(c,u,'demo_form_exported','order',order_id,f'{render_kind}.{format}')
             return result

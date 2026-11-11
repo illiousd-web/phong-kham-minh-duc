@@ -1,7 +1,7 @@
-"""Cài đặt hiển thị giao diện (bật/tắt chức năng phụ), lưu ở tệp JSON phía máy chủ.
+"""Cài đặt chức năng và tỉnh mặc định, lưu ở tệp JSON phía máy chủ.
 
-Chỉ quyết định giao diện có hiện chức năng hay không. Các API nghiệp vụ vẫn
-kiểm tra quyền như cũ, kể cả khi chức năng đang tắt trên giao diện.
+Các API nghiệp vụ kiểm tra quyền riêng. Công tắc chặn phạm vi áp dụng tại API;
+tỉnh mặc định chỉ điền gợi ý nơi cư trú khi lập hồ sơ mới.
 
 Không thêm bảng CSDL. Tệp nằm trong thư mục con 'caidat' cạnh thư mục tệp đính
 kèm (mặc định CLINIC_DATA_DIR/caidat/ui_settings.json; trên Windows chỉ thư mục
@@ -15,16 +15,19 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 from pathlib import Path
 
 from fastapi import Depends
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, StrictBool, Field
 
 FILE_NAME = 'ui_settings.json'
 FOLDER = 'caidat'
 DEFAULTS = {
+    'default_province_code': None,
+    'block_practitioner_scope': False, # Chặn duyệt ngoài phạm vi; mặc định chỉ cảnh báo
     'advance_payment': False,   # Ứng trước tiền
     'addendum': True,           # Phụ lục đính chính sau khóa hồ sơ
     'controlled_drugs': True,   # Thuốc kiểm soát đặc biệt
@@ -36,6 +39,8 @@ log = logging.getLogger('clinic')
 
 class SettingsInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    default_province_code: str | None = Field(default=None, pattern=r'^[0-9]{2}$')
+    block_practitioner_scope: StrictBool | None = None
     advance_payment: StrictBool | None = None
     addendum: StrictBool | None = None
     controlled_drugs: StrictBool | None = None
@@ -55,7 +60,10 @@ def parse_settings(raw: bytes | str) -> dict:
     result = dict(DEFAULTS)
     for key in DEFAULTS:
         if key in stored:
-            if not isinstance(stored[key], bool):
+            if key == 'default_province_code':
+                if stored[key] is not None and (not isinstance(stored[key],str) or not re.fullmatch(r'[0-9]{2}',stored[key])):
+                    raise ValueError('Mã tỉnh mặc định không hợp lệ')
+            elif not isinstance(stored[key], bool):
                 raise ValueError(f'Giá trị {key} không phải true/false')
             result[key] = stored[key]
     return result
@@ -93,7 +101,7 @@ def read_settings(path: Path) -> dict:
 
 
 def serialize(values: dict) -> bytes:
-    return json.dumps({k: bool(values[k]) for k in DEFAULTS}, ensure_ascii=False, indent=1).encode('utf-8')
+    return json.dumps({k: values[k] for k in DEFAULTS}, ensure_ascii=False, indent=1).encode('utf-8')
 
 
 def prepare_settings(path: Path, values: dict) -> Path:
@@ -141,13 +149,18 @@ def install_ui_settings(app, db, principal, require, audit, uploads: Path):
     @app.put('/api/ui-settings')
     def put_ui_settings(data: SettingsInput, u=Depends(principal)):
         require(u, 'admin')
-        changes = {k: v for k, v in data.model_dump().items() if v is not None}
+        changes = {k: v for k, v in data.model_dump().items() if v is not None or (k=='default_province_code' and k in data.model_fields_set)}
+        if changes.get('default_province_code'):
+            from fastapi import HTTPException
+            with db() as c:
+                if not c.execute("SELECT 1 FROM patient_catalog WHERE kind='province' AND code=? AND active=1",(changes['default_province_code'],)).fetchone():
+                    raise HTTPException(422,'Tỉnh mặc định không có hoặc đã ngừng dùng')
         with _lock:
             current, source = load_settings(path)
             before = dict(current)
             current.update(changes)
             if current != before or source != 'file':
-                diff = ', '.join(f'{k}={"bật" if current[k] else "tắt"}' for k in DEFAULTS if current[k] != before[k]) or 'ghi lại tệp cài đặt'
+                diff = ', '.join(('tỉnh mặc định='+str(current[k] or 'để trống')) if k=='default_province_code' else f'{k}={"bật" if current[k] else "tắt"}' for k in DEFAULTS if current[k] != before[k]) or 'ghi lại tệp cài đặt'
                 # Nhất quán: tệp tạm -> nhật ký (commit) -> thay tệp. Nhật ký lỗi thì tệp không đổi.
                 tmp = prepare_settings(path, current)
                 try:

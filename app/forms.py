@@ -89,6 +89,27 @@ def multiline(doc,header,content,lines=4):
             break
     return found
 
+def format_patient_address(p):
+    parts = [clean(p.get(key)) for key in ('address_detail', 'commune', 'province')]
+    return ', '.join(x for x in parts if x) or clean(p.get('address')) or '—'
+
+
+def administrative_lines(ctx):
+    from .administrative import months_old
+    p=ctx['patient'];v=ctx['visit']
+    months=months_old(p.get('date_of_birth'))
+    lines=[]
+    if p.get('address'):lines.append(('Địa chỉ cũ',p['address']))
+    if months is not None and months<72:lines.append(('Tuổi',str(months)+' tháng'))
+    for key,label in [('ethnicity','Dân tộc'),('occupation','Nghề nghiệp'),('workplace','Nơi làm việc / học tập'),
+                      ('province','Tỉnh / thành'),('commune','Xã / phường / đặc khu'),('address_detail','Địa chỉ chi tiết')]:
+        if p.get(key):lines.append((label,p[key]))
+    if v.get('weight_kg'):lines.append(('Cân nặng khi khám',str(v['weight_kg'])+' kg'))
+    for key,label in [('escort_name','Người đưa trẻ đi khám'),('escort_relationship','Quan hệ với trẻ'),('escort_phone','Điện thoại người đưa trẻ')]:
+        if v.get(key):lines.append((label,v[key]))
+    return lines
+
+
 def fill_common(doc,ctx):
     p=ctx['patient'];v=ctx['visit'];
     for table in doc.tables:
@@ -131,9 +152,9 @@ def generate_docx(kind, ctx):
             doc_text(t.cell(0,1).paragraphs[0],f"Ngày sinh: {fmt_date(p['date_of_birth'])}")
             doc_text(t.cell(1,0).paragraphs[0],f"Giới tính: {p['sex']}")
             doc_text(t.cell(1,1).paragraphs[0],f"Số điện thoại: {p['phone'] or '—'}")
-            doc_text(t.cell(2,0).paragraphs[0],f"Số căn cước / định danh: {p['citizen_id'] or '—'}")
+            doc_text(t.cell(2,0).paragraphs[0],f"Số căn cước / định danh: {p.get('document_number') or p.get('citizen_id') or '—'}")
             doc_text(t.cell(2,1).paragraphs[0],f"Mã bệnh nhân: {p['code']}")
-            doc_text(t.cell(3,0).paragraphs[0],f"Địa chỉ liên hệ: {p['address'] or '—'}")
+            doc_text(t.cell(3,0).paragraphs[0],f"Địa chỉ liên hệ: {format_patient_address(p)}")
         t=doc.tables[1]
         doc_text(t.cell(1,0).paragraphs[0],'Khám dịch vụ (mô phỏng)')
         doc_text(t.cell(1,1).paragraphs[0],ctx['doctor_name'])
@@ -211,9 +232,9 @@ def generate_docx(kind, ctx):
         for x in doc_body:
             for label,val in [
               ('Mã đơn thuốc',f"MD-RX-{rx['id']:06d} (MÃ NHÁP, CHƯA LIÊN THÔNG)"),
-              ('Họ tên',p['full_name']),('Số định danh / căn cước / hộ chiếu (nếu có)',p['citizen_id'] or '—'),
+              ('Họ tên',p['full_name']),('Số định danh / căn cước / hộ chiếu (nếu có)',p.get('document_number') or p.get('citizen_id') or '—'),
               ('Ngày sinh',f"{fmt_date(p['date_of_birth'])}   Giới tính: {p['sex']}"),
-              ('Nơi thường trú / tạm trú / ở hiện tại',p['address'] or '—'),
+              ('Nơi thường trú / tạm trú / ở hiện tại',format_patient_address(p)),
               ('Chẩn đoán',v.get('diagnosis') or 'Chưa nhập'),
               ('Số điện thoại liên hệ',p.get('phone') or '—')
             ]:
@@ -241,6 +262,24 @@ def generate_docx(kind, ctx):
                ('Chuyên khoa','Theo bác sĩ phụ trách')]:
                 if x.text.startswith(label+':'):line(x,label,val)
         multiline(doc,'Lý do / mục đích tái khám','Theo kết luận bác sĩ, xem phiếu khám',2)
+    metadata = administrative_lines(ctx)
+    if kind in ('intake','visit','order','lab','ultrasound','xray','ecg'):
+        table = doc.tables[0]
+        if kind != 'intake':
+            cells = table.add_row().cells
+            cells[0].merge(cells[-1])
+            doc_text(cells[0].paragraphs[0], 'Địa chỉ: '+format_patient_address(p))
+        for label, value in metadata:
+            cells = table.add_row().cells
+            cells[0].merge(cells[-1])
+            doc_text(cells[0].paragraphs[0], label+': '+str(value))
+    else:
+        prefix = 'Chẩn đoán:' if kind == 'rx' else 'Ngày khám gần nhất:'
+        anchor = next(x for x in doc.paragraphs if x.text.startswith(prefix))
+        if kind == 'followup':
+            anchor.insert_paragraph_before('Địa chỉ: '+format_patient_address(p))
+        for label, value in metadata:
+            anchor.insert_paragraph_before(label+': '+str(value))
     if kind=='visit':
         for appendix in ctx.get('addenda',[]):
             doc.add_heading('PHỤ LỤC ĐÃ DUYỆT #'+str(appendix['id']),level=2)
@@ -293,10 +332,11 @@ def generate_pdf(kind,ctx):
     story.append(Paragraph(pdf_safe(TITLES[kind]),styles['VnTitle']))
     add('Mã bệnh nhân',p['code']);add('Họ tên người bệnh',p['full_name']);add('Ngày sinh - Giới tính',f"{fmt_date(p['date_of_birth'])} – {p['sex']}")
     add('Mã lượt khám',v['id'])
+    for label,value in administrative_lines(ctx):add(label,value)
     if kind in ('intake','visit','order','rx','followup'):
         add('Bác sĩ',ctx['doctor_name'])
     if kind=='intake':
-        add('Địa chỉ',p.get('address'));add('Điện thoại',p.get('phone'))
+        add('Địa chỉ',format_patient_address(p));add('Điện thoại',p.get('phone'))
         add('Ngày tiếp đón',fmt_date(v['created_at']));add('Dịch vụ',ctx['service_label'])
     if kind=='visit':
         for label,key in [('Lý do khám','chief_complaint'),('Bệnh sử','history'),('Sinh hiệu','vitals'),('Chẩn đoán','diagnosis'),('Điều trị','treatment')]:add(label,v.get(key))
@@ -324,8 +364,8 @@ def generate_pdf(kind,ctx):
         add('Trạng thái',vi(o.get('status')));add('Thời điểm duyệt',fmt_date(o.get('approved_at')))
         if o.get('file_name'):add('Tệp đính kèm',o['file_name'])
     if kind=='rx':
-        add('Mã đơn nháp',r.get('id'));add('Số định danh (nếu có)',p.get('citizen_id'))
-        add('Địa chỉ',p.get('address'));add('Chẩn đoán',v.get('diagnosis'))
+        add('Mã đơn nháp',r.get('id'));add('Số định danh (nếu có)',p.get('document_number') or p.get('citizen_id'))
+        add('Địa chỉ',format_patient_address(p));add('Chẩn đoán',v.get('diagnosis'))
         heading('Danh sách thuốc - chưa có hiệu lực kê đơn')
         rows=[[Paragraph('Tên thuốc (giả lập)',styles['VnBody']),Paragraph('SL',styles['VnBody']),Paragraph('Cách dùng',styles['VnBody'])]]
         for name,qty,dosage in rx_rows(ctx):rows.append([Paragraph(pdf_safe(name),styles['VnBody']),Paragraph(pdf_safe(qty),styles['VnBody']),Paragraph(pdf_safe(dosage),styles['VnBody'])])
