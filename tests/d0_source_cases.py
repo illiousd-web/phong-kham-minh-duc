@@ -21,6 +21,12 @@ def check_seeded(c):
     assert c.execute('SELECT code FROM tech_catalog_pl01 WHERE code LIKE ? LIMIT 1',('BS_%',)).fetchone()
 
 def check_source_api(clients,ids,db,service):
+    admin=clients['admin']
+    prior=admin.get('/api/standards/config').json()['require_primary_icd10']
+    try:_check_source_api(clients,ids,db,service)
+    finally:admin.put('/api/standards/settings',json={'require_primary_icd10':prior})
+
+def _check_source_api(clients,ids,db,service):
     a,d,r=clients['admin'],clients['doctor'],clients['reception']
     a.put('/api/standards/settings',json={'require_primary_icd10':True})
     from app.d0_sources import seed_sources
@@ -38,9 +44,9 @@ def check_source_api(clients,ids,db,service):
     rxurl='/api/clinical-prescriptions/'+str(rx.json()['id'])
     blocked=d.post(rxurl+'/lock',json={'version':0});assert blocked.status_code==422 and 'primary_icd10' in blocked.text
     with db() as c:
-        flags=[c.execute('SELECT code FROM icd10 WHERE '+condition+' LIMIT 1').fetchone()[0] for condition in ('not_primary=1','death_only=1',"sex='Nam'",'replaced=1')]
-        warning=c.execute("SELECT code FROM icd10 WHERE discouraged_primary=1 AND not_primary=0 AND death_only=0 AND replaced=0 AND sex IN ('','Nữ') LIMIT 1").fetchone()[0]
-        glyph_row=c.execute("SELECT code,ma_benh_khong_dau FROM icd10 WHERE (code LIKE ? OR code LIKE ?) AND not_primary=0 AND death_only=0 AND replaced=0 AND sex IN ('','Nữ') LIMIT 1",('%†%','%*%')).fetchone()
+        flags=[c.execute('SELECT code FROM icd10 WHERE active=1 AND '+condition+' LIMIT 1').fetchone()[0] for condition in ('not_primary=1','death_only=1',"sex='Nam'",'replaced=1')]
+        warning=c.execute("SELECT code FROM icd10 WHERE active=1 AND discouraged_primary=1 AND not_primary=0 AND death_only=0 AND replaced=0 AND sex IN ('','Nữ') LIMIT 1").fetchone()[0]
+        glyph_row=c.execute("SELECT code,ma_benh_khong_dau FROM icd10 WHERE active=1 AND (code LIKE ? OR code LIKE ?) AND not_primary=0 AND death_only=0 AND replaced=0 AND sex IN ('','Nữ') LIMIT 1",('%†%','%*%')).fetchone()
         glyph=glyph_row['code']
     for code in flags:assert d.put(f'/api/visits/{v}/diagnosis-codes',json={'version':1,'primary':code}).status_code==422
     children=d.get('/api/standards/icd10/'+flags[3]+'/children');assert children.status_code==200 and children.json()
