@@ -13,11 +13,11 @@ try {
     Copy-D0PublicCatalogs -SourceRoot $source -DestinationRoot $target
     Copy-D0PublicCatalogs -SourceRoot $target -DestinationRoot $target
     $before = @{}
-    foreach ($name in (Get-D0PublicCatalogs).Keys) { $before[$name] = (Get-FileHash (Join-Path $target ('data\danh_muc_goc' + $name))).Hash }
+    foreach ($name in (Get-D0PublicCatalogs).Keys) { $before[$name] = (Get-FileHash (Join-Path (Join-Path $target 'data\danh_muc_goc') $name)).Hash }
     Add-Content -LiteralPath (Join-Path $source 'data\danh_muc_goc\ICD10_TT06_2026.csv') -Value 'SAI GIA LAP'
     $blocked = $false
     try { Copy-D0PublicCatalogs -SourceRoot $source -DestinationRoot $target } catch { $blocked = $true }
     if (-not $blocked) { throw 'Invalid source hash must stop before writing' }
-    foreach ($name in $before.Keys) { if ((Get-FileHash (Join-Path $target ('data\danh_muc_goc' + $name))).Hash -ne $before[$name]) { throw 'Destination changed after invalid source' } }
+    foreach ($name in $before.Keys) { if ((Get-FileHash (Join-Path (Join-Path $target 'data\danh_muc_goc') $name)).Hash -ne $before[$name]) { throw 'Destination changed after invalid source' } }
     Write-Output 'PASS: five exact public files, no private files, idempotent copy, invalid hash leaves destination intact'
 } finally { if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force } }
