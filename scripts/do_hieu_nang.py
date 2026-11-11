@@ -387,6 +387,7 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                 from app.administrative_migration import migrate_administrative
                 from app.patient_catalog import migrate_public_catalog
                 from app.m6_migration import migrate_m6, TABLES
+                from app.m5_migration import migrate_m5, TABLES as M5_TABLES, FRAMEWORK
                 from app.database import PGConnection, record_factory
                 old_state = database_state(url)
                 with psycopg.connect(url, row_factory=record_factory) as con:
@@ -395,16 +396,19 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                     migrate_administrative(PGConnection(con))
                     migrate_public_catalog(PGConnection(con))
                     migrate_m6(PGConnection(con), postgres=True)
+                    migrate_m5(PGConnection(con), postgres=True)
                     migrate_m0(PGConnection(con))
                     migrate_administrative(PGConnection(con))
                     migrate_public_catalog(PGConnection(con))
                     migrate_m6(PGConnection(con), postgres=True)
+                    migrate_m5(PGConnection(con), postgres=True)
                     migration_seconds = time.perf_counter() - started
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 4
-                expected_state['tables'].update({name: 0 for name in TABLES})
+                expected_state['tables']['schema_migrations'] += 5
+                expected_state['tables'].update({name: 0 for name in TABLES+M5_TABLES})
+                expected_state['tables']['lab_tests'] = sum(len(v) for v in FRAMEWORK.values())
                 expected_state['tables']['audit_log'] += 1
                 expected_state['tables']['patient_catalog'] = 3411
                 assert new_state == expected_state, 'Migration M0 làm đổi dữ liệu C5'

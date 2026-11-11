@@ -133,3 +133,8 @@ Cài đặt lưu trong tệp `caidat/ui_settings.json` cạnh thư mục tệp �
 ## Đơn thuốc đã khóa và danh mục M6
 
 Bác sĩ, lễ tân và dược có menu Đơn thuốc đã khóa, lọc trạng thái và phân trang; lễ tân/dược chỉ xem và in đơn M6 đã khóa. Bác sĩ xuất JSON nội bộ, luôn CHƯA LIÊN THÔNG. Quản trị nhập mã cơ sở và thông tin đơn vị ở Cài đặt; vào Thuốc chưa rà soát để xem trước/nhập Excel, sửa, gộp hoặc ngừng dùng danh mục. Danh mục không tự đổi nội dung đơn đã khóa. Chưa có ký số, liên thông thật, đơn N/H hoặc kê 90 ngày.
+
+
+## Xét nghiệm theo chỉ số (M5)
+
+Quản trị mở **Chỉ số xét nghiệm** để rà khung, nhập tham chiếu và liên kết dịch vụ; phần mềm không có tham chiếu y khoa sẵn. Kỹ thuật viên mở **Xét nghiệm theo chỉ số**, nhập mẫu/kết quả, lưu nháp rồi gửi. Bác sĩ phụ trách mở nút **Duyệt phiếu theo chỉ số** trong Chỉ định; kết quả chỉ xuất hiện ở màn khám sau duyệt. Sửa sau duyệt bằng phiếu điều chỉnh có lý do, giữ bản cũ. Lễ tân mở **Phiếu xét nghiệm** để in từng nhóm đã duyệt. [Hướng dẫn M5 và Excel](M5_XET_NGHIEM.md).

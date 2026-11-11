@@ -5,7 +5,7 @@ from tests.test_workflows import client, token, prepare_visit
 def test_counts_are_numbers_scoped_to_role():
     prepare_visit('bs_noi')
     assert client.get('/api/queue-counts').status_code == 401
-    expected = {'letan': {'reception'}, 'bs_noi': {'doctor'}, 'bs_san': {'doctor'}, 'kythuat': {'lab'},
+    expected = {'letan': {'reception'}, 'bs_noi': {'doctor','lab_pending_review'}, 'bs_san': {'doctor','lab_pending_review'}, 'kythuat': {'lab'},
                 'dieuduong': {'nurse'}, 'duoc': {'pharmacy'}, 'thungan': {'cashier'}, 'quanly': {'manager'}, 'quantri': set()}
     for user, keys in expected.items():
         data = client.get('/api/queue-counts', headers=token(user)).json()

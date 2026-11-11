@@ -20,6 +20,9 @@ def install_queue_counts(app, peek, load_ui, db):
                 predicate,args=visit_predicate(u)
                 total=count('visits v JOIN patients p ON p.id=v.patient_id WHERE '+predicate,args)
                 for role in roles & {'reception','doctor','nurse'}:out[role]=total
+            if 'doctor' in roles:
+                from .m5 import queue
+                out['lab_pending_review']=queue(c,u,'pending_review',None,1,0,count_only=True)
             if 'technician' in roles:
                 out['lab']=count("orders o JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id WHERE o.status='ordered'")
             if 'pharmacy' in roles:

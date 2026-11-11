@@ -96,12 +96,15 @@ def install_doctor_workspace(app, db, principal, require, audit, visit_access, n
                 WHERE patient_id=? AND doctor_id=? AND (created_at<? OR (created_at=? AND id<?))
                 ORDER BY created_at DESC,id DESC''', (v['patient_id'], u['id'], v['created_at'], v['created_at'], vid)).fetchall()
             result = [dict(r, prescriptions=[], results=[]) for r in rows]
+            from .m5 import after_close_visits
+            adjusted=after_close_visits(c,[r['id'] for r in result])
+            for r in result:r['adjusted_after_close']=r['id'] in adjusted
             indexed = {r['id']: r for r in result}
             if indexed:
                 marks = ','.join('?' for _ in indexed)
                 for r in c.execute(f'SELECT visit_id,drug_lines,instructions,status FROM prescriptions WHERE visit_id IN ({marks})', tuple(indexed)):
                     indexed[r['visit_id']]['prescriptions'].append(dict(r))
-                for r in c.execute(f"SELECT visit_id,name,result_text,status FROM orders WHERE visit_id IN ({marks}) AND result_text IS NOT NULL AND result_text<>''", tuple(indexed)):
+                for r in c.execute(f"SELECT visit_id,name,result_text,status FROM orders WHERE visit_id IN ({marks}) AND result_text IS NOT NULL AND result_text<>'' AND (status='approved' OR NOT EXISTS(SELECT 1 FROM lab_reports lr WHERE lr.order_id=orders.id))", tuple(indexed)):
                     indexed[r['visit_id']]['results'].append(dict(r))
             audit(c, u, 'patient_history_viewed', 'visit', vid)
             return result
