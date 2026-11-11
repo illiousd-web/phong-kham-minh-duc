@@ -14,7 +14,7 @@ from .m6 import decimal
 
 def content(p, status):
     f = p['facility']; person = p['patient']; advice = p['advice']
-    head = [('Mã đơn thuốc', p['local_code'] or 'MÃ NHÁP – CHƯA CÓ MÃ CƠ SỞ'),
+    head = [('Mã đơn thuốc', p['local_code'] or ('MÃ NHÁP – CHƯA KHÓA ĐƠN' if f['clinic_facility_code'] else 'MÃ NHÁP – CHƯA CÓ MÃ CƠ SỞ')),
             ('Tên đơn vị', f['clinic_name']), ('Địa chỉ cơ sở', f['clinic_address']), ('Điện thoại cơ sở', f['clinic_phone'])]
     if status == 'draft': head.append(('', 'NHÁP – CHƯA CÓ GIÁ TRỊ'))
     if status == 'cancelled': head.append(('', 'ĐƠN ĐÃ HỦY – KHÔNG CÓ GIÁ TRỊ'))

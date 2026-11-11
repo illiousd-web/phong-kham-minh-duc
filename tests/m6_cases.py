@@ -30,6 +30,11 @@ def check_m6(clients, ids, db, service):
         rid=created.json()['id'];url=f'/api/clinical-prescriptions/{rid}'
         assert pharmacy.get(url).status_code==403
         detail=d.get(url).json(); assert detail['items'][0]['quantity']=='14'
+        assert len(detail['local_code'])==14 and detail['local_code'].startswith('ZZ001')
+        draft=d.get(url+'/form?fmt=docx');assert draft.status_code==200
+        draft_doc=Document(io.BytesIO(draft.content));draft_text=' '.join(x.text for x in draft_doc.paragraphs)
+        assert detail['local_code'] in draft_text and 'NHÁP – CHƯA CÓ GIÁ TRỊ' in draft_text
+        assert 'CHƯA CÓ MÃ CƠ SỞ' not in draft_text
         did=detail['items'][0]['drug_id']
         drug=next(x for x in a.get('/api/drugs').json() if x['id']==did)
         assert drug['review_status']=='unreviewed' and not drug['ingredient']
@@ -79,7 +84,7 @@ def check_m6(clients, ids, db, service):
         body['version']=version
         assert d.put(url,json=body).status_code==200;version+=1
         locked=d.post(url+'/lock',json={'version':version});assert locked.status_code==200,locked.text
-        code=locked.json()['local_code'];assert len(code)==14 and code.startswith('ZZ001') and code.endswith('-C')
+        code=locked.json()['local_code'];assert code==detail['local_code'];assert len(code)==14 and code.startswith('ZZ001') and code.endswith('-C')
         assert d.put(url,json={**body,'version':version+1}).status_code==409
         value=d.get(url+'/json').json()
         assert value['schema_version']=='1.0' and value['national_code'] is None and value['items'][0]['toxic']

@@ -14,7 +14,7 @@ Dữ liệu được thêm bằng migration 8; bảng tiền và kho hiện có 
 
 | Mục | Trường / nguồn | Cách thể hiện |
 |---|---|---|
-| 4.1 Mã đơn | `clinic_facility_code`, `clinical_prescriptions.local_code` | 5 ký tự cơ sở + 7 ký tự đơn + `-C`, tổng 14 ký tự; ràng buộc duy nhất. Thiếu mã cơ sở: dòng MÃ NHÁP – CHƯA CÓ MÃ CƠ SỞ; không khóa trong LAN vận hành thật. |
+| 4.1 Mã đơn | `clinic_facility_code`, `clinical_prescriptions.local_code` | 5 ký tự cơ sở + 7 ký tự đơn + `-C`, tổng 14 ký tự; ràng buộc duy nhất. Nháp được cấp mã khi đã có mã cơ sở, vẫn in dấu NHÁP; mã cố định sau khi khóa. Thiếu mã cơ sở: dòng MÃ NHÁP – CHƯA CÓ MÃ CƠ SỞ; không khóa trong LAN vận hành thật. |
 | 4.2 Cơ sở | `clinic_name`, `clinic_address`, `clinic_phone` trong cài đặt | Lấy từ cài đặt quản trị; chụp giá trị tại lúc khóa để việc sửa cài đặt không đổi đơn đã khóa. |
 | 4.3 Người bệnh | `patients.full_name`, số giấy tờ tùy chọn, `date_of_birth`, `sex`; `visits.weight_kg` | Word và PDF dùng cùng dữ liệu đã chốt. Số giấy tờ không đi vào audit. Dòng BHYT được giữ và để trống. |
 | 4.3 Cư trú | `address_detail`, `commune`, `province`, `address` cũ | Hàm `format_patient_address` ghép chi tiết, xã, tỉnh; nếu thiếu chi tiết nhưng có địa chỉ cũ thì dùng địa chỉ cũ làm phần đầu. Không có gì mới in dấu —. |

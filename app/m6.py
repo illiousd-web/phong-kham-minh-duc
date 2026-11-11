@@ -155,8 +155,8 @@ def save_lines(c, rid, items, u, audit):
             did = c.execute('SELECT last_insert_rowid()').fetchone()[0]
         else:
             did = drug['id']
-            # A known suggestion supplies missing metadata; explicit row values
-            # are snapshots, never rewritten after lock or a catalog merge.
+            # Suggestions are applied in the UI. Explicit row values, including
+            # cleared use fields, are never silently filled back by the API.
             if drug['review_status'] == 'unreviewed' and item.ingredient:
                 c.execute('UPDATE drugs SET ingredient=?,ingredient_key=?,brand_name=? WHERE id=?', (item.ingredient, fold(item.ingredient), item.brand_name or drug['brand_name'], did))
                 if item.ingredient != drug['ingredient']:
@@ -208,7 +208,7 @@ def payload(c, rx, code=None, locked_at=None):
         item['display_name'] = ((item['brand_name'] or item['name']) if len(active) > 1 else (active[0] if active else item['name']) + (' ('+item['brand_name']+')' if item['brand_name'] else ''))
     items.sort(key=lambda x: not x['toxic'])
     age = months_old(p['date_of_birth'])
-    return {'schema_version': '1.0', 'local_code': code or rx['local_code'], 'national_code': None,
+    return {'schema_version': '1.0', 'local_code': code if locked_at is not None else (rx['local_code'] if clinic['clinic_facility_code'] and (rx['local_code'] or '').startswith(clinic['clinic_facility_code']) else None), 'national_code': None,
             'integration_status': 'CHƯA LIÊN THÔNG', 'footer': {'reminder': 'Khám lại xin mang theo đơn này.'}, 'facility': clinic,
             'patient': {'full_name': p['full_name'], 'document_type': p['document_type'],
                         'document_number': p['document_number'] or p['citizen_id'], 'date_of_birth': p['date_of_birth'],
@@ -221,6 +221,16 @@ def payload(c, rx, code=None, locked_at=None):
                            'practice_scopes': json.loads(practitioner['practice_scopes'] or '[]')},
             'items': items, 'advice': {k: rx[k] for k in ('lifestyle_advice', 'follow_up_advice', 'purchase_advice')},
             'created_at': rx['created_at'], 'locked_at': locked_at or rx['locked_at'], 'errors': errors}
+
+
+def allocate_code(c, facility_code):
+    if not facility_code:
+        return None
+    for _ in range(128):
+        code = facility_code+''.join(secrets.choice(string.ascii_lowercase+string.digits) for _ in range(7))+'-C'
+        if not c.execute('SELECT 1 FROM clinical_prescriptions WHERE local_code=?', (code,)).fetchone():
+            return code
+    raise HTTPException(503, 'Chưa cấp được mã đơn duy nhất; thử lại')
 
 
 def install_m6(app, db, principal, require, audit, visit_access, now):
@@ -301,8 +311,8 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             if data.replaces_id:
                 old = access(c, data.replaces_id, u, True)
                 if old['visit_id'] != data.visit_id or not old['locked_at']: raise HTTPException(422, 'Đơn thay thế phải thuộc cùng lượt và đã từng khóa')
-            c.execute('INSERT INTO clinical_prescriptions(visit_id,doctor_id,lifestyle_advice,follow_up_advice,purchase_advice,replaces_id,created_at) VALUES(?,?,?,?,?,?,?)',
-                      (data.visit_id, u['id'], data.lifestyle_advice, data.follow_up_advice, data.purchase_advice, data.replaces_id, now()))
+            c.execute('INSERT INTO clinical_prescriptions(visit_id,doctor_id,lifestyle_advice,follow_up_advice,purchase_advice,replaces_id,created_at,local_code) VALUES(?,?,?,?,?,?,?,?)',
+                      (data.visit_id, u['id'], data.lifestyle_advice, data.follow_up_advice, data.purchase_advice, data.replaces_id, now(), allocate_code(c, settings(c)['clinic_facility_code'])))
             rid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
             warnings = save_lines(c, rid, data.items, u, audit)
             audit(c, u, 'clinical_rx_created', 'clinical_prescription', rid)
@@ -347,11 +357,9 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         with db(True) as c:
             rx = access(c, rid, u, True); ensure_open(visit_access(c, u, rx['visit_id'], clinical=True))
             if rx['status'] != 'draft' or rx['version'] != data.version: raise HTTPException(409, 'Đơn đã đổi/khóa/hủy; tải lại')
-            stamp = now(); clinic = settings(c); code = None
-            if clinic['clinic_facility_code']:
-                while True:
-                    code = clinic['clinic_facility_code']+''.join(secrets.choice(string.ascii_lowercase+string.digits) for _ in range(7))+'-C'
-                    if not c.execute('SELECT 1 FROM clinical_prescriptions WHERE local_code=?', (code,)).fetchone(): break
+            stamp = now(); clinic = settings(c)
+            prefix = clinic['clinic_facility_code']
+            code = rx['local_code'] if prefix and rx['local_code'] and rx['local_code'].startswith(prefix) else allocate_code(c, prefix)
             value = payload(c, rx, code, stamp)
             if value['errors']: raise HTTPException(422, {'message': 'Chưa đủ điều kiện khóa đơn', 'errors': value['errors']})
             value.pop('errors')
