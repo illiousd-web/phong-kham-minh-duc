@@ -58,7 +58,7 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
         logout();login('doctor');pick(page,'visit',vid)
         expect(page.locator('#doctor-results')).to_contain_text('Đang làm')
         expect(page.locator('#doctor-results')).not_to_contain_text('21,5')
-        page.locator(f'[data-m5=review][data-id="{rid}"]').click();expect(page.locator('dialog')).to_contain_text('21,5')
+        page.locator(f'[data-m5=review][data-id="{rid}"]').first.click();expect(page.locator('dialog')).to_contain_text('21,5')
         with page.expect_response(lambda x:x.url.endswith('/approve')) as response:page.locator('dialog [data-m5=approve]').click()
         assert response.value.status==200;settle(page)
         expect(page.locator('#doctor-results .m5-abnormal')).to_contain_text('21,5')
@@ -74,13 +74,15 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
         assert t.put(f'/api/lab/reports/{rid}',json=correction).status_code==200
         assert t.post(f'/api/lab/reports/{rid}/submit',json={'version':1}).status_code==200
         assert d.get(f'/api/visits/{vid}').json()['status']=='completed'
-        assert t.get(f'/api/lab/queue?visit_id={vid}&status=pending_review').json()['total']==0
+        assert t.get(f'/api/lab/queue?visit_id={vid}&status=pending_review').json()['total']==1
         go(page,'doctor')
-        page.get_by_text('Lượt đã kết thúc (100 gần nhất)',exact=True).click()
-        page.locator('#visit_choose').select_option(str(vid));settle(page)
-        page.locator(f'[data-m5=review][data-id="{rid}"]').click()
+        expect(page.locator('#workspace')).to_contain_text('Điều chỉnh sau đóng lượt')
+        expect(page.locator('[data-count=lab_pending_review]')).not_to_have_text('0')
+        page.locator(f'[data-m5=review][data-id="{rid}"]').first.click()
         with page.expect_response(lambda x:x.url.endswith('/approve')) as response:page.locator('dialog [data-m5=approve]').click()
         assert response.value.status==200;settle(page)
+        page.get_by_text('Lượt đã kết thúc (100 gần nhất)',exact=True).click()
+        page.locator('#visit_choose').select_option(str(vid));settle(page)
         expect(page.locator('#doctor-results')).to_contain_text('Có kết quả điều chỉnh sau khi đóng lượt')
         expect(page.locator('#doctor-results .m5-abnormal')).to_contain_text('22,6')
         assert d.get(f'/api/visits/{vid}').json()['status']=='completed'

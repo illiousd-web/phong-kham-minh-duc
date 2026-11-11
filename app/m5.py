@@ -14,7 +14,7 @@ from .forms import format_patient_address
 GROUPS={'hematology':'Huyết học','biochemistry':'Sinh hóa','urine':'Nước tiểu','other':'Khác'}
 STAGES={'waiting_sample':'Chờ lấy mẫu','working':'Đang làm','pending_review':'Chờ duyệt','approved':'Đã duyệt'}
 AFTER_CLOSE_LABEL='Có kết quả điều chỉnh sau khi đóng lượt'
-STAGE_SQL="""CASE WHEN v.status='completed' THEN 'approved' WHEN r.status='approved' THEN 'approved' WHEN r.status='pending_review' THEN 'pending_review'
+STAGE_SQL="""CASE WHEN r.status='approved' THEN 'approved' WHEN r.status='pending_review' THEN 'pending_review'
  WHEN r.sample_at IS NOT NULL THEN 'working' ELSE 'waiting_sample' END"""
 
 def dump(v): return json.dumps(v,ensure_ascii=False)
@@ -250,7 +250,7 @@ def decorate_orders(c,rows):
     return rows
 
 
-def queue(c,u,status,visit_id,limit,offset):
+def queue(c,u,status,visit_id,limit,offset,*,count_only=False):
     where=["o.category='lab'","v.status<>'cancelled'","o.status NOT IN ('requested','cancelled')","(r.id IS NOT NULL OR o.status='ordered')"]
     args=[]
     if 'doctor' in u['roles'] and 'technician' not in u['roles'] and 'reception' not in u['roles']:
@@ -263,7 +263,8 @@ def queue(c,u,status,visit_id,limit,offset):
         LEFT JOIN lab_reports r ON r.id=(SELECT MAX(x.id) FROM lab_reports x WHERE x.order_id=o.id)'''
     predicate=' AND '.join(where)
     total=c.execute('SELECT COUNT(*) '+joins+' WHERE '+predicate,args).fetchone()[0]
-    rows=c.execute('SELECT o.id AS order_id,o.visit_id,o.name,p.full_name AS patient_name,r.id AS report_id,r.version,r.status AS report_status,v.status AS visit_status,'+STAGE_SQL+' AS stage '+joins+' WHERE '+predicate+' ORDER BY o.id DESC LIMIT ? OFFSET ?',(*args,limit,offset)).fetchall()
+    if count_only:return total
+    rows=c.execute('SELECT o.id AS order_id,o.visit_id,o.name,p.full_name AS patient_name,r.id AS report_id,r.version,r.status AS report_status,r.replaces_id,v.status AS visit_status,'+STAGE_SQL+' AS stage '+joins+' WHERE '+predicate+' ORDER BY o.id DESC LIMIT ? OFFSET ?',(*args,limit,offset)).fetchall()
     return {'items':[dict(x) for x in rows],'total':total}
 
 

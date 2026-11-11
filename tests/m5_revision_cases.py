@@ -55,18 +55,31 @@ def check_closed_correction(clients,ids,db,service):
             assert c.execute('SELECT snapshot FROM lab_reports WHERE id=?',(rid,)).fetchone()[0]==snapshot
         assert oid not in [x['id'] for x in t.get('/api/orders').json()]
         assert vid not in [x['id'] for x in d.get('/api/doctor/queue').json()['visits']]
-        for status in ('waiting_sample','working','pending_review'):
-            q=t.get(f'/api/lab/queue?visit_id={vid}&status={status}').json();assert q['total']==0 and q['items']==[]
-        assert {role:clients[role].get('/api/queue-counts').json() for role in counts_before}==counts_before
+        current={role:clients[role].get('/api/queue-counts').json() for role in counts_before}
+        assert current['doctor']['doctor']==counts_before['doctor']['doctor']
+        assert current['technician']==counts_before['technician']
     new=t.post(url+'/adjust',json={'version':7,'reason':'Sửa sai sót giả lập sau đóng lượt'});assert new.status_code==201,new.text
-    new_id=new.json()['id'];new_url=f'/api/lab/reports/{new_id}';still_closed()
+    new_id=new.json()['id'];still_closed()
+    def discover(client,status,expected):
+        q=client.get(f'/api/lab/queue?visit_id={vid}&status={status}&limit=1').json()
+        assert q['total']==expected and len(q['items'])==expected
+        if expected:
+            row=q['items'][0];assert row['order_id']==oid and row['visit_status']=='completed' and row['replaces_id']==rid
+            return f"/api/lab/reports/{row['report_id']}"
+    new_url=discover(t,'working',1);assert new_url.endswith('/'+str(new_id))
     correction={**data,'version':0,'items':[{'test_id':tid,'value':'5,006'}]}
-    assert t.put(new_url,json=correction).status_code==200;still_closed()
+    assert t.put(new_url,json=correction).status_code==200;still_closed();new_url=discover(t,'working',1)
     assert t.post(new_url+'/submit',json={'version':1}).status_code==200;still_closed()
+    discover(t,'working',0);new_url=discover(d,'pending_review',1)
+    assert clients['doctor2'].get(f'/api/lab/queue?visit_id={vid}&status=pending_review').json()['total']==0
+    assert d.get('/api/queue-counts').json()['lab_pending_review']==counts_before['doctor']['lab_pending_review']+1
+    q=d.get('/api/lab/queue?status=pending_review&limit=1').json();assert q['total']==d.get('/api/queue-counts').json()['lab_pending_review']
     rows=d.get('/api/orders',params={'visit_id':vid}).json();assert rows[0]['lab_report_status']=='pending_review'
     assert d.get(new_url+'/review').status_code==200
     assert clients['doctor2'].post(new_url+'/approve',json={'version':2}).status_code==403
     assert d.post(new_url+'/approve',json={'version':2}).status_code==200;still_closed()
+    discover(d,'pending_review',0);discover(t,'working',0)
+    assert d.get('/api/queue-counts').json()['lab_pending_review']==counts_before['doctor']['lab_pending_review']
     with db() as c:
         order=c.execute('SELECT * FROM orders WHERE id=?',(oid,)).fetchone();assert '5,01' in order['result_text'] and '[H]' in order['result_text']
         details=c.execute("SELECT details FROM audit_log WHERE event='lab_adjusted_after_close' AND object_id=?",(new_id,)).fetchone()[0]

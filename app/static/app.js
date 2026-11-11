@@ -219,7 +219,7 @@ async function doctorScreen(){
  const [open,visitHistory,daily]=await Promise.all([api('/visits'),api('/visits?history=true'),api('/doctor/queue?'+new URLSearchParams({day:sel.doctorDay||'',q:sel.doctorQuery||''}))]);
  const visits=[...open,...visitHistory,...daily.visits];
  if(!daily.visits.some(v=>v.id===sel.visit))sel.visit=null;
- const review=await controlledReviewCard();
+ const review=(await M5.reviewQueue())+await controlledReviewCard();
  const filter=`<form data-form="doctor-filter" class="fields">${dateField('Ngày tiếp đón (bỏ trống: mọi lượt chờ)','doctor_day',false,daily.day)}${field('Tìm tên không dấu','doctor_query')}<div class="wide"><button class="btn">Tìm người bệnh (F4)</button></div></form>`;
  const doctorStatus=s=>`<span class="status ${({waiting_results:'results-pending',results_ready:'ready',in_progress:'progress',completed:'complete'})[s]||TONE[s]||''}">${esc(s==='waiting_results'?'Chờ kết quả cận lâm sàng':vi(s))}</span>`;
  const head=card(filter+queue(daily.visits.map(v=>({id:v.id,main:`${v.daily_number}. ${esc(v.patient_name)}`,sub:`${esc(patientAge(v.date_of_birth,v.age_months))} · ${esc(v.sex||'')} · ${doctorStatus(v.queue_status)} · ${showDay(v.created_at)}`})),{kind:'visit',current:sel.visit,emptyText:'Không có lượt trong ngày đã chọn.'}),`Danh sách khám · ${open.length} lượt chưa hoàn tất`)+
