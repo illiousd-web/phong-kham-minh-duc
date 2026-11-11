@@ -24,6 +24,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 Import-Module (Join-Path $PSScriptRoot 'MinhDuc.Install.psm1') -Force -DisableNameChecking
+. (Join-Path $PSScriptRoot 'DanhMucGoc.ps1')
 $Names = Get-MinhDucNames
 $Pins = Get-MinhDucPins
 $P = Get-MinhDucPaths -Code $ThuMucMa -Data $ThuMucDuLieu
@@ -152,6 +153,7 @@ function Step-CaiPostgres {
 
 # ---------------------------------------------------------------------------
 function Step-ChepMa {
+    Test-D0PublicCatalogs -SourceRoot $SourceRoot
     Write-Buoc "Bước 4/${Tong}: Chép mã vào $($P.Code), tạo môi trường Python và cài thư viện"
     if ($SourceRoot.TrimEnd('\') -ne $P.Code.TrimEnd('\')) {
         New-Item -ItemType Directory -Force -Path $P.Code | Out-Null
@@ -160,6 +162,7 @@ function Step-ChepMa {
         if (-not $r.Ok) { Stop-CaiDat 'Không chép được mã nguồn.' $r.Output 11 }
         Write-Dat "Đã chép mã từ $SourceRoot."
     } else { Write-Dat 'Đang chạy từ chính thư mục cài đặt, không cần chép.' }
+    Copy-D0PublicCatalogs -SourceRoot $SourceRoot -DestinationRoot $P.Code
     Get-ChildItem -LiteralPath $P.Code -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
     # Mặc định C:\ cho mọi người dùng quyền sửa thư mục con: khóa lại để không ai sửa được mã dịch vụ chạy.
     Set-SecureAcl -Path $P.Code -Directory -Readers @('*S-1-5-32-545')

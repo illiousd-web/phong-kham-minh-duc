@@ -141,4 +141,4 @@ Quản trị mở **Chỉ số xét nghiệm** để rà khung, nhập tham chi�
 
 ## Danh mục chuẩn D0
 
-Xem [hướng dẫn nhập file gốc, ICD-10 và liên kết mã](D0_DANH_MUC_CHUAN.md). Quy tắc bắt buộc mã bệnh chính mặc định bật; Quản trị nạp file gốc hoặc chủ động tắt khi chạy song song. Hồ sơ chữ cũ không được tự đoán mã.
+Xem [hướng dẫn nhập file gốc, ICD-10 và liên kết mã](D0_DANH_MUC_CHUAN.md). Quy tắc bắt buộc mã bệnh chính mặc định bật; Năm file công khai ICD-10, mã CLS, kỹ thuật PL01/PL02 và mã xã được nạp sẵn; Quản trị có thể nhập phiên bản mới hoặc chủ động tắt bắt buộc mã bệnh khi chạy song song. Hồ sơ chữ cũ không được tự đoán mã.

@@ -263,7 +263,7 @@ def payload(c, rx, code=None, locked_at=None):
                         'official_province_code':p['official_province_code'],'official_commune_code':p['official_commune_code'],'address': format_patient_address(p), 'contact_phone': (visit['escort_phone'] or p['phone']) if age is not None and age < 72 else p['phone'],
                         'age_months': age if age is not None and age < 72 else None,
                         'escort_name': visit['escort_name'] if age is not None and age < 72 else None},
-            'encounter': {'visit_id': visit['id'], 'diagnosis': diagnosis_text(visit),'diagnosis_description':visit['diagnosis'],'primary_icd10':visit['primary_icd10'],'diagnosis_codes':json.loads(visit['diagnosis_codes'])},
+            'encounter': {'visit_id': visit['id'], 'diagnosis': diagnosis_text(visit),'diagnosis_description':visit['diagnosis'],'primary_icd10':visit['primary_icd10'],'primary_icd10_canonical':next((x.get('canonical_code',x['code']) for x in json.loads(visit['diagnosis_codes']) if x.get('primary')),None),'diagnosis_codes':json.loads(visit['diagnosis_codes'])},
             'prescriber': {'name': printed_name(c, rx['doctor_id']), 'practice_license': practitioner['practice_license'],
                            'practice_scopes': json.loads(practitioner['practice_scopes'] or '[]')},
             'items': items, 'advice': {k: rx[k] for k in ('lifestyle_advice', 'follow_up_advice', 'purchase_advice')},

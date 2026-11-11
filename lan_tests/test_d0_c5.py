@@ -1,4 +1,4 @@
-"""Full C5 cohort plus 12,500 synthetic ICD codes; same SQL as the API."""
+"""Full C5 cohort plus 15,844 owner-authorized public ICD source codes; same SQL as the API."""
 import hashlib,secrets,time
 from urllib.parse import urlsplit,urlunsplit
 import psycopg
@@ -34,17 +34,16 @@ def test_d0_main_upgrade_full_c5_and_icd_search_p95(tmp_path):
                 return result
             from scripts.do_hieu_nang import migrate_profile_schema
             before=fingerprint();migrate_profile_schema(c);assert fingerprint()==before
-            assert c.execute("SELECT 1 FROM schema_migrations WHERE version=10").fetchone()
+            assert c.execute("SELECT 1 FROM schema_migrations WHERE version=11").fetchone()
             assert con.execute('SELECT COUNT(*) FROM visits').fetchone()[0]==22000
-            c.execute("INSERT INTO catalog_imports(kind,document_number,document_date,source,version,fingerprint,mapping,created_at) VALUES('icd10','GIẢ LẬP','2026-01-01','C5 giả lập','fake','fake','{}','2026-01-01')")
-            iid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
-            # Fixture generation is intentionally synthetic, never a medical code list.
-            with con.cursor() as cur:
-                cur.executemany('INSERT INTO icd10(code,name_vi,search_key,version,import_id) VALUES(%s,%s,%s,%s,%s)',[(f'FAKE{i:05d}','Bệnh mô phỏng '+str(i),fold_name(f'FAKE{i:05d} Bệnh mô phỏng '+str(i)),'fake',iid) for i in range(12500)])
+            from tests.d0_source_cases import check_seeded
+            check_seeded(c)
+            print('D0 C5 dung lượng sau nạp bytes:',con.execute('SELECT pg_database_size(current_database())').fetchone()[0])
             con.execute('ANALYZE');samples=[]
             for i in range(40):
-                start=time.perf_counter();found=search_catalog(c,'icd10','benh mo phong',20,20);samples.append(time.perf_counter()-start)
-                assert found['total']==12500 and len(found['items'])==20
-            p95=sorted(samples)[37];print('D0 C5 22000 lượt / 12500 mã, p95 giây:',p95);assert p95<.3,p95
+                q=('cholera','A00','benh','a')[i%4];offset=20 if q=='a' else 0
+                start=time.perf_counter();found=search_catalog(c,'icd10',q,20,offset);samples.append(time.perf_counter()-start)
+                assert found['total']>0 and 0<len(found['items'])<=20
+            p95=sorted(samples)[37];print('D0 C5 22000 lượt / 15844 mã gốc, p95 giây:',p95);assert p95<.3,p95
     finally:
         with psycopg.connect(SOURCE,autocommit=True) as c:c.execute(sql.SQL('DROP DATABASE IF EXISTS {} WITH (FORCE)').format(sql.Identifier(name)))

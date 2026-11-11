@@ -114,3 +114,5 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 [data-d0] input:not([type=checkbox]),[data-d0] select,[data-d0] textarea{width:100%;max-width:100%;min-width:0;padding:10px;font-size:16px;border:1px solid var(--line);border-radius:8px}
 .d0-results{display:flex;flex-wrap:wrap;gap:6px}.d0-results button{white-space:normal;text-align:left;overflow-wrap:anywhere}
 .d0-preview{overflow-wrap:anywhere;max-height:280px;overflow:auto}
+
+.d0-hash{overflow-wrap:anywhere}

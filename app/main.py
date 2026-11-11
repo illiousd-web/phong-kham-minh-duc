@@ -56,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=10").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=11").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -81,6 +81,8 @@ def init_db():
         migrate_m5(c)
         from .d0_migration import migrate_d0
         migrate_d0(c)
+        from .d0_source_migration import migrate_source_catalogs
+        migrate_source_catalogs(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:

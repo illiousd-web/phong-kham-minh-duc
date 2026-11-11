@@ -1,29 +1,43 @@
-# D0 — Danh mục dùng chung
+# D0 — Danh mục gốc dùng chung
 
-Migration 10 chỉ thêm danh mục chuẩn, lịch sử nạp và các liên kết được duyệt. Không đổi giá, tiền, quyền. Sao lưu đã xác minh trước nâng cấp. LAN chạy `python -m scripts.manage migrate` bằng chủ CSDL; web yêu cầu schema 10. Không tự mã hóa hồ sơ chữ cũ.
+Năm tệp công khai được chủ dự án cho phép đưa vào `data/danh_muc_goc/`, giữ nguyên UTF-8 BOM và SHA-256 (gitattributes tắt đổi xuống dòng). Xem [sổ đăng ký](SO_DANG_KY_VAN_BAN.md) để biết tên, số dòng, hash, nguồn và các ngày còn cần đối chiếu. Không có dữ liệu người bệnh, nhân viên, bảng giá hay thuốc thật trong các tệp này.
 
-## Nhập file gốc
+## Cài đặt và cập nhật
 
-Quản trị → Danh mục → D0. Chọn loại, số văn bản, ngày (dd/mm/yyyy), nguồn, phiên bản, dòng tiêu đề; ánh xạ JSON trường nội bộ → tiêu đề thực tế của file gốc. Mẫu CSV UTF-8 rỗng ở `templates/nhap_lieu/d0_*.csv`; Excel .xlsx cũng nhận (tệp nhiều sheet chọn bằng `"__sheet":"Tên sheet gốc"` trong ánh xạ), không công thức/ô lỗi. Tệp tối đa 5 MB (giữ trong giới hạn toàn bộ yêu cầu 6 MB), Excel giải nén tối đa 20 MB. Mã phải là ô chữ (đặc biệt 7 chữ số CLS và số 0 đầu). Không tự sinh mã. Chỉ nhập tệp của cơ quan ban hành đã đối chiếu; dữ liệu giả lập dùng riêng cho test.
+Sao lưu đã xác minh, nâng cấp bằng quy trình hiện có. LAN chạy `python -m scripts.manage migrate` bằng chủ CSDL trước khi web khởi động. Migration 10 tạo nền danh mục; migration 11 mở rộng đúng cấu trúc nguồn và tự nạp đủ 5 tệp trong một giao dịch. Chạy lại không nạp trùng. Không đổi giá, tiền, vai trò hay quyền. Bộ cài/cập nhật vẫn bỏ qua data nói chung, chỉ chép đúng năm CSV công khai đã kiểm SHA-256. Khi nâng cấp từ main cũ, dùng CAP_NHAT.bat trong bộ mới tải về/giải nén để có bước chép nguồn này, chọn tệp ZIP mới; sao lưu trước khi chạy. Không tự gắn mã cho dịch vụ/chỉ số hoặc đoán mã bệnh của hồ sơ cũ.
 
-Bấm Xem trước; lỗi báo dòng/cột, không ghi dở. Chỉ sau xem trước thành công mới hiện xác nhận. Máy chủ ràng buộc SHA-256 với bytes, loại, metadata, ánh xạ, dòng tiêu đề và bằng chứng đã xem của cùng tài khoản. Ghi thiếu/sai mã, đổi tệp/nguồn/ánh xạ đều 422. Mỗi lần nạp lưu nguồn, số/ngày văn bản, phiên bản, hash, người và thời điểm; ghi audit. Nạp là phiên bản đầy đủ: cập nhật theo mã, mục thiếu đánh dấu ngừng dùng, không xóa liên kết cũ. Nhãn chẩn đoán/snapshot đã khóa giữ nguyên.
+ICD 15.844, CLS 2.964, PL01 19.438, PL02 9.128, xã chính thức 3.321. Ghi số/ngày văn bản, nguồn, phiên bản, số dòng, SHA-256 và audit mỗi lần nạp. CSV không có ngày ban hành đầy đủ: NULL có nghĩa “Chưa đối chiếu ngày”; không dùng ngày hôm nay hoặc suy từ tên tệp. Các mục đã có liên kết mà bị bỏ khỏi phiên bản mới chỉ ngừng dùng, không xóa hồ sơ lịch sử.
 
-ICD-10: cờ dùng 0/1; giới tính để trống (chung), Nam hoặc Nữ. `replacement_codes` giữ chuỗi mã thay thế từ file. Ánh xạ có thể là tên cột hoặc cấu hình như `"not_primary":{"column":"Cột hạn chế gốc","values":{"X":"1"}}`; giá trị chỉ đổi theo ánh xạ tường minh do Quản trị khai, không suy đoán. Giữ nguyên bytes file gốc, kể cả nhiều sheet. Ánh xạ cột 24–29 phải đối chiếu file gốc; không suy diễn giá trị cờ. Chờ file thật để kiểm cấu trúc, cách biểu diễn và ngữ nghĩa chính xác.
+## Nạp lại
 
-## Dùng trong hồ sơ
+Quản trị → Danh mục D0. Chọn đúng loại (PL01 và PL02 riêng), nhập metadata, chọn nguyên tệp gốc. CSV nguồn được nhận diện theo cột gốc; không ánh xạ sửa mã/tên. Danh mục nghề nghiệp chưa có file chuẩn, vẫn có mẫu nhập rỗng và ánh xạ cột Excel/CSV.
 
-Bác sĩ tìm mã hoặc tên không dấu, chọn bệnh chính/bệnh kèm và lưu mã riêng; ô chẩn đoán chữ giữ nguyên. API kiểm mã còn dùng, vị trí chính, tử vong, giới tính và mã chi tiết thay thế; không khuyến khích bệnh chính chỉ cảnh báo. Hoàn tất lượt/khóa đơn M6 kiểm lại. Bắt buộc mã bệnh chính mặc định BẬT; Quản trị có thể tắt chạy song song, mỗi lần đổi ghi audit. Nhật ký sửa mã chẩn đoán chỉ ghi tên trường/số lượng, không đưa nội dung chẩn đoán vào màn nhật ký Quản trị; chi tiết giữ ở phiên bản hồ sơ trong phạm vi bác sĩ. Khi nâng cấp chưa có file ICD, phải nạp file trước hoặc chủ động bật chế độ song song; phần mềm không tự tắt. Hồ sơ cũ hiện “Chưa mã hóa”. Mã và tên lúc chọn in cùng mô tả chữ; đơn khóa/JSON giữ snapshot. Không tự sửa bản đã khóa.
+Bấm **Xem trước**. Tất cả dòng được kiểm, hiển thị tối đa 30 dòng và tổng số. Sau thành công mới hiện xác nhận. Mã vân tay SHA-256 ràng buộc bytes + loại + metadata + ánh xạ/dòng tiêu đề; bước ghi cần bằng chứng đã xem của cùng tài khoản. Đổi tệp/loại/metadata sau xem trước phải xem lại. Lỗi có số dòng/tên cột, không ghi dở.
 
-Dịch vụ chưa gắn mã: chọn dịch vụ và một/nhiều mã kỹ thuật đã nạp (gói dùng nhiều mã khi đánh dấu xác nhận dịch vụ gói; dịch vụ lẻ nhiều mã bị 422, loại liên kết gói suy ra từ số mã và lưu xác nhận trong audit, không đổi logic tính tiền). Chỉ số chưa gắn mã: chọn mã dùng chung đã nạp; mã LOINC/thuộc tính lấy theo dòng đó. Không ghi vào cột giá. Phiếu M5 đã duyệt giữ mã và phiên bản trong snapshot, sửa danh mục không sửa phiếu.
+Tệp danh mục tối đa 12 MB, toàn yêu cầu nhập tối đa 16 MB riêng đường `/api/standards/*/import` để nhận ICD gốc 9,4 MB. Các API khác giữ giới hạn 6 MB. Excel tối đa 20 MB giải nén; chọn sheet bằng `__sheet`, ánh xạ giá trị chỉ cho cờ/giới/cấp hành chính, không tạo mã.
 
-ĐVHC: bảng chính thức độc lập mã TMS. Ghép duy nhất theo tên tỉnh + tên xã không dấu; mục mơ hồ/không có báo để Quản trị ghép tay bằng mã trong file đã nạp. Không đoán mã. Hồ sơ mới/cập nhật giữ mã chính thức song song; JSON M6 có official_province_code/official_commune_code; không thay bằng TMS khi mã chính thức trống. Hồ sơ cũ không bị tự gán hàng loạt. Khi bản nạp mới bỏ mã chính thức, mã đó ngừng dùng và bỏ liên kết gợi ý TMS cho hồ sơ mới; mã đã lưu trên người bệnh cũ giữ nguyên.
+## Khám, kê đơn và mã ICD
 
-Nghề nghiệp: tìm/chọn khi đã nạp danh mục; chữ tự do vẫn nhận, occupation_code trống là cờ “chưa chuẩn hóa”. Không mặc định nghề. Danh mục nghề Bộ Y tế [CẦN ĐỐI CHIẾU] nguồn và văn bản.
+Tìm theo mã hiển thị, khóa không dấu chấm/liên thông, tên Việt hoặc Anh (bỏ dấu). Chọn bệnh chính/bệnh kèm, giữ mô tả chữ. Mã †/* được giữ nguyên để hiển thị; `ma_benh_khong_dau` lấy nguyên từ nguồn, không tự sinh. Bảng giữ đủ chương/khối/nhóm và hướng dẫn mã hóa gốc.
 
-## Chờ nguồn và nghiệm thu
+API chặn cờ không dùng bệnh chính, tử vong, mã chi tiết hơn, sai giới; cờ không khuyến khích chỉ cảnh báo. Mã con gợi ý phải có thực trong nguồn, không dựng mã từ chuỗi. Hoàn tất lượt/khóa đơn M6 bắt buộc mã chính mặc định BẬT; Quản trị có thể tắt chạy song song, có audit. Hồ sơ chữ cũ ghi chưa mã hóa; không tự mã hóa. In mã – tên kèm mô tả; JSON giữ mã hiển thị và khóa liên thông riêng. Phiên bản hồ sơ/đơn khóa giữ snapshot, không bị nạp danh mục mới sửa lại. Audit sửa chẩn đoán chỉ ghi tên trường/số lượng, chi tiết vẫn trong phạm vi bác sĩ được phân công.
 
-Chưa có file gốc ICD-10 TT 06/2026, kỹ thuật, mã dùng chung CLS, ĐVHC chính thức hoặc nghề nghiệp; repo không có mã thật của các danh mục này. Tỉnh/xã TMS và dân tộc công khai đã được chủ dự án cho phép từ L1 giữ nguyên. Xem [sổ văn bản](SO_DANG_KY_VAN_BAN.md); mọi ngày/hiệu lực chưa xác minh đều đánh dấu cần đối chiếu. Không gọi mạng liên thông; không thêm diễn giải điều luật.
+## Chọn mã CLS và kỹ thuật
 
-Chỉ mục `(active,search_key)` chứa tên/mã đã bỏ dấu; tìm kiếm/phân trang/COUNT ở SQL, không tải cả ICD vào dropdown. Kiểm p95 trên 12.000+ dòng giả lập; số đo CI không thay nghiệm thu máy Windows thật. Chrome 109/390px kiểm tìm/chọn, nhập/xem trước và không tràn ngang.
+Màn **Chỉ số chưa gắn mã**: gõ tên, bấm chọn mã dùng chung; LOINC/thuộc tính lấy theo mã đã chọn. Không tự gắn theo tên. Thuộc tính sau thành phần rỗng ở nhóm Chẩn đoán hình ảnh là dữ liệu nguồn hợp lệ. Phiếu M5 duyệt sau khi gắn mã lưu mã/LOINC/phiên bản trong snapshot; phiếu cũ không đổi.
 
-Mã giao diện D0 gộp vào app.js hiện có để không thêm yêu cầu tài nguyên song song vào giới hạn kết nối LAN. Bộ chuẩn bị C5 gọi đủ migration 10 trước profile mới; không đổi thuật toán đo/ngưỡng, số mẫu hay dữ liệu C5.
+Màn **Dịch vụ chưa gắn mã**: gợi ý tên PL01 và dòng PL02 riêng, người dùng chọn rõ. PL02 dùng STT gốc định danh dòng, không đặt mã kỹ thuật mới. Dịch vụ lẻ một mã PL01, gói nhiều mã khi xác nhận gói; có thể gắn dòng PL02 nếu có. Giá/cách tính tiền không đổi.
+
+`tech_catalog_pl01` giữ mã kể cả BS_x.y; `tech_catalog_pl02` giữ nguyên ma_lien_ket_pl01. Tách đúng `[;,\s]+`, chỉ mảnh khớp chính xác PL01 mới có liên kết, mảnh không khớp ghi cần rà soát tay. Giao diện có bảng rà soát; không tự sửa PDF vỡ mã. Bảng `tech_catalog` giữ cùng dữ liệu PL01 để tương thích liên kết nền D0; không phải một nguồn kỹ thuật mới.
+
+## Địa chỉ và nghề nghiệp
+
+Mã xã 5 số từ CV 1027 là mã chuẩn; TMS giữ song song. Ghép theo tên tỉnh+xã không dấu, riêng Tp Hồ Chí Minh chuẩn hóa Thành phố Hồ Chí Minh. Chỉ ghép duy nhất; danh sách không ghép được để Quản trị xử lý tay. Xã Cát Thành (Ninh Bình) có mã 14056. CSV không có mã tỉnh chính thức: không tự cắt mã xã hay gán mã TMS làm mã tỉnh chính thức. Hồ sơ/JSON dùng mã xã chính thức riêng, thiếu để trống. Không tự gán hàng loạt hồ sơ lịch sử. Mã bị bỏ ngừng dùng, bỏ gợi ý cho hồ sơ mới, giữ mã đã lưu ở hồ sơ cũ.
+
+Nghề nghiệp chưa có file Bộ Y tế [CẦN ĐỐI CHIẾU]. Cho nhập chữ, occupation_code trống là chưa chuẩn hóa; không tự đoán.
+
+## Kiểm và giới hạn
+
+CI nạp thật đủ 5 tệp trên SQLite/PostgreSQL, kiểm hash, số dòng, quy tắc ICD, ký hiệu in/JSON, chọn mã không đổi giá, PL02 giữ mảnh vỡ, ghép địa giới, migration và backup/restore. C5 dùng đủ 22.000 lượt/20.000 người bệnh và 15.844 mã ICD gốc; p95 nearest-rank <300 ms, có chỉ mục tên không dấu/Anh/khóa liên thông. Ghi dung lượng sau nạp vào PR.
+
+D0 gộp vào asset app.js để giữ ngân sách tải LAN, không tăng giới hạn 48 kết nối hay timeout. C5 chuẩn bị đúng schema 11 trước profile mới, không thay thuật toán/ngưỡng đo hoặc quy mô C5. Chrome 109 và 390px được kiểm tự động; máy Windows/máy in thật vẫn cần nghiệm thu. Chưa làm liên thông mạng thật; chưa có danh mục nghề chuẩn và chưa xác nhận ngày ban hành còn thiếu trong nguồn.

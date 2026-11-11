@@ -12,6 +12,8 @@ COLUMNS={
  'shared_lab_codes':['code','name','tech_code','loinc','component','property','timing','specimen','method','unit'],
  'official_addresses':['code','name','province_name','province_code','kind'],
  'occupation_catalog':['code','name'],
+ 'tech_catalog_pl01':['code','name','chapter'],
+ 'tech_catalog_pl02':['code','name','chapter'],
 }
 LABELS={'code':'Mã','name_vi':'Tên tiếng Việt','name_en':'Tên tiếng Anh','chapter':'Chương/nhóm','not_primary':'Không dùng bệnh chính','discouraged_primary':'Không khuyến khích bệnh chính','replaced':'Đã có mã chi tiết hơn','replacement_codes':'Mã thay thế','death_only':'Chỉ nguyên nhân tử vong','sex':'Giới tính','name':'Tên','tech_code':'Mã kỹ thuật','loinc':'LOINC','component':'Thành phần','property':'Tính chất','timing':'Thời gian','specimen':'Bệnh phẩm','method':'Phương pháp','unit':'Đơn vị','province_name':'Tên tỉnh','province_code':'Mã tỉnh chính thức','kind':'Cấp (province/commune)'}
 FLAGS=('not_primary','discouraged_primary','replaced','death_only')
@@ -23,12 +25,20 @@ class Metadata(BaseModel):
     @classmethod
     def trim(cls,v):return v.strip() if isinstance(v,str) else v
     document_number:str=Field(min_length=1,max_length=180)
-    document_date:date
+    document_date:date|None=None
     source:str=Field(min_length=1,max_length=500)
     version:str=Field(min_length=1,max_length=100)
 
 def parse(raw,filename,kind,mapping,header_row):
     if kind not in COLUMNS:raise ValueError('Danh mục không hợp lệ')
+    from .d0_sources import SOURCES,KEYS,parse_source
+    if kind in SOURCES and filename.lower().endswith('.csv'):
+        import csv
+        headers=next(csv.reader(io.StringIO(raw.decode('utf-8-sig'))),[])
+        if KEYS[kind] in headers:
+            if mapping or header_row!=1:raise ValueError('File gốc dùng nguyên cột và dòng tiêu đề 1, không ánh xạ sửa nội dung')
+            return parse_source(raw,kind)
+    if kind=='tech_catalog_pl02':raise ValueError('PL02 cần nguyên CSV cột STT và liên kết gốc, không tạo mã kỹ thuật')
     sheet=mapping.get('__sheet','')
     if not isinstance(sheet,str):raise ValueError('Tên sheet phải là chữ')
     rows=read_source_rows(raw,filename,header_row,sheet)
@@ -88,7 +98,9 @@ def validate_codes(c,patient_id,primary,codes):
         if not r or not r['active']:raise HTTPException(422,'Mã ICD-10 không có hoặc đã ngừng dùng: '+code)
         if r['death_only']:raise HTTPException(422,'Mã chỉ dùng cho nguyên nhân tử vong: '+code)
         if r['sex'] and r['sex']!=sex:raise HTTPException(422,'Mã không phù hợp giới tính: '+code)
-        if r['replaced']:raise HTTPException(422,'Mã đã có mã chi tiết hơn: '+code+'; chọn mã thay thế: '+r['replacement_codes'])
+        if r['replaced']:
+            children=child_codes(c,dict(r))
+            raise HTTPException(422,'Mã đã có mã chi tiết hơn: '+code+'; chọn mã con: '+', '.join(x['code'] for x in children))
         if code==primary and r['not_primary']:raise HTTPException(422,'Mã không dùng làm bệnh chính: '+code)
         if code==primary and r['discouraged_primary']:warnings.append('Không khuyến khích làm bệnh chính: '+code)
     return warnings
@@ -114,6 +126,12 @@ class Links(BaseModel):
     model_config=ConfigDict(extra='forbid')
     codes:list[str]=Field(max_length=50)
     package:StrictBool=False
+    pl02_ids:list[str]=Field(default_factory=list,max_length=50)
+    @field_validator('pl02_ids')
+    @classmethod
+    def row_ids(cls,values):
+        if any(not re.fullmatch(r'[1-9][0-9]*',x) for x in values):raise ValueError('ID dòng PL02 phải là số dương nội bộ')
+        return values
 class CodeLink(BaseModel):
     code:str|None=None
 class Settings(BaseModel):
@@ -145,8 +163,8 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
     @app.post('/api/standards/{kind}/import')
     def import_file(kind:str,file:UploadFile=File(...),metadata:str=Form(...),mapping:str=Form('{}'),header_row:int=Form(1),preview:bool=Form(True),proof:str=Form(''),u=Depends(principal)):
         require(u,'admin')
-        raw=file.file.read(5*1024*1024+1)
-        if len(raw)>5*1024*1024:raise HTTPException(413,'Tệp tối đa 5 MB')
+        raw=file.file.read(12*1024*1024+1)
+        if len(raw)>12*1024*1024:raise HTTPException(413,'Tệp danh mục tối đa 12 MB')
         try:
             meta=Metadata.model_validate_json(metadata).model_dump(mode='json');mp=json.loads(mapping)
             if not isinstance(mp,dict) or not all(isinstance(k,str) and isinstance(v,(str,dict)) for k,v in mp.items()) or not 1<=header_row<=100:raise ValueError('Ánh xạ hoặc dòng tiêu đề không hợp lệ')
@@ -159,18 +177,42 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
         with db(True) as c:
             if preview:
                 audit(c,u,'standard_catalog_previewed','catalog',None,mark)
-                return {'fingerprint':mark,'total':len(rows),'rows':rows[:30],'errors':[]}
+                from .d0_sources import KEYS,HEADERS
+                columns={k:k for k in HEADERS[kind]} if kind in KEYS and rows and KEYS[kind] in rows[0] else {k:LABELS[k] for k in COLUMNS[kind]}
+                return {'fingerprint':mark,'total':len(rows),'rows':rows[:30],'columns':columns,'errors':[]}
             if proof!=mark or not c.execute("SELECT 1 FROM audit_log WHERE user_id=? AND event='standard_catalog_previewed' AND details=?",(u['id'],mark)).fetchone():raise HTTPException(422,'Cần xem trước đúng tệp, loại nạp, metadata và ánh xạ trước khi ghi')
-            c.execute('INSERT INTO catalog_imports(kind,document_number,document_date,source,version,fingerprint,mapping,imported_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',(kind,meta['document_number'],meta['document_date'],meta['source'],meta['version'],mark,dump({'columns':mp,'header_row':header_row}),u['id'],now()))
+            from .d0_sources import KEYS,apply_rows
+            if kind in KEYS and rows and KEYS[kind] in rows[0]:
+                result=apply_rows(c,kind,rows,meta,raw,u['id'],now(),mp)
+                audit(c,u,'standard_catalog_imported','catalog',result['import_id'],dump({'kind':kind,'rows':len(rows),'sha256':result['sha256'],'version':meta['version']}))
+                return result
+            c.execute('INSERT INTO catalog_imports(kind,document_number,document_date,source,version,fingerprint,mapping,imported_by,created_at,row_count) VALUES(?,?,?,?,?,?,?,?,?,?)',(kind,meta['document_number'],meta['document_date'],meta['source'],meta['version'],mark,dump({'columns':mp,'header_row':header_row}),u['id'],now(),len(rows)))
             iid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
             c.execute(f'UPDATE {kind} SET active=0')
             for row in rows:
-                values={**row,'search_key':fold_name(row['code']+' '+row.get('name_vi',row.get('name',''))),'active':1,'version':meta['version'],'import_id':iid}
+                values={**row,'search_key':fold_name(row['code']+' '+row.get('name_vi',row.get('name',''))+' '+row.get('name_en','')),'active':1,'version':meta['version'],'import_id':iid}
                 columns=list(values);updates=','.join(k+'=excluded.'+k for k in columns if k!='code')
                 c.execute(f'INSERT INTO {kind}('+','.join(columns)+') VALUES('+','.join('?' for _ in columns)+') ON CONFLICT(code) DO UPDATE SET '+updates,tuple(values.values()))
             unmatched=match_geography(c) if kind=='official_addresses' else []
             audit(c,u,'standard_catalog_imported','catalog',iid,dump({'kind':kind,'version':meta['version'],'rows':len(rows),'fingerprint':mark,'unmatched':len(unmatched)}))
         return {'imported':len(rows),'unmatched':unmatched}
+
+    @app.get('/api/standards/pl02/review')
+    def pl02_review(limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0),u=Depends(principal)):
+        require(u,'admin')
+        with db() as c:
+            where='needs_review=1 AND EXISTS(SELECT 1 FROM tech_catalog_pl02 p WHERE p.id=tech_pl02_links.pl02_id AND p.active=1)'
+            total=c.execute('SELECT COUNT(*) FROM tech_pl02_links WHERE '+where).fetchone()[0]
+            items=[dict(x) for x in c.execute('SELECT * FROM tech_pl02_links WHERE '+where+' ORDER BY pl02_stt,position LIMIT ? OFFSET ?',(limit,offset))]
+            return {'total':total,'items':items}
+
+    @app.get('/api/standards/icd10/{code}/children')
+    def icd_children(code:str,u=Depends(principal)):
+        require(u,'doctor','admin')
+        with db() as c:
+            row=c.execute('SELECT * FROM icd10 WHERE code=?',(code,)).fetchone()
+            if not row:raise HTTPException(404,'Không có mã')
+            return child_codes(c,dict(row))
 
     @app.get('/api/standards/{kind}')
     def search(kind:str,q:str='',limit:int=Query(30,ge=1,le=100),offset:int=Query(0,ge=0),u=Depends(principal)):
@@ -184,13 +226,21 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
         from .domain import ensure_open,revision
         with db(True) as c:
             v=visit_access(c,u,vid,clinical=True);ensure_open(v)
+            def source_code(value):
+                if not value or not value.strip():return None
+                value=value.strip()
+                row=c.execute('SELECT code FROM icd10 WHERE code=?',(value,)).fetchone()
+                if not row:row=c.execute("SELECT code FROM icd10 WHERE ma_benh_khong_dau=? AND ma_benh_khong_dau<>''",(value,)).fetchone()
+                return row[0] if row else value
+            data.primary=source_code(data.primary)
+            data.secondary=[source_code(x) or '' for x in data.secondary]
             codes=([data.primary] if data.primary else [])+data.secondary
             if len(set(codes))!=len(codes):raise HTTPException(422,'Trùng mã bệnh chính/kèm')
             warnings=validate_codes(c,v['patient_id'],data.primary,codes)
             snapshot=[]
             for code in codes:
-                row=c.execute('SELECT name_vi,version,import_id FROM icd10 WHERE code=?',(code,)).fetchone()
-                snapshot.append({'code':code,'name':row['name_vi'],'version':row['version'],'import_id':row['import_id'],'primary':code==data.primary})
+                row=c.execute('SELECT name_vi,version,import_id,ma_benh_khong_dau FROM icd10 WHERE code=?',(code,)).fetchone()
+                snapshot.append({'code':code,'name':row['name_vi'],'version':row['version'],'import_id':row['import_id'],'canonical_code':row['ma_benh_khong_dau'] or code,'primary':code==data.primary})
             changed=c.execute('UPDATE visits SET primary_icd10=?,diagnosis_codes=?,version=version+1 WHERE id=? AND version=?',(data.primary,dump(snapshot),vid,data.version))
             if changed.rowcount!=1:raise HTTPException(409,'Hồ sơ đã đổi; tải lại')
             revision(c,vid,u,now,'clinical','Lưu mã chẩn đoán');audit(c,u,'diagnosis_codes_updated','visit',vid,dump({'fields':['primary_icd10','diagnosis_codes'],'secondary_count':len(data.secondary)}))
@@ -204,21 +254,27 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
     @app.put('/api/standards/services/{sid}')
     def link_service(sid:int,data:Links,u=Depends(principal)):
         require(u,'admin')
-        if len(set(data.codes))>1 and not data.package:raise HTTPException(422,'Dịch vụ lẻ chỉ gắn một mã; xác nhận dịch vụ gói để gắn nhiều mã')
+        if max(len(set(data.codes)),len(set(data.pl02_ids)))>1 and not data.package:raise HTTPException(422,'Dịch vụ lẻ chỉ gắn một mã; xác nhận dịch vụ gói để gắn nhiều mã')
         with db(True) as c:
             if not c.execute('SELECT 1 FROM service_catalog WHERE id=?',(sid,)).fetchone():raise HTTPException(404,'Không có dịch vụ')
             for code in data.codes:
                 if not c.execute('SELECT 1 FROM tech_catalog WHERE code=? AND active=1',(code,)).fetchone():raise HTTPException(422,'Mã kỹ thuật không hợp lệ')
+            for stt in data.pl02_ids:
+                if not c.execute('SELECT 1 FROM tech_catalog_pl02 WHERE id=? AND active=1',(stt,)).fetchone():raise HTTPException(422,'STT PL02 không có hoặc ngừng dùng')
+            if data.pl02_ids and not data.codes:raise HTTPException(422,'Cần chọn mã PL01 trước khi gắn dòng PL02')
+            old_pl02=[r[0] for r in c.execute('SELECT pl02_id FROM service_pl02_codes WHERE service_id=?',(sid,))]
             old=[r[0] for r in c.execute('SELECT tech_code FROM service_tech_codes WHERE service_id=?',(sid,))]
             c.execute('DELETE FROM service_tech_codes WHERE service_id=?',(sid,))
             for code in sorted(set(data.codes)):c.execute('INSERT INTO service_tech_codes(service_id,tech_code) VALUES(?,?)',(sid,code))
-            audit(c,u,'service_standard_linked','catalog',sid,dump({'old':old,'new':data.codes,'package':data.package}))
+            c.execute('DELETE FROM service_pl02_codes WHERE service_id=?',(sid,))
+            for stt in sorted(set(data.pl02_ids)):c.execute('INSERT INTO service_pl02_codes(service_id,pl02_id) VALUES(?,?)',(sid,stt))
+            audit(c,u,'service_standard_linked','catalog',sid,dump({'old':old,'new':data.codes,'package':data.package,'pl02_ids':data.pl02_ids,'old_pl02_ids':old_pl02}))
         return {'ok':True}
 
     @app.get('/api/standards/unlinked/lab-tests')
     def unlinked_tests(u=Depends(principal)):
         require(u,'admin')
-        with db() as c:return [dict(r) for r in c.execute('SELECT id,name FROM lab_tests WHERE shared_code IS NULL ORDER BY id')]
+        with db() as c:return [dict(r) for r in c.execute('SELECT id,name FROM lab_tests WHERE shared_code IS NULL OR NOT EXISTS(SELECT 1 FROM shared_lab_codes s WHERE s.code=lab_tests.shared_code AND s.active=1) ORDER BY id')]
 
     @app.put('/api/standards/lab-tests/{tid}')
     def link_test(tid:int,data:CodeLink,u=Depends(principal)):
@@ -256,9 +312,12 @@ def match_geography(c,write=True):
     for r in c.execute("SELECT * FROM official_addresses WHERE active=1"):
         active_codes.add(r['code'])
         key=(fold_name(r['province_name']),fold_name(r['name']),r['kind']);official.setdefault(key,[]).append(r)
-    unmatched=[]
+    unmatched=[];has_provinces=any(key[2]=='province' for key in official)
     for r in c.execute("SELECT * FROM patient_catalog WHERE kind IN ('province','commune') AND active=1"):
+        if r['kind']=='province' and not has_provinces:continue
         pn=r['name'] if r['kind']=='province' else provinces.get(r['parent_code'],'')
+        from .d0_sources import province_name
+        pn=province_name(pn)
         candidates=official.get((fold_name(pn),fold_name(r['name']),r['kind']),[])
         if len(candidates)==1:
             if write:c.execute('UPDATE patient_catalog SET official_code=? WHERE kind=? AND code=?',(candidates[0]['code'],r['kind'],r['code']))
@@ -309,3 +368,10 @@ def read_source_rows(raw,filename,header_row,sheet):
         finally:book.close()
     except ValueError:raise
     except Exception:raise ValueError('Không đọc được Excel; kiểm tra tệp gốc và sheet') from None
+
+
+def child_codes(c,row):
+    # Prefix of an existing SOURCE code; returned values always come from rows,
+    # never synthesize a replacement code from broken or missing text.
+    parent=row.get('ma_benh_khong_dau') or row['code'].replace('.','').replace('†','').replace('*','')
+    return [dict(r) for r in c.execute("SELECT code,name_vi,ma_benh_khong_dau FROM icd10 WHERE active=1 AND ma_benh_khong_dau LIKE ? AND ma_benh_khong_dau<>? ORDER BY ma_benh_khong_dau LIMIT 40",(parent+'%',parent))]

@@ -17,7 +17,7 @@ DB = Path(os.getenv('CLINIC_DB_PATH', str(ROOT / 'data' / 'minh_duc_demo.sqlite3
 LOCK_ID = 764209431
 ID_TABLES=set(re.findall(r'CREATE TABLE IF NOT EXISTS (\w+)\s*\(\s*id\b',
     (ROOT/'schema.postgresql.sql').read_text(encoding='utf-8')+(ROOT/'migrations/003_v050.sql').read_text(encoding='utf-8')+(ROOT/'migrations/004_manual_prices.sql').read_text(encoding='utf-8'),re.I))
-ID_TABLES.add('catalog_imports')
+ID_TABLES.update(('catalog_imports','tech_catalog_pl02'))
 ID_TABLES.update(('lab_tests','lab_reference_ranges','lab_reports','lab_results'))
 ID_TABLES.update(('drugs','clinical_prescriptions','clinical_prescription_items','prescription_outbox'))
 _pool = None
@@ -139,3 +139,5 @@ def migrate():
         migrate_m5(PGConnection(con), postgres=True)
         from .d0_migration import migrate_d0
         migrate_d0(PGConnection(con), postgres=True)
+        from .d0_source_migration import migrate_source_catalogs
+        migrate_source_catalogs(PGConnection(con), postgres=True)

@@ -257,3 +257,12 @@ postgres.env
 o-sao-luu-ngoai.json
 backup-status.json
 deploy/windows/taive/
+
+# Owner-authorized public original catalogs only.
+!data/danh_muc_goc/
+data/danh_muc_goc/*
+!data/danh_muc_goc/ICD10_TT06_2026.csv
+!data/danh_muc_goc/QD1227_MA_DUNG_CHUNG_CLS_DOT1.csv
+!data/danh_muc_goc/TT23_PL01_DANH_MUC_KY_THUAT.csv
+!data/danh_muc_goc/TT23_PL02_DANH_MUC_KY_THUAT_TU_01072026.csv
+!data/danh_muc_goc/DVHC_XA_CV1027_2025.csv

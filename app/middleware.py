@@ -14,23 +14,25 @@ class BodyLimitMiddleware:
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope,receive,send)
+        catalog=scope.get('path','').startswith('/api/standards/') and scope.get('path','').endswith('/import')
+        maximum=16*1024*1024 if catalog else self.max_bytes
         headers=dict(scope.get('headers',[]))
         length=headers.get(b'content-length',b'0')
         try:
-            too_large=int(length)>self.max_bytes
+            too_large=int(length)>maximum
         except ValueError:
             too_large=True
         if too_large:
-            return await JSONResponse({'detail':'Yêu cầu vượt giới hạn 6 MB'},status_code=413)(scope,receive,send)
+            return await JSONResponse({'detail':'Yêu cầu vượt giới hạn danh mục 16 MB' if catalog else 'Yêu cầu vượt giới hạn 6 MB'},status_code=413)(scope,receive,send)
         total=0
         async def limited_receive():
             nonlocal total
             message=await receive()
             total+=len(message.get('body',b''))
-            if total>self.max_bytes:
+            if total>maximum:
                 raise BodyTooLarge()
             return message
         try:
             await self.app(scope,limited_receive,send)
         except BodyTooLarge:
-            await JSONResponse({'detail':'Yêu cầu vượt giới hạn 6 MB'},status_code=413)(scope,receive,send)
+            await JSONResponse({'detail':'Yêu cầu vượt giới hạn danh mục 16 MB' if catalog else 'Yêu cầu vượt giới hạn 6 MB'},status_code=413)(scope,receive,send)

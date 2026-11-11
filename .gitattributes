@@ -5,3 +5,6 @@
 *.png binary
 *.ps1 text eol=crlf
 *.psm1 text eol=crlf
+
+# Preserve exact public source bytes, BOM and SHA-256 on Windows/Linux.
+data/danh_muc_goc/*.csv -text

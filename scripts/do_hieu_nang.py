@@ -146,9 +146,10 @@ def migrate_profile_schema(c):
     from app.m6_migration import migrate_m6
     from app.m5_migration import migrate_m5
     from app.d0_migration import migrate_d0
+    from app.d0_source_migration import migrate_source_catalogs
     for _ in range(2):
         migrate_m0(c);migrate_administrative(c);migrate_public_catalog(c)
-        migrate_m6(c,postgres=True);migrate_m5(c,postgres=True);migrate_d0(c,postgres=True)
+        migrate_m6(c,postgres=True);migrate_m5(c,postgres=True);migrate_d0(c,postgres=True);migrate_source_catalogs(c,postgres=True)
 
 
 def database_state(url):
@@ -399,6 +400,8 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                 from app.m6_migration import TABLES
                 from app.m5_migration import TABLES as M5_TABLES, FRAMEWORK
                 from app.d0_migration import TABLES as D0_TABLES
+                from app.d0_source_migration import TABLES as SOURCE_TABLES
+                from app.d0_sources import SOURCES
                 from app.database import PGConnection, record_factory
                 old_state = database_state(url)
                 with psycopg.connect(url, row_factory=record_factory) as con:
@@ -408,10 +411,14 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 6
-                expected_state['tables'].update({name: 0 for name in TABLES+M5_TABLES+D0_TABLES})
+                expected_state['tables']['schema_migrations'] += 7
+                expected_state['tables'].update({name: 0 for name in TABLES+M5_TABLES+D0_TABLES+SOURCE_TABLES})
                 expected_state['tables']['lab_tests'] = sum(len(v) for v in FRAMEWORK.values())
-                expected_state['tables']['audit_log'] += 1
+                expected_state['tables']['audit_log'] += 6
+                expected_state['tables']['catalog_imports'] = 5
+                for kind,spec in SOURCES.items():expected_state['tables'][kind]=spec[1]
+                expected_state['tables']['tech_catalog_pl01']=19438
+                expected_state['tables']['tech_pl02_links']=8252 # exact fragments in the SHA-256-pinned public PL02
                 expected_state['tables']['patient_catalog'] = 3411
                 assert new_state == expected_state, 'Migration M0 làm đổi dữ liệu C5'
                 report['m0_migration'] = {'seconds': migration_seconds, 'preserved': True,
