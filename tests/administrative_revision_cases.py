@@ -84,31 +84,37 @@ def check_structured_address_print_position(clients, ids, db, service_id):
     vid = visit.json()['id']
     assert d.put(f'/api/visits/{vid}/clinical', json={'version': 0, 'diagnosis': 'Chẩn đoán giả lập'}).status_code == 200
     with db(True) as c:
-        c.execute("INSERT INTO medicines(name,base_unit,controlled) VALUES('Thuốc giả lập địa chỉ','viên',0)")
+        c.execute("INSERT INTO medicines(name,base_unit,controlled) VALUES('Vật tư giả lập kiểm địa chỉ','viên',0)")
         medicine = c.execute('SELECT last_insert_rowid()').fetchone()[0]
-    rx = d.post('/api/prescriptions', json={'visit_id': vid, 'items': [{'medicine_id': medicine, 'quantity': 1, 'directions': 'Chỉ kiểm thử'}], 'instructions': 'Giả lập'})
-    assert rx.status_code == 201, rx.text
-    address = 'Nhà giả lập, Xã Cát Thành, Tỉnh Ninh Bình'
-    for kind, obj, client in [('intake', vid, r), ('rx', rx.json()['id'], d)]:
-        for fmt in ('docx', 'pdf'):
-            response = client.get(f'/api/forms/{kind}/{obj}?fmt={fmt}')
-            assert response.status_code == 200, response.text
-            if fmt == 'docx':
-                doc = Document(io.BytesIO(response.content))
-                if kind == 'intake':
-                    assert doc.tables[0].cell(3, 0).text == 'Địa chỉ liên hệ: '+address
-                    assert any('Nghề giả lập địa chỉ' in row.cells[0].text for row in doc.tables[0].rows)
-                    assert not any('Nghề giả lập địa chỉ' in p.text for p in doc.paragraphs)
+    try:
+        rx = d.post('/api/prescriptions', json={'visit_id': vid, 'items': [{'medicine_id': medicine, 'quantity': 1, 'directions': 'Chỉ kiểm thử'}], 'instructions': 'Giả lập'})
+        assert rx.status_code == 201, rx.text
+        address = 'Nhà giả lập, Xã Cát Thành, Tỉnh Ninh Bình'
+        for kind, obj, client in [('intake', vid, r), ('rx', rx.json()['id'], d)]:
+            for fmt in ('docx', 'pdf'):
+                response = client.get(f'/api/forms/{kind}/{obj}?fmt={fmt}')
+                assert response.status_code == 200, response.text
+                if fmt == 'docx':
+                    doc = Document(io.BytesIO(response.content))
+                    if kind == 'intake':
+                        assert doc.tables[0].cell(3, 0).text == 'Địa chỉ liên hệ: '+address
+                        assert any('Nghề giả lập địa chỉ' in row.cells[0].text for row in doc.tables[0].rows)
+                        assert not any('Nghề giả lập địa chỉ' in p.text for p in doc.paragraphs)
+                    else:
+                        paragraphs = [p.text for p in doc.paragraphs]
+                        address_at = next(i for i, x in enumerate(paragraphs) if x.startswith('Nơi thường trú / tạm trú / ở hiện tại:'))
+                        assert paragraphs[address_at] == 'Nơi thường trú / tạm trú / ở hiện tại: '+address
+                        metadata_at = next(i for i, x in enumerate(paragraphs) if x.startswith('Nghề nghiệp:'))
+                        diagnosis_at = next(i for i, x in enumerate(paragraphs) if x.startswith('Chẩn đoán:'))
+                        assert address_at < metadata_at < diagnosis_at
                 else:
-                    paragraphs = [p.text for p in doc.paragraphs]
-                    address_at = next(i for i, x in enumerate(paragraphs) if x.startswith('Nơi thường trú / tạm trú / ở hiện tại:'))
-                    assert paragraphs[address_at] == 'Nơi thường trú / tạm trú / ở hiện tại: '+address
-                    metadata_at = next(i for i, x in enumerate(paragraphs) if x.startswith('Nghề nghiệp:'))
-                    diagnosis_at = next(i for i, x in enumerate(paragraphs) if x.startswith('Chẩn đoán:'))
-                    assert address_at < metadata_at < diagnosis_at
-            else:
-                with pymupdf.open(stream=response.content, filetype='pdf') as pdf:
-                    text = ' '.join(' '.join(page.get_text().split()) for page in pdf)
-                assert 'Địa chỉ: '+address in text
-                assert 'Địa chỉ: —' not in text
-                if kind == 'rx': assert text.index(address) < text.index('Danh sách thuốc')
+                    with pymupdf.open(stream=response.content, filetype='pdf') as pdf:
+                        text = ' '.join(' '.join(page.get_text().split()) for page in pdf)
+                    assert 'Địa chỉ: '+address in text
+                    assert 'Địa chỉ: —' not in text
+                    if kind == 'rx': assert text.index(address) < text.index('Danh sách thuốc')
+    finally:
+        # Keep the reference for the printed prescription, but do not expose
+        # this stockless fixture to later pharmacy workflows in the shared DB.
+        with db(True) as c:
+            c.execute('UPDATE medicines SET active=0 WHERE id=?', (medicine,))
