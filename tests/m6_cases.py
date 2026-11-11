@@ -32,7 +32,7 @@ def check_m6(clients, ids, db, service):
         detail=d.get(url).json(); assert detail['items'][0]['quantity']=='14'
         assert len(detail['local_code'])==14 and detail['local_code'].startswith('ZZ001')
         draft=d.get(url+'/form?fmt=docx');assert draft.status_code==200
-        draft_doc=Document(io.BytesIO(draft.content));draft_text=' '.join(x.text for x in draft_doc.paragraphs)
+        draft_doc=Document(io.BytesIO(draft.content));assert draft_doc.paragraphs[0].text.startswith('Mã đơn thuốc:');draft_text=' '.join(x.text for x in draft_doc.paragraphs)
         assert detail['local_code'] in draft_text and 'NHÁP – CHƯA CÓ GIÁ TRỊ' in draft_text
         assert 'CHƯA CÓ MÃ CƠ SỞ' not in draft_text
         did=detail['items'][0]['drug_id']
@@ -102,6 +102,7 @@ def check_m6(clients, ids, db, service):
                 with pymupdf.open(stream=res.content,filetype='pdf') as pdf:text=' '.join(p.get_text() for p in pdf)
             text=' '.join(text.split())
             for word in expected:assert word in text,(fmt,word,text)
+            assert text.index(code)<text.index('Cơ sở giả lập')<text.index('Người giả lập M6')
         # Merge changes only references; snapshot/JSON remains exactly identical.
         with db() as c:
             target=c.execute('SELECT drug_id FROM clinical_prescription_items WHERE prescription_id=? AND drug_id<>?',(rid,did)).fetchone()[0]
@@ -129,6 +130,8 @@ def check_m6(clients, ids, db, service):
         compound={'name':'Hỗn hợp giả lập '+suffix,'ingredient':'Chất X giả lập + Chất Y giả lập','brand_name':'Thương mại giả lập','dose':'1','frequency':'2','days':'3','route':'Uống','unit':'viên'}
         cr=d.post('/api/clinical-prescriptions',json={'visit_id':cv,'items':[compound,{**compound,'name':'Trùng hoạt chất giả lập '+suffix,'ingredient':'Chất X giả lập','brand_name':''}]});assert cr.status_code==201,cr.text
         assert cr.json()['warnings']
+        brand_matches=a.get('/api/drugs',params={'q':'thuong mai gia lap'}).json()
+        assert any(x['name']==compound['name'] and x['brand_name']=='Thương mại giả lập' for x in brand_matches)
         curl='/api/clinical-prescriptions/'+str(cr.json()['id'])
         assert d.post(curl+'/lock',json={'version':0}).status_code==422
         assert d.put(f'/api/visits/{cv}/child-details',json={'version':1,'weight_kg':12}).status_code==200

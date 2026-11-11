@@ -150,15 +150,15 @@ def save_lines(c, rid, items, u, audit):
         if drug and (drug['review_status'] == 'inactive' or drug['merged_into']):
             raise HTTPException(422, f'Dòng {pos}: thuốc đã ngừng dùng, chọn lại từ danh mục')
         if not drug:
-            c.execute('INSERT INTO drugs(name,name_key,strength,strength_key,ingredient,ingredient_key,brand_name,unit,route) VALUES(?,?,?,?,?,?,?,?,?)',
-                      (item.name, key, item.strength, strength, item.ingredient, fold(item.ingredient), item.brand_name, item.unit, item.route))
+            c.execute('INSERT INTO drugs(name,name_key,strength,strength_key,ingredient,ingredient_key,brand_name,brand_key,unit,route) VALUES(?,?,?,?,?,?,?,?,?,?)',
+                      (item.name, key, item.strength, strength, item.ingredient, fold(item.ingredient), item.brand_name, fold(item.brand_name), item.unit, item.route))
             did = c.execute('SELECT last_insert_rowid()').fetchone()[0]
         else:
             did = drug['id']
             # Suggestions are applied in the UI. Explicit row values, including
             # cleared use fields, are never silently filled back by the API.
             if drug['review_status'] == 'unreviewed' and item.ingredient:
-                c.execute('UPDATE drugs SET ingredient=?,ingredient_key=?,brand_name=? WHERE id=?', (item.ingredient, fold(item.ingredient), item.brand_name or drug['brand_name'], did))
+                c.execute('UPDATE drugs SET ingredient=?,ingredient_key=?,brand_name=?,brand_key=? WHERE id=?', (item.ingredient, fold(item.ingredient), item.brand_name or drug['brand_name'], fold(item.brand_name or drug['brand_name']), did))
                 if item.ingredient != drug['ingredient']:
                     audit(c, u, 'drug_updated', 'drug', did, dump({'fields': ['ingredient']}))
         for active in components(value['ingredient']):
@@ -272,7 +272,7 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             args = [status] if status else []
             needle = '%'+fold(q[:180])+'%'
             if q:
-                where += ' AND (name_key LIKE ? OR ingredient_key LIKE ?)'; args += [needle, needle]
+                where += ' AND (name_key LIKE ? OR brand_key LIKE ? OR ingredient_key LIKE ?)'; args += [needle, needle, needle]
             rows = [dict(r) for r in c.execute('SELECT * FROM drugs WHERE '+where+' ORDER BY id DESC LIMIT ? OFFSET ?', (*args, limit, offset))]
             return rows
 
@@ -282,7 +282,7 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         with db(True) as c:
             old = c.execute('SELECT * FROM drugs WHERE id=?', (did,)).fetchone()
             if not old: raise HTTPException(404, 'Không có thuốc')
-            values = data.model_dump(); values['toxic'] = int(values['toxic']); values.update(name_key=fold(data.name), strength_key=fold(data.strength), ingredient_key=fold(data.ingredient))
+            values = data.model_dump(); values['toxic'] = int(values['toxic']); values.update(name_key=fold(data.name), strength_key=fold(data.strength), ingredient_key=fold(data.ingredient), brand_key=fold(data.brand_name))
             duplicate = c.execute('SELECT id FROM drugs WHERE name_key=? AND strength_key=? AND id<>?', (values['name_key'], values['strength_key'], did)).fetchone()
             if duplicate: raise HTTPException(409, 'Tên và hàm lượng đã có; dùng chức năng gộp')
             c.execute('UPDATE drugs SET '+','.join(k+'=?' for k in values)+' WHERE id=?', (*values.values(), did))

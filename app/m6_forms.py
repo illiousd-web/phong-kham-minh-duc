@@ -16,6 +16,7 @@ def content(p, status):
     f = p['facility']; person = p['patient']; advice = p['advice']
     head = [('Mã đơn thuốc', p['local_code'] or ('MÃ NHÁP – CHƯA KHÓA ĐƠN' if f['clinic_facility_code'] else 'MÃ NHÁP – CHƯA CÓ MÃ CƠ SỞ')),
             ('Tên đơn vị', f['clinic_name']), ('Địa chỉ cơ sở', f['clinic_address']), ('Điện thoại cơ sở', f['clinic_phone'])]
+    head.append(('', 'ĐƠN THUỐC'))
     if status == 'draft': head.append(('', 'NHÁP – CHƯA CÓ GIÁ TRỊ'))
     if status == 'cancelled': head.append(('', 'ĐƠN ĐÃ HỦY – KHÔNG CÓ GIÁ TRỊ'))
     head += [('Họ tên', person['full_name']), ('Số định danh/CCCD/căn cước/hộ chiếu (nếu có)', person['document_number'] or ''),
@@ -26,7 +27,7 @@ def content(p, status):
     for i, item in enumerate(p['items'], 1):
         amount = item['quantity']; n = decimal(amount)
         if n is not None and n == n.to_integral_value() and n < 10: amount = '0'+str(int(n))
-        usage = item['dose']+' × '+item['frequency']+' lần/ngày; '+item['route']
+        usage = 'Liều/lần: '+item['dose']+' × '+item['frequency']+' lần/ngày; '+item['route']
         if item['timing']: usage += '; '+item['timing']
         usage += '; '+item['days']+' ngày'
         if item['notes']: usage += '; '+item['notes']
@@ -53,8 +54,9 @@ def render(p, status, fmt):
         section.left_margin = section.right_margin = Pt(25)
         section.top_margin = section.bottom_margin = Pt(25)
         doc.styles['Normal'].font.name = 'Arial'; doc.styles['Normal'].font.size = Pt(9)
-        doc.add_heading('ĐƠN THUỐC', 0)
-        for label, value in head: doc.add_paragraph(text(label, value))
+        for label, value in head:
+            if not label and value == 'ĐƠN THUỐC': doc.add_heading(value, 0)
+            else: doc.add_paragraph(text(label, value))
         doc.add_paragraph('Thuốc điều trị:')
         table = doc.add_table(rows=1, cols=4); table.style = 'Table Grid'
         for cell, value in zip(table.rows[0].cells, ['STT', 'Tên thuốc + hàm lượng', 'Số lượng + đơn vị', 'Cách dùng']): cell.text = clean(value)
@@ -68,7 +70,8 @@ def render(p, status, fmt):
     else:
         font = font_name(); style = ParagraphStyle('M6', fontName=font, fontSize=8, leading=11, spaceAfter=5)
         par = lambda value: Paragraph(pdf_safe(value), style)
-        story = [par('ĐƠN THUỐC')]+[par(text(l, v)) for l, v in head]+[par('Thuốc điều trị:')]
+        title_style = ParagraphStyle('M6Title', parent=style, fontSize=14, leading=18, alignment=1)
+        story = [Paragraph('<b>ĐƠN THUỐC</b>', title_style) if not l and v == 'ĐƠN THUỐC' else par(text(l, v)) for l, v in head]+[par('Thuốc điều trị:')]
         values = [[par(x) for x in ['STT', 'Tên thuốc + hàm lượng', 'Số lượng + đơn vị', 'Cách dùng']]]+[[par(v) for v in row] for row in rows]
         table = Table(values, colWidths=[22, 118, 65, A5[0]-255], repeatRows=1, splitInRow=1)
         table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .4, colors.grey), ('VALIGN', (0, 0), (-1, -1), 'TOP')]))
