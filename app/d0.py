@@ -336,7 +336,7 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
     @app.get('/api/standards/unlinked/lab-tests')
     def unlinked_tests(u=Depends(principal)):
         require(u,'admin')
-        with db() as c:return [dict(r) for r in c.execute('SELECT id,name FROM lab_tests WHERE shared_code IS NULL OR shared_code='' ORDER BY id')]
+        with db() as c:return [dict(r) for r in c.execute("SELECT id,name FROM lab_tests WHERE shared_code IS NULL OR shared_code='' ORDER BY id")]
 
     @app.put('/api/standards/lab-tests/{tid}')
     def link_test(tid:int,data:CodeLink,u=Depends(principal)):
