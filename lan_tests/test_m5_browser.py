@@ -37,6 +37,12 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
         page=browser.new_page(viewport={'width':width,'height':900});page.on('pageerror',lambda e:errors.append(str(e)))
         def login(role):
             page.goto(origin);page.locator('[name=username]').fill('test_'+role);page.locator('[name=password]').fill(PASSWORDS[role]);page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+        def logout():
+            # Wait for revocation and the completed UI transition before navigating.
+            with page.expect_response(lambda x:x.url.endswith('/api/logout') and x.request.method=='POST') as response:
+                page.locator('#logout').click()
+            assert response.value.status==200
+            expect(page.locator('[data-form=login]')).to_be_visible()
         login('technician');go(page,'m5-queue')
         page.locator(f'[data-m5=open][data-id="{rid}"]').click();settle(page)
         form=page.locator('[data-m5-form=result]');expect(form.locator('[name=value]')).to_have_attribute('inputmode','decimal')
@@ -49,7 +55,7 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
         with page.expect_response(lambda x:x.url.endswith('/submit')) as response:page.locator('[data-m5=submit]').click()
         assert response.value.status==200;settle(page);no_horizontal_scroll(page)
         assert d.get(f'/api/lab/reports/{rid}').json()['items']==[]
-        page.locator('#logout').click();login('doctor');pick(page,'visit',vid)
+        logout();login('doctor');pick(page,'visit',vid)
         expect(page.locator('#doctor-results')).to_contain_text('Đang làm')
         expect(page.locator('#doctor-results')).not_to_contain_text('21.5')
         page.locator(f'[data-m5=review][data-id="{rid}"]').click();expect(page.locator('dialog')).to_contain_text('21.5')
@@ -59,12 +65,12 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
         expect(page.locator(f'[data-scope-warning="{oid}"]')).to_contain_text('Xét nghiệm')
         page.locator('#doctor-results [data-m5=history]').click();expect(page.locator('dialog')).to_contain_text('21.5');page.locator('dialog [data-m5=close]').click()
         page.screenshot(path=str(target/f'ket-qua-{width}.png'),full_page=True);no_horizontal_scroll(page)
-        page.locator('#logout').click();login('reception');go(page,'m5-queue');page.locator(f'[data-m5=open][data-id="{rid}"]').click();settle(page)
+        logout();login('reception');go(page,'m5-queue');page.locator(f'[data-m5=open][data-id="{rid}"]').click();settle(page)
         assert page.locator('[data-m5-form=result]').count()==0
         assert page.locator('[data-m5=print][data-group=urine]').count()==0
         with page.expect_download() as download:page.locator(f'[data-m5=print][data-id="{rid}"][data-fmt=docx]').click()
         download.value.save_as(str(target/f'da-duyet-{width}.docx'));no_horizontal_scroll(page)
-        page.locator('#logout').click();login('admin');go(page,'m5-admin')
+        logout();login('admin');go(page,'m5-admin')
         expect(page.locator('#workspace')).to_contain_text('Khung chỉ số chỉ gợi ý')
         page.locator('[data-m5-test]').select_option(str(tid));settle(page)
         expect(page.locator('[name=code]')).to_have_value(test['code']);expect(page.locator('.m5-reference [name=lower_value]')).to_have_value('10')
