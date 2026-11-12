@@ -459,7 +459,7 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
     @app.get('/api/clinical-prescriptions/{rid}/json')
     def export_json(rid: int, u=Depends(principal)):
         require(u, 'doctor')
-        with db(True) as c:
+        with db('access') as c:
             rx = access(c, rid, u)
             if rx['status'] != 'locked': raise HTTPException(409, 'Chỉ xuất JSON đơn đã khóa')
             audit(c, u, 'clinical_rx_json_exported', 'clinical_prescription', rid)
@@ -468,7 +468,7 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
     @app.get('/api/clinical-prescriptions/{rid}/form')
     def export_form(rid: int, fmt: Literal['pdf', 'docx'] = 'pdf', u=Depends(principal)):
         from .m6_forms import render
-        with db(True) as c:
+        with db('access') as c:
             rx = access(c, rid, u)
             value = json.loads(rx['snapshot']) if rx['snapshot'] else payload(c, rx)
             if rx['status'] == 'cancelled':

@@ -35,11 +35,14 @@ def record_factory(cursor):
 
 class PGConnection:
     """Small SQL dialect boundary; all values stay bound parameters."""
-    def __init__(self, connection):
+    def __init__(self, connection, operational=False):
         self.connection = connection
         self.last_id = None
+        self.operational = operational
 
     def execute(self, sql, params=()):
+        if self.operational and not re.match(r'\s*(SELECT\b|(?:INSERT INTO|UPDATE|DELETE FROM)\s+(?:sessions|login_attempts|audit_log)\b)', sql, re.I):
+            raise RuntimeError('Giao dịch truy cập không được sửa dữ liệu nghiệp vụ')
         if sql == 'SELECT last_insert_rowid()':
             return SavedID(self.last_id)
         sql = sql.replace("date('now','+90 days')", "to_char(CURRENT_DATE + 90, 'YYYY-MM-DD')")
@@ -81,18 +84,27 @@ def pool():
 @contextmanager
 def db(write=False):
     if LAN:
-        if write:
+        operational = write == 'access'
+        if write and not operational:
             from .storage import require_space
             require_space(DATA)
         with pool().connection() as con:
             with con.transaction():
                 con.execute("SET LOCAL statement_timeout = '30s'")
-                con.execute("SET LOCAL lock_timeout = '15s'")
-                if write:
-                    con.execute('SELECT pg_advisory_xact_lock(%s)', (LOCK_ID,))
+                con.execute("SET LOCAL lock_timeout = '250ms'")
+                if write and not operational:
+                    import psycopg
+                    try:
+                        con.execute('SELECT pg_advisory_xact_lock(%s)', (LOCK_ID,))
+                    except psycopg.errors.LockNotAvailable:
+                        from fastapi import HTTPException
+                        raise HTTPException(503, 'Đang sao lưu hoặc có thao tác ghi khác, thử lại sau 1 giây', headers={'Retry-After': '1'})
+                elif operational:
+                    from .storage import release_access_reserve
+                    release_access_reserve(DATA)
                 else:
                     con.execute('SET TRANSACTION READ ONLY')
-                yield PGConnection(con)
+                yield PGConnection(con, operational=operational)
         return
     DB.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB, timeout=10)

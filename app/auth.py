@@ -38,15 +38,21 @@ def install_auth(app, db, lan, now):
     @app.post('/api/login')
     def login(data: Login, request: Request, response: Response):
         denied = False
-        with db(True) as c:
+        # Expensive password hashing must not hold the clinic write/backup lock.
+        with db() as c:
+            candidate = c.execute('SELECT * FROM users WHERE username=? AND active=1', (data.username,)).fetchone()
+        valid = verify(data.password, candidate['salt'], candidate['password_hash']) if candidate else verify(data.password, dummy_salt, dummy_hash)
+        with db('access') as c:
             instant = datetime.now(timezone.utc)
             key = hashlib.sha256(data.username.casefold().encode()).hexdigest()
             if lan:
+                # Serialize only this login name, retaining exact lockout counters.
+                c.execute('SELECT pg_advisory_xact_lock(?)', (-int(key[:15],16)-1,))
                 attempt = c.execute('SELECT * FROM login_attempts WHERE key=?', (key,)).fetchone()
                 if attempt and attempt['locked_until'] > instant.isoformat():
                     raise HTTPException(429, 'Tạm khóa đăng nhập, thử lại sau 15 phút', headers={'Retry-After': '900'})
             u = c.execute('SELECT * FROM users WHERE username=? AND active=1', (data.username,)).fetchone()
-            valid = verify(data.password, u['salt'], u['password_hash']) if u else verify(data.password, dummy_salt, dummy_hash)
+            valid = valid and candidate and u and candidate['password_hash'] == u['password_hash'] and candidate['salt'] == u['salt']
             if not u or not valid:
                 denied = True
                 if lan:
@@ -88,17 +94,23 @@ def install_auth(app, db, lan, now):
         if not token or len(token) < 48 or len(token) > 200:
             raise HTTPException(401, 'Cần đăng nhập')
         digest = hashlib.sha256(token.encode()).hexdigest()
-        with db(lan) as c:
+        with db() as c:
             u = c.execute('SELECT users.*,sessions.expires_at' + (',sessions.last_seen' if lan else '') + ' FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires_at>? AND active=1', (digest,now())).fetchone()
             if not u:
                 raise HTTPException(401, 'Hết hạn phiên hoặc không hợp lệ')
             if lan:
                 if not u['last_seen'] or datetime.fromisoformat(u['last_seen']) < datetime.now(timezone.utc)-timedelta(minutes=IDLE_MINUTES):
                     raise HTTPException(401, 'Phiên hết hạn do không hoạt động')
-                if touch:
-                    c.execute('UPDATE sessions SET last_seen=? WHERE token_hash=?', (now(),digest))
             roles = [r[0] for r in c.execute('SELECT role FROM user_roles WHERE user_id=? ORDER BY role', (u['id'],))]
-            return {'id':u['id'],'username':u['username'],'name':u['full_name'],'roles':roles,'token_hash':digest}
+            result = {'id':u['id'],'username':u['username'],'name':u['full_name'],'roles':roles,'token_hash':digest}
+        if lan and touch:
+            try:
+                with db('access') as c:
+                    c.execute('UPDATE sessions SET last_seen=? WHERE token_hash=?', (now(),digest))
+            except Exception:
+                # Validate expiry above; skipping a busy touch never extends it.
+                pass
+        return result
 
     def principal(request: Request, authorization: Annotated[str | None, Header()] = None):
         """Người dùng đã đăng nhập; mỗi lần gọi tính là một thao tác, gia hạn phiên."""
@@ -117,7 +129,7 @@ def install_auth(app, db, lan, now):
 
     @app.post('/api/logout')
     def logout(response: Response, u=Depends(principal)):
-        with db(True) as c:
+        with db('access') as c:
             c.execute('DELETE FROM sessions WHERE token_hash=?', (u['token_hash'],))
             log(c, u['id'], 'logout')
         for cookie in (COOKIE, CSRF_COOKIE):

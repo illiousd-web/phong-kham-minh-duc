@@ -405,7 +405,7 @@ function Step-SaoLuu {
         Write-Luu 'Chỉ sao lưu trên máy chủ (giữ 14 bản), không dùng ổ ngoài. Máy chủ hỏng hoặc bị mất thì mất toàn bộ dữ liệu.'
     }
     $alert = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) $Names.AlertFile
-    $jobArgs = @('-m', 'scripts.with_env', ('"' + $P.ClinicEnv + '"'), 'scripts.backup_job', '--key', ('"' + $P.BackupKey + '"'),
+    $jobArgs = @('-m', 'scripts.with_env', ('"' + $P.ClinicEnv + '"'), 'scripts.backup_job', '--scheduled', '--key', ('"' + $P.BackupKey + '"'),
         '--directory', ('"' + $P.Backups + '"'), '--state', ('"' + $P.BackupState + '"'),
         '--external-config', ('"' + $P.ExternalCfg + '"'), '--alert-file', ('"' + $alert + '"')) -join ' '
     $action = New-ScheduledTaskAction -Execute $P.VenvPython -Argument $jobArgs -WorkingDirectory $P.Code

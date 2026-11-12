@@ -9,6 +9,30 @@ class StorageLimitError(RuntimeError):
     pass
 
 
+ACCESS_RESERVE_BYTES = 8 * 1024 * 1024
+
+
+def prepare_access_reserve(path):
+    """Allocate real blocks, separately from business capacity, once at startup."""
+    target = Path(path) / '.access-reserve'
+    if target.exists() or free_bytes(path) < LIMITS.min_free_bytes + ACCESS_RESERVE_BYTES:
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with target.open('xb') as output:
+            output.write(bytes(ACCESS_RESERVE_BYTES))
+            output.flush()
+            os.fsync(output.fileno())
+    except FileExistsError:
+        pass
+
+
+def release_access_reserve(path):
+    """Emergency headroom for session and access-audit WAL, never patient deletion."""
+    if free_bytes(path) < ACCESS_RESERVE_BYTES:
+        (Path(path) / '.access-reserve').unlink(missing_ok=True)
+
+
 def tree_bytes(path):
     path=Path(path)
     if not path.exists():return 0

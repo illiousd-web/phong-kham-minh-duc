@@ -63,7 +63,7 @@ def mount_forms(app, db, principal, require, audit):
     def visit_form(visit_id:int,kind:str,format:str='pdf',u=Depends(principal)):
         if kind not in ('reception','clinical','followup'):
             raise HTTPException(404,'Biểu mẫu không tồn tại')
-        with db(True) as c:
+        with db('access') as c:
             if kind=='reception':
                 require(u,'reception','admin')
                 ctx=get_visit(c,visit_id)
@@ -83,7 +83,7 @@ def mount_forms(app, db, principal, require, audit):
     def order_form(order_id:int,kind:str,format:str='pdf',u=Depends(principal)):
         if kind not in ('order','result'):raise HTTPException(404,'Biểu mẫu không tồn tại')
         require(u,'doctor','technician')
-        with db(True) as c:
+        with db('access') as c:
             o=c.execute('''SELECT o.*,a.full_name AS approved_by_name
               FROM orders o LEFT JOIN users a ON a.id=o.approved_by
               WHERE o.id=?''',(order_id,)).fetchone()
@@ -111,7 +111,7 @@ def mount_forms(app, db, principal, require, audit):
     @export_slot
     def rx_form(rx_id:int,format:str='pdf',u=Depends(principal)):
         require(u,'doctor','pharmacy')
-        with db(True) as c:
+        with db('access') as c:
             rx=c.execute('SELECT * FROM prescriptions WHERE id=?',(rx_id,)).fetchone()
             if not rx:raise HTTPException(404,'Không có đơn nháp')
             ctx=get_visit(c,rx['visit_id'])
