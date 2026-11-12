@@ -20,3 +20,13 @@ REVOKE UPDATE, DELETE, TRUNCATE ON order_authorizations, charge_sources,
  dispensation_items, dispensations, payments, charges, stock_movements,
  charge_voids, visit_closures, medicine_units FROM clinic_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON manual_charge_prices FROM clinic_app;
+
+-- S1a: only after owner migration 12 (legacy upgrade checks may apply v4).
+DO $$ BEGIN
+ IF to_regclass('public.prescription_outbox') IS NOT NULL THEN
+  REVOKE TRUNCATE ON clinical_prescriptions, clinical_prescription_items,
+   lab_reports, lab_results, prescription_outbox FROM clinic_app;
+  REVOKE DELETE, UPDATE ON prescription_outbox FROM clinic_app;
+  GRANT UPDATE(status) ON prescription_outbox TO clinic_app;
+ END IF;
+END $$;

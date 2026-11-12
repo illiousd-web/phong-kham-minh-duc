@@ -153,3 +153,6 @@ def migrate():
         migrate_d0(PGConnection(con), postgres=True)
         from .d0_source_migration import migrate_source_catalogs
         migrate_source_catalogs(PGConnection(con), postgres=True)
+
+        from .s1_migration import migrate_s1
+        migrate_s1(PGConnection(con))
