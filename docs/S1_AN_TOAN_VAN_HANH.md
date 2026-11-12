@@ -42,3 +42,11 @@ Ngày 12/11/2026, Linux cục bộ, PostgreSQL 17; C5: 20.000 người bệnh, 2
 | Nạp ICD-10 15.844 mã (khóa danh mục riêng) | 4.902,663 | 5.454,280 |
 
 Nạp ICD-10 có thể giữ giao dịch hơn 5 giây nên không dùng khóa ghi nghiệp vụ. Test đồng thời giữ giao dịch nhập đang mở và vẫn lưu phiếu khám thành công.
+
+## Giới hạn nghiệm thu
+
+- Đầy ổ được thử bằng giả lập `monkeypatch` số byte trống; chưa làm đầy dung lượng thật hay WAL PostgreSQL.
+- Chưa thử `pg_dump` đồng thời với ghi nghiệp vụ. Test mới kiểm khóa sao lưu thật và tranh chấp giao dịch; không coi là nghiệm thu bản dump trong tải ghi đồng thời.
+- Dự phòng 8 MiB ở `logs/.access-reserve` chưa chắc cùng phân vùng với thư mục dữ liệu PostgreSQL; giải phóng tệp này không bảo đảm PostgreSQL có thêm dung lượng nếu nằm khác phân vùng. Phải kiểm và giám sát cả hai phân vùng trên máy thật.
+- Số đo giữ khóa là Linux với dữ liệu C5 giả lập, chưa thay thế nghiệm thu Windows i3/8 GB, SSD và máy in thật.
+- PR #22 vẫn Draft dựa trên S1a. Chỉ sau khi chủ dự án merge #21 mới rebase #22 lên main mới và chạy lại toàn bộ, đặc biệt khóa đơn M6 với trigger S1a.

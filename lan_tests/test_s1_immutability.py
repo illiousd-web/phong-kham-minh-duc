@@ -36,6 +36,10 @@ def test_runtime_role_cannot_change_locked_evidence(visit):
             c.execute(sql.SQL('SET ROLE {}').format(sql.Identifier(role)))
             with pytest.raises(psycopg.Error):
                 c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did, rid))
+            for merge_from, merge_to in ((other_did, other_did), (did, did)):
+                with pytest.raises(psycopg.Error), c.transaction():
+                    c.execute("SELECT set_config('clinic.merge_from', %s, true), set_config('clinic.merge_to', %s, true)", (str(merge_from), str(merge_to)))
+                    c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did, rid))
             for statement in ("UPDATE clinical_prescriptions SET snapshot='tampered' WHERE id=%s", "DELETE FROM clinical_prescription_items WHERE prescription_id=%s", "DELETE FROM clinical_prescriptions WHERE id=%s"):
                 with pytest.raises(psycopg.Error):
                     c.execute(statement,(rid,))
