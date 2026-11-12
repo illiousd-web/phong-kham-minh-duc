@@ -4,7 +4,7 @@ import re
 import secrets
 import unicodedata
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, DecimalException, localcontext
 from io import BytesIO
 from typing import Literal
 
@@ -269,8 +269,18 @@ def flexible_unit(line):
 
 def quantity_mismatch(line):
     actual = decimal(line.get('quantity',''))
-    expected = decimal(quantity(line.get('dose',''),line.get('frequency',''),line.get('days','')))
-    return bool(actual and expected and (actual > expected*Decimal('1.2') or actual < expected*Decimal('0.8')))
+    factors = [decimal(line.get(k,'')) for k in ('dose','frequency','days')]
+    if actual is None or any(value is None for value in factors): return False
+    try:
+        # Validation must not inherit the draft autofill's one-million cap.
+        # Each input has at most 180 characters; retain all significant digits.
+        with localcontext() as context:
+            context.prec = 600
+            expected = factors[0]*factors[1]*factors[2]
+            return actual > expected*Decimal('1.2') or actual < expected*Decimal('0.8')
+    except DecimalException:
+        # Unrepresentable arithmetic never silently bypasses acknowledgement.
+        return True
 
 
 def payload(c, rx, code=None, locked_at=None):

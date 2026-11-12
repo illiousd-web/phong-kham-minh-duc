@@ -2,7 +2,7 @@
 import difflib
 import json
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, localcontext
 from .m6 import fold, components
 
 LABEL = 'thuốc dạng phối hợp có chứa chất kiểm soát'
@@ -54,7 +54,9 @@ def assess(c, line):
         if not dose or not maximums:
             result['errors'].append('Đơn thuốc N/H chưa hỗ trợ: không xác định được hàm lượng mỗi đơn vị chia liều hoặc ngưỡng phối hợp')
             continue
-        amount = Decimal(dose[1].replace(',','.')) * {'mg':Decimal(1),'g':Decimal(1000),'mcg':Decimal('0.001'),'µg':Decimal('0.001')}[dose[2].lower()]
+        with localcontext() as context:
+            context.prec = 600
+            amount = Decimal(dose[1].replace(',','.')) * {'mg':Decimal(1),'g':Decimal(1000),'mcg':Decimal('0.001'),'µg':Decimal('0.001')}[dose[2].lower()]
         if amount > min(maximums): result['errors'].append('Đơn thuốc N/H chưa hỗ trợ: vượt ngưỡng phối hợp')
     if not result['errors']: result['label']=LABEL
     return result
