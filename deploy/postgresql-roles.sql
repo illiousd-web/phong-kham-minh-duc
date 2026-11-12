@@ -28,5 +28,10 @@ DO $$ BEGIN
    lab_reports, lab_results, prescription_outbox FROM clinic_app;
   REVOKE DELETE, UPDATE ON prescription_outbox FROM clinic_app;
   GRANT UPDATE(status) ON prescription_outbox TO clinic_app;
+  REVOKE UPDATE ON clinical_prescription_items FROM clinic_app;
+  -- Also remove pre-existing column-level grants (table REVOKE alone is insufficient).
+  EXECUTE (SELECT 'REVOKE UPDATE ('||string_agg(quote_ident(attname),',')||') ON clinical_prescription_items FROM clinic_app'
+           FROM pg_attribute WHERE attrelid='clinical_prescription_items'::regclass AND attnum>0 AND NOT attisdropped);
+  GRANT EXECUTE ON FUNCTION clinic_merge_drug(integer,integer,integer,text) TO clinic_app;
  END IF;
 END $$;

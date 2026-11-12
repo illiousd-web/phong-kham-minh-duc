@@ -116,6 +116,7 @@ class Cancel(Version):
 
 class Merge(BaseModel):
     keep_id: int = Field(gt=0)
+    reason: str = Field(default='Gộp danh mục thuốc trùng', min_length=8, max_length=500)
 
 
 class ClinicSettings(BaseModel):
@@ -346,14 +347,14 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             source = c.execute('SELECT * FROM drugs WHERE id=?', (did,)).fetchone()
             target = c.execute("SELECT * FROM drugs WHERE id=? AND review_status<>'inactive' AND merged_into IS NULL", (data.keep_id,)).fetchone()
             if not source or not target or did == data.keep_id or source['merged_into']: raise HTTPException(422, 'Chọn hai mục đang dùng khác nhau')
-            # Content JSON and locked snapshots deliberately remain untouched.
-            c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?', (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], data.keep_id))
+            # PostgreSQL elevates only inside this audited, owner-controlled function.
             if hasattr(c, 'connection'):
-                # set_config(..., true) is transaction-local (SET LOCAL), never pooled.
-                c.execute("SELECT set_config('clinic.merge_from', ?, true), set_config('clinic.merge_to', ?, true)", (str(did), str(data.keep_id)))
-            c.execute('UPDATE clinical_prescription_items SET drug_id=? WHERE drug_id=?', (data.keep_id, did))
-            c.execute("UPDATE drugs SET review_status='inactive',merged_into=? WHERE id=?", (data.keep_id, did))
-            audit(c, u, 'drug_merged', 'drug', did, dump({'keep_id': data.keep_id}))
+                c.execute('SELECT clinic_merge_drug(?,?,?,?)', (did, data.keep_id, u['id'], data.reason))
+            else:
+                c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?', (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], data.keep_id))
+                c.execute('UPDATE clinical_prescription_items SET drug_id=? WHERE drug_id=?', (data.keep_id, did))
+                c.execute("UPDATE drugs SET review_status='inactive',merged_into=? WHERE id=?", (data.keep_id, did))
+                audit(c, u, 'drug_merged', 'drug', did, dump({'keep_id': data.keep_id, 'reason': safe_reason(data.reason, {'document_number':'','citizen_id':''})}))
         return {'ok': True}
 
     @app.post('/api/clinical-prescriptions', status_code=201)
@@ -431,7 +432,12 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
                 if allergy_matches(patient['allergies'], item):
                     item['allergy_confirmed_by'] = u['id']; item['allergy_confirmed_at'] = stamp
                     content = {k: v for k, v in item.items() if k not in ('id','drug_id','toxic','display_name')}
-                    c.execute('UPDATE clinical_prescription_items SET content=? WHERE id=?', (dump(content), item['id']))
+                    # Still a draft: replace the row, preserving identity. Runtime
+                    # deliberately has no UPDATE privilege on any item column.
+                    row = c.execute('SELECT * FROM clinical_prescription_items WHERE id=?', (item['id'],)).fetchone()
+                    c.execute('DELETE FROM clinical_prescription_items WHERE id=?', (item['id'],))
+                    c.execute('INSERT INTO clinical_prescription_items(id,prescription_id,drug_id,position,content) VALUES(?,?,?,?,?)',
+                              (row['id'], row['prescription_id'], row['drug_id'], row['position'], dump(content)))
                     audit(c, u, 'clinical_rx_allergy_acknowledged', 'clinical_prescription', rid,
                           dump({'row': c.execute('SELECT position FROM clinical_prescription_items WHERE id=?', (item['id'],)).fetchone()[0], 'reason': safe_reason(item['allergy_reason'], patient)}), details_limit=3000)
             if parent:

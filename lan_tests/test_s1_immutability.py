@@ -36,10 +36,17 @@ def test_runtime_role_cannot_change_locked_evidence(visit):
             c.execute(sql.SQL('SET ROLE {}').format(sql.Identifier(role)))
             with pytest.raises(psycopg.Error):
                 c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did, rid))
-            for merge_from, merge_to in ((other_did, other_did), (did, did)):
+            for merge_from, merge_to in ((other_did, other_did), (did, did), (did, other_did)):
                 with pytest.raises(psycopg.Error), c.transaction():
                     c.execute("SELECT set_config('clinic.merge_from', %s, true), set_config('clinic.merge_to', %s, true)", (str(merge_from), str(merge_to)))
                     c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did, rid))
+            assert not c.execute("SELECT has_any_column_privilege(current_user, 'clinical_prescription_items', 'UPDATE')").fetchone()[0]
+            # Caller-owned temporary context is rejected, never trusted or read as owner.
+            c.execute('CREATE TEMP TABLE s1_merge_context(source_id integer,target_id integer)')
+            c.execute('INSERT INTO s1_merge_context VALUES(%s,%s)', (did,other_did))
+            with pytest.raises(psycopg.errors.InsufficientPrivilege), c.transaction():
+                c.execute('SELECT clinic_merge_drug(%s,%s,%s,%s)', (did,other_did,IDS['admin'],'Gộp giả lập kiểm quyền'))
+            c.execute('DROP TABLE s1_merge_context')
             for statement in ("UPDATE clinical_prescriptions SET snapshot='tampered' WHERE id=%s", "DELETE FROM clinical_prescription_items WHERE prescription_id=%s", "DELETE FROM clinical_prescriptions WHERE id=%s"):
                 with pytest.raises(psycopg.Error):
                     c.execute(statement,(rid,))
@@ -74,7 +81,12 @@ def test_runtime_role_allows_supported_api_lifecycles(clients, monkeypatch, modu
                 yield c
     try:
         monkeypatch.setattr(database, 'pool', lambda: RuntimePool())
+        with db() as c:
+            before=c.execute("SELECT count(*) FROM audit_log WHERE event='drug_merged'").fetchone()[0]
         getattr(importlib.import_module(module),function)(clients,IDS,db,SERVICE)
+        if function=='check_m6':
+            with db() as c:
+                assert c.execute("SELECT count(*) FROM audit_log WHERE event='drug_merged'").fetchone()[0]==before+1
     finally:
         with psycopg.connect(URL,autocommit=True) as c:
             c.execute(sql.SQL('DROP OWNED BY {}').format(sql.Identifier(role)))
@@ -112,4 +124,8 @@ def test_installed_s1_upgrade_refreshes_drug_guard():
         c.connection.execute("CREATE OR REPLACE FUNCTION s1_prescription_item_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$")
         migrate_s1(c)
         source = c.execute("SELECT pg_get_functiondef('s1_prescription_item_guard()'::regprocedure)").fetchone()[0]
-        assert 'clinic.merge_from' in source and 'clinic.merge_to' in source
+        assert 'clinic.merge_from' not in source and 'clinic.merge_to' not in source
+        assert 'current_user' in source and 's1_merge_context' in source
+        f=c.execute("SELECT prosecdef,proconfig,proowner FROM pg_proc WHERE oid='clinic_merge_drug(integer,integer,integer,text)'::regprocedure").fetchone()
+        assert f['prosecdef'] and 'search_path=pg_catalog, public, pg_temp' in f['proconfig']
+        assert f['proowner']==c.execute("SELECT relowner FROM pg_class WHERE oid='clinical_prescription_items'::regclass").fetchone()[0]
