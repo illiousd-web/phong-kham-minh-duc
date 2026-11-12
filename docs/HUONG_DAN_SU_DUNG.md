@@ -138,3 +138,7 @@ Bác sĩ, lễ tân và dược có menu Đơn thuốc đã khóa, lọc trạng
 ## Xét nghiệm theo chỉ số (M5)
 
 Quản trị mở **Chỉ số xét nghiệm** để rà khung, nhập tham chiếu và liên kết dịch vụ; phần mềm không có tham chiếu y khoa sẵn. Kỹ thuật viên mở **Xét nghiệm theo chỉ số**, nhập mẫu/kết quả, lưu nháp rồi gửi. Bác sĩ phụ trách mở nút **Duyệt phiếu theo chỉ số** trong Chỉ định; kết quả chỉ xuất hiện ở màn khám sau duyệt. Sửa sau duyệt bằng phiếu điều chỉnh có lý do, giữ bản cũ. Lễ tân mở **Phiếu xét nghiệm** để in từng nhóm đã duyệt. [Hướng dẫn M5 và Excel](M5_XET_NGHIEM.md).
+
+## Danh mục chuẩn D0
+
+Xem [hướng dẫn nhập file gốc, ICD-10 và liên kết mã](D0_DANH_MUC_CHUAN.md). Quy tắc bắt buộc mã bệnh chính mặc định bật; Năm file công khai ICD-10, mã CLS, kỹ thuật PL01/PL02 và mã xã được nạp sẵn; Quản trị có thể nhập phiên bản mới hoặc chủ động tắt bắt buộc mã bệnh khi chạy song song. Hồ sơ chữ cũ không được tự đoán mã.

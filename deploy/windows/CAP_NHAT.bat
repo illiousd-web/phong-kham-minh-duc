@@ -17,6 +17,7 @@ if errorlevel 1 (
   mkdir "%TEMP%\MinhDuc-CapNhat"
   copy /y "%~dp0CapNhat.ps1" "%TEMP%\MinhDuc-CapNhat\" >nul
   copy /y "%~dp0MinhDuc.Install.psm1" "%TEMP%\MinhDuc-CapNhat\" >nul
+  copy /y "%~dp0DanhMucGoc.ps1" "%TEMP%\MinhDuc-CapNhat\" >nul
   cd /d "%TEMP%\MinhDuc-CapNhat"
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\MinhDuc-CapNhat\CapNhat.ps1" -ThuMucMa "%~dp0..\.." %*
   call set "RC=%%errorlevel%%"

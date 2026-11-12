@@ -70,7 +70,13 @@ def test_upgrade_preserves_every_old_column_and_backup_restore(version,tmp_path,
                 actual=c.execute(query).fetchall()
                 if table=='audit_log':
                     assert actual[:len(rows)]==rows,table
-                    assert len(actual)==len(rows)+1 and actual[-1][columns.index('event')]=='patient_catalog_seeded'
+                    added=actual[len(rows):]
+                    assert len(added)==6
+                    assert [r[columns.index('event')] for r in added]==['patient_catalog_seeded']+['standard_catalog_seeded']*5
+                    from app.d0_sources import SOURCES
+                    assert [json.loads(r[columns.index('details')]) for r in added[1:]]==[
+                        {'file':filename,'rows':count,'sha256':sha} for filename,count,sha,*_ in SOURCES.values()]
+                    assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0]==11
                 else:assert actual==rows,table
             assert c.execute('SELECT count(*) FROM schema_migrations WHERE version=3').fetchone()[0]==1
             assert c.execute('SELECT count(*) FROM charges').fetchone()[0]==(2 if version=='v042' else 1)
