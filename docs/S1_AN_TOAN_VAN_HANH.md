@@ -41,3 +41,5 @@ Migration 14 thêm `order_result_versions`, bảo toàn kết quả chữ cũ. A
 Các kiểm thử cũ tiếp tục giữ nguyên assertion nghiệp vụ; dữ liệu thử được bổ sung trường version, hàm lượng/thời điểm và xác nhận số lượng nhập tay nay bắt buộc. Không nới quy tắc xác nhận, cảnh báo hoặc quyền để giữ test cũ xanh.
 
 Chưa làm: đơn N/H thật, S2, ký số/liên thông, suy diễn hàm lượng không xác định, nghiệm thu máy Windows thật và máy in.
+
+Kiểm lệch số lượng tính độc lập với giới hạn tự điền của nháp; vượt giới hạn tự điền không được bỏ qua xác nhận. Khi đổi đơn vị hàm lượng TT18, giữ đủ độ chính xác đầu vào, không làm tròn giá trị vượt ngưỡng xuống ngưỡng. Hai biên này có test FAIL trước sửa và PASS sau sửa.

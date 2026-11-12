@@ -71,14 +71,18 @@ def test_upgrade_preserves_every_old_column_and_backup_restore(version,tmp_path,
                 if table=='audit_log':
                     assert actual[:len(rows)]==rows,table
                     added=actual[len(rows):]
-                    assert len(added)==6
-                    assert [r[columns.index('event')] for r in added]==['patient_catalog_seeded']+['standard_catalog_seeded']*5
+                    assert len(added)==7
+                    assert [r[columns.index('event')] for r in added]==['patient_catalog_seeded']+['standard_catalog_seeded']*5+['controlled_catalog_seeded']
                     from app.d0_sources import SOURCES
-                    assert [json.loads(r[columns.index('details')]) for r in added[1:]]==[
+                    assert [json.loads(r[columns.index('details')]) for r in added[1:6]]==[
                         {'file':filename,'rows':count,'sha256':sha} for filename,count,sha,*_ in SOURCES.values()]
-                    assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0]==12
+                    from app.controlled_migration import FILES
+                    assert json.loads(added[-1][columns.index('details')])=={'substances':122,'limits':62,'files':{name:spec[1] for name,spec in FILES.items()}}
+                    assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0]==14
                     assert c.execute("SELECT COUNT(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('s1_prescription_immutable','s1_prescription_items_immutable','s1_lab_immutable','s1_lab_results_immutable','s1_outbox_immutable')").fetchone()[0]==5
                 else:assert actual==rows,table
+            result=c.execute('SELECT version,snapshot FROM order_result_versions WHERE order_id=1').fetchone()
+            assert result[0]==1 and json.loads(result[1])['result_text']=='OLD_RESULT_MARKER'
             assert c.execute('SELECT count(*) FROM schema_migrations WHERE version=3').fetchone()[0]==1
             assert c.execute('SELECT count(*) FROM charges').fetchone()[0]==(2 if version=='v042' else 1)
             assert c.execute('SELECT count(*) FROM order_authorizations').fetchone()[0]==(1 if version=='v042' else 0)
