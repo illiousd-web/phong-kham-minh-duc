@@ -19,6 +19,8 @@ def upload(a,kind,rows,**extra):
     return result.json()
 
 def check_d0(clients,ids,db,service):
+    from tests.d0_isolation import service as fresh_service,lab
+    service=fresh_service(db)
     a,d,r=[clients[k] for k in ('admin','doctor','reception')];suffix=secrets.token_hex(4)
     with db(True) as c:c.execute("DELETE FROM prescription_settings WHERE key='require_primary_icd10'")
     assert a.get('/api/standards/config').json()['require_primary_icd10'] is True
@@ -50,10 +52,10 @@ def check_d0(clients,ids,db,service):
     with db() as c:old=dict(c.execute('SELECT * FROM service_catalog WHERE id=?',(service,)).fetchone())
     assert a.put('/api/standards/services/'+str(service),json={'codes':[tech]}).status_code==200
     assert a.put('/api/standards/services/'+str(service),json={'codes':[tech,tech+'-PACK']}).status_code==422
-    assert a.put('/api/standards/services/'+str(service),json={'codes':[tech,tech+'-PACK'],'package':True}).status_code==200
+    assert a.put('/api/standards/services/'+str(service),json={'codes':[tech,tech+'-PACK'],'package':True,'confirmed':True,'reason':'Thêm mã gói giả lập đã kiểm'}).status_code==200
     with db() as c:assert dict(c.execute('SELECT * FROM service_catalog WHERE id=?',(service,)).fetchone())==old
     shared='7654321';upload(a,'shared_lab_codes',[{'code':shared,'name':'Chỉ số giả lập','tech_code':tech,'loinc':'FAKE-LOINC','unit':'đv giả lập'}])
-    tid=a.get('/api/standards/unlinked/lab-tests').json()[0]['id']
+    tid=lab(a)
     assert a.put('/api/standards/lab-tests/'+str(tid),json={'code':shared}).status_code==200
     assert a.put('/api/standards/lab-tests/'+str(tid),json={'code':'missing'}).status_code==422
     occ='FAKE-OCC-'+suffix;upload(a,'occupation_catalog',[{'code':occ,'name':'Nghề chuẩn giả lập'}])

@@ -27,6 +27,8 @@ def check_source_api(clients,ids,db,service):
     finally:admin.put('/api/standards/settings',json={'require_primary_icd10':prior})
 
 def _check_source_api(clients,ids,db,service):
+    from tests.d0_isolation import service as fresh_service,lab
+    service=fresh_service(db)
     a,d,r=clients['admin'],clients['doctor'],clients['reception']
     a.put('/api/standards/settings',json={'require_primary_icd10':True})
     from app.d0_sources import seed_sources
@@ -73,11 +75,11 @@ def _check_source_api(clients,ids,db,service):
     found=d.get('/api/standards/icd10?q=cholera').json();assert found['total']>0
     found=d.get('/api/standards/shared_lab_codes?q=prothrombin').json();assert found['items']
     chosen=found['items'][0]
-    tid=a.get('/api/standards/unlinked/lab-tests').json()[0]['id']
+    tid=lab(a)
     assert a.put('/api/standards/lab-tests/'+str(tid),json={'code':chosen['code']}).status_code==200
     with db() as c:
         assert c.execute('SELECT shared_code FROM lab_tests WHERE id=?',(tid,)).fetchone()[0]==chosen['code']
-        link=c.execute('SELECT pl02_id,pl01_code FROM tech_pl02_links WHERE needs_review=0 AND EXISTS(SELECT 1 FROM tech_catalog_pl02 p WHERE p.id=tech_pl02_links.pl02_id AND p.active=1) LIMIT 1').fetchone();old=dict(c.execute('SELECT * FROM service_catalog WHERE id=?',(service,)).fetchone())
+        link=c.execute('SELECT pl02_id,pl01_code FROM tech_pl02_links WHERE needs_review=0 AND NOT EXISTS(SELECT 1 FROM tech_pl02_links bad WHERE bad.pl02_id=tech_pl02_links.pl02_id AND bad.needs_review=1) AND EXISTS(SELECT 1 FROM tech_catalog_pl02 p WHERE p.id=tech_pl02_links.pl02_id AND p.active=1) LIMIT 1').fetchone();old=dict(c.execute('SELECT * FROM service_catalog WHERE id=?',(service,)).fetchone())
     assert a.put('/api/standards/services/'+str(service),json={'codes':[link['pl01_code']],'pl02_ids':[str(link['pl02_id'])]}).status_code==200
     with db() as c:assert dict(c.execute('SELECT * FROM service_catalog WHERE id=?',(service,)).fetchone())==old
     from tests.m5_revision_cases import setup_report
