@@ -14,7 +14,9 @@ Khởi động dành riêng 8 MiB thật trong `logs/.access-reserve` trên ổ 
 
 ## Sao lưu bù
 
-Tác vụ Windows thêm `--scheduled`. Trong giờ làm mặc định 07:00–17:30 (giờ Việt Nam), hoãn chạy bù tới lịch 20:00; nếu chưa có bản thành công hoặc quá 48 giờ thì vẫn chạy để bảo vệ dữ liệu. Người hỗ trợ cấu hình `CLINIC_WORK_START`, `CLINIC_WORK_END` theo HH:MM trong môi trường tác vụ. Hỗ trợ ca qua nửa đêm. Lệnh sao lưu thủ công/cài đặt không bị hoãn. Không đổi quy tắc giữ bản tốt, kiểm giải mã, sao lưu tệp hay khôi phục.
+Windows dùng hai tác vụ: lịch hằng ngày 20:00 truyền `--daily`, luôn chạy kể cả giờ làm kéo tới 21:00; không dùng `StartWhenAvailable` cho tác vụ này. Tác vụ khởi động riêng, trễ hai phút, truyền `--catchup`. Chỉ chạy bù mới xét giờ làm mặc định 07:00–17:30 (giờ Việt Nam): hoãn tới lịch 20:00 nếu còn bản tốt trong 48 giờ; chưa có bản thành công hoặc quá 48 giờ thì chạy ngay. `--scheduled` được giữ làm bí danh tương thích cho `--catchup`, không dùng cho lịch chính. Cài đặt/cập nhật phải đăng ký lại hai tác vụ bằng bước sao lưu trong `CaiDat.ps1` để bỏ cấu hình lịch cũ.
+
+Người hỗ trợ cấu hình `CLINIC_WORK_START`, `CLINIC_WORK_END` theo HH:MM trong môi trường tác vụ. Hỗ trợ ca qua nửa đêm. Lệnh sao lưu thủ công/cài đặt không bị hoãn. Không đổi quy tắc giữ bản tốt, kiểm giải mã, sao lưu tệp hay khôi phục.
 
 ## Bất biến PostgreSQL
 

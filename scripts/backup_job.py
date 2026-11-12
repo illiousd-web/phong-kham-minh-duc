@@ -292,7 +292,7 @@ def run(args, now=None):
         state = json.loads(state_path.read_text(encoding='utf-8'))
     except (OSError, ValueError):
         state = {}
-    if getattr(args, 'scheduled', False) and should_defer_catchup(state, now):
+    if getattr(args, 'catchup', False) and should_defer_catchup(state, now):
         print('Sao lưu bù tạm hoãn trong giờ làm việc; lịch 20:00 tiếp tục chạy.')
         return 0
     external = None
@@ -402,7 +402,9 @@ def main(argv=None):
     parser.add_argument('--state', required=True)
     parser.add_argument('--external-config')
     parser.add_argument('--alert-file')
-    parser.add_argument('--scheduled', action='store_true', help='Áp dụng giờ làm việc cho lịch chạy bù')
+    schedule = parser.add_mutually_exclusive_group()
+    schedule.add_argument('--daily', action='store_true', help='Lịch 20:00, luôn chạy kể cả trong giờ làm việc')
+    schedule.add_argument('--catchup', '--scheduled', dest='catchup', action='store_true', help='Chạy bù; hoãn trong giờ làm nếu bản tốt chưa quá 48 giờ')
     return run(parser.parse_args(argv))
 
 
