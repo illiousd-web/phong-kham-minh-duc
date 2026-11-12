@@ -41,11 +41,11 @@ def test_runtime_role_cannot_change_locked_evidence(visit):
                     c.execute("SELECT set_config('clinic.merge_from', %s, true), set_config('clinic.merge_to', %s, true)", (str(merge_from), str(merge_to)))
                     c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did, rid))
             assert not c.execute("SELECT has_any_column_privilege(current_user, 'clinical_prescription_items', 'UPDATE')").fetchone()[0]
-            # Caller-owned temporary context is rejected, never trusted or read as owner.
+            # Even a caller-created legacy context gives no exception.
             c.execute('CREATE TEMP TABLE s1_merge_context(source_id integer,target_id integer)')
             c.execute('INSERT INTO s1_merge_context VALUES(%s,%s)', (did,other_did))
             with pytest.raises(psycopg.errors.InsufficientPrivilege), c.transaction():
-                c.execute('SELECT clinic_merge_drug(%s,%s,%s,%s)', (did,other_did,IDS['admin'],'Gộp giả lập kiểm quyền'))
+                c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did,rid))
             c.execute('DROP TABLE s1_merge_context')
             for statement in ("UPDATE clinical_prescriptions SET snapshot='tampered' WHERE id=%s", "DELETE FROM clinical_prescription_items WHERE prescription_id=%s", "DELETE FROM clinical_prescriptions WHERE id=%s"):
                 with pytest.raises(psycopg.Error):
@@ -125,17 +125,11 @@ def test_installed_s1_upgrade_refreshes_drug_guard():
         migrate_s1(c)
         source = c.execute("SELECT pg_get_functiondef('s1_prescription_item_guard()'::regprocedure)").fetchone()[0]
         assert 'clinic.merge_from' not in source and 'clinic.merge_to' not in source
-        assert 'current_user' in source and 's1_merge_context' in source
-        f=c.execute("SELECT prosecdef,proconfig,proowner FROM pg_proc WHERE oid='clinic_merge_drug(integer,integer,integer,text)'::regprocedure").fetchone()
-        assert f['prosecdef'] and 'search_path=pg_catalog, public, pg_temp' in f['proconfig']
-        assert c.execute("""SELECT count(*) FROM pg_proc p,
-            LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
-            WHERE p.oid='clinic_merge_drug(integer,integer,integer,text)'::regprocedure
-              AND a.grantee=0 AND a.privilege_type='EXECUTE'""").fetchone()[0]==0
-        assert f['proowner']==c.execute("SELECT relowner FROM pg_class WHERE oid='clinical_prescription_items'::regclass").fetchone()[0]
+        assert 'current_user' not in source and 's1_merge_context' not in source
+        assert c.execute("SELECT to_regprocedure('public.clinic_merge_drug(integer,integer,integer,text)')").fetchone()[0] is None
 
 
-def test_merge_definer_rolls_back_audit_and_catalog_together(visit):
+def test_catalog_merge_rolls_back_audit_and_catalog_together(visit,clients):
     import json
     with db(True) as c:
         drugs=[]
@@ -148,13 +142,23 @@ def test_merge_definer_rolls_back_audit_and_catalog_together(visit):
         c.execute("INSERT INTO clinical_prescription_items(prescription_id,drug_id,position,content) VALUES(?,?,1,'{}')",(rx,source))
         frozen=json.dumps({'synthetic_only':True})
         c.execute("UPDATE clinical_prescriptions SET status='locked',snapshot=? WHERE id=?",(frozen,rx))
-    # Even the table owner cannot repoint a locked row outside the definer context.
+    with pytest.raises(psycopg.errors.CheckViolation), db(True) as c:
+        c.execute('UPDATE clinical_prescription_items SET content=content WHERE prescription_id=?',(rx,))
+    # Even the table owner cannot repoint a locked row.
     with pytest.raises(psycopg.errors.CheckViolation), db(True) as c:
         c.execute('UPDATE clinical_prescription_items SET drug_id=? WHERE prescription_id=?',(target,rx))
-    with pytest.raises(RuntimeError,match='Rollback giả lập'), db(True) as c:
-        c.execute('SELECT clinic_merge_drug(?,?,?,?)',(source,target,IDS['admin'],'Gộp giả lập kiểm giao dịch'))
-        assert c.execute("SELECT 1 FROM audit_log WHERE event='drug_merged' AND object_id=?",(str(source),)).fetchone()
-        raise RuntimeError('Rollback giả lập')
+    # Reject this HTTP action's audit insert: the entire catalog merge must roll back.
+    name='s1_reject_merge_'+secrets.token_hex(5)
+    with psycopg.connect(URL,autocommit=True) as c:
+        c.execute(sql.SQL("CREATE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit giả lập thất bại' USING ERRCODE='23514'; END $$").format(sql.Identifier(name)))
+        c.execute(sql.SQL("CREATE TRIGGER {} BEFORE INSERT ON audit_log FOR EACH ROW WHEN (NEW.event='drug_merged' AND NEW.object_id={}) EXECUTE FUNCTION {}()").format(sql.Identifier(name),sql.Literal(str(source)),sql.Identifier(name)))
+    try:
+        response=clients['admin'].post(f'/api/drugs/{source}/merge',json={'keep_id':target})
+        assert response.status_code==409,response.text
+    finally:
+        with psycopg.connect(URL,autocommit=True) as c:
+            c.execute(sql.SQL('DROP TRIGGER {} ON audit_log').format(sql.Identifier(name)))
+            c.execute(sql.SQL('DROP FUNCTION {}()').format(sql.Identifier(name)))
     with db() as c:
         assert c.execute('SELECT drug_id FROM clinical_prescription_items WHERE prescription_id=?',(rx,)).fetchone()[0]==source
         assert c.execute('SELECT merged_into FROM drugs WHERE id=?',(source,)).fetchone()[0] is None

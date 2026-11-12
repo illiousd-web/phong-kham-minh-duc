@@ -174,6 +174,23 @@ def replacement_parent(c, rx, exclude_id=0):
     return old
 
 
+def current_drug(c, drug_id):
+    """Resolve catalog aliases only; never rewrite historical prescription rows."""
+    seen = set()
+    while drug_id is not None:
+        if drug_id in seen:
+            raise HTTPException(422, 'Danh mục thuốc có vòng lặp gộp; cần quản trị rà soát')
+        seen.add(drug_id)
+        row = c.execute('SELECT * FROM drugs WHERE id=?', (drug_id,)).fetchone()
+        if not row:
+            raise HTTPException(422, 'Không tìm thấy thuốc trong chuỗi gộp')
+        row = dict(row)
+        if row['merged_into'] is None:
+            return row
+        drug_id = row['merged_into']
+    raise HTTPException(422, 'Chuỗi gộp thuốc không hợp lệ')
+
+
 def save_lines(c, rid, items, u, audit):
     c.execute('DELETE FROM clinical_prescription_items WHERE prescription_id=?', (rid,))
     warnings = []; seen = set(); allergy_warnings = []
@@ -188,7 +205,9 @@ def save_lines(c, rid, items, u, audit):
         value['quantity'] = value['quantity'] or quantity(value['dose'], value['frequency'], value['days'])
         key, strength = fold(item.name), fold(item.strength)
         drug = c.execute('SELECT * FROM drugs WHERE name_key=? AND strength_key=?', (key, strength)).fetchone()
-        if drug and (drug['review_status'] == 'inactive' or drug['merged_into']):
+        if drug:
+            drug = current_drug(c, drug['id'])
+        if drug and drug['review_status'] == 'inactive':
             raise HTTPException(422, f'Dòng {pos}: thuốc đã ngừng dùng, chọn lại từ danh mục')
         if not drug:
             c.execute('INSERT INTO drugs(name,name_key,strength,strength_key,ingredient,ingredient_key,brand_name,brand_key,unit,route) VALUES(?,?,?,?,?,?,?,?,?,?)',
@@ -236,7 +255,7 @@ def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
         days = decimal(line['days'])
         if line['days'] and (days is None or days != days.to_integral_value() or days > 30): error('Số ngày dùng phải là số nguyên từ 1 đến 30', pos, 'days')
         if not line['quantity']: error('Cần nhập số lượng hoặc đủ số để tự tính', pos, 'quantity')
-        drug = c.execute('SELECT * FROM drugs WHERE id=?', (line['drug_id'],)).fetchone()
+        drug = current_drug(c, line['drug_id'])
         if drug['controlled_type']: error('Đơn N/H chưa hỗ trợ', pos, 'name')
         if drug['review_status'] == 'inactive': error('Thuốc đã ngừng dùng', pos, 'name')
     return errors
@@ -250,7 +269,7 @@ def payload(c, rx, code=None, locked_at=None):
     items = lines(c, rx['id']); clinic = settings(c)
     errors = lock_errors(c, rx, items, p, visit, practitioner, clinic)
     for item in items:
-        drug = c.execute('SELECT toxic FROM drugs WHERE id=?', (item['drug_id'],)).fetchone()
+        drug = current_drug(c, item['drug_id'])
         item['toxic'] = bool(drug['toxic'])
         active = components(item['ingredient'])
         item['display_name'] = ((item['brand_name'] or item['name']) if len(active) > 1 else (active[0] if active else item['name']) + (' ('+item['brand_name']+')' if item['brand_name'] else ''))
@@ -320,6 +339,7 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         require(u, 'doctor', 'admin')
         with db() as c:
             where = 'review_status=?' if status else "review_status<>'inactive'"
+            if status != 'inactive': where += ' AND merged_into IS NULL'
             args = [status] if status else []
             needle = '%'+fold(q[:180])+'%'
             if q:
@@ -345,16 +365,14 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         require(u, 'admin')
         with db(True) as c:
             source = c.execute('SELECT * FROM drugs WHERE id=?', (did,)).fetchone()
-            target = c.execute("SELECT * FROM drugs WHERE id=? AND review_status<>'inactive' AND merged_into IS NULL", (data.keep_id,)).fetchone()
-            if not source or not target or did == data.keep_id or source['merged_into']: raise HTTPException(422, 'Chọn hai mục đang dùng khác nhau')
-            # PostgreSQL elevates only inside this audited, owner-controlled function.
-            if hasattr(c, 'connection'):
-                c.execute('SELECT public.clinic_merge_drug(?,?,?,?)', (did, data.keep_id, u['id'], data.reason))
-            else:
-                c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?', (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], data.keep_id))
-                c.execute('UPDATE clinical_prescription_items SET drug_id=? WHERE drug_id=?', (data.keep_id, did))
-                c.execute("UPDATE drugs SET review_status='inactive',merged_into=? WHERE id=?", (data.keep_id, did))
-                audit(c, u, 'drug_merged', 'drug', did, dump({'keep_id': data.keep_id, 'reason': safe_reason(data.reason, {'document_number':'','citizen_id':''})}))
+            target = current_drug(c, data.keep_id)
+            if not source or source['merged_into'] is not None or did == target['id'] or target['review_status'] == 'inactive':
+                raise HTTPException(422, 'Chọn hai mục đang dùng khác nhau; không tạo vòng gộp')
+            # Only the catalog changes. Every locked row keeps its original FK forever.
+            c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?',
+                      (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], target['id']))
+            c.execute("UPDATE drugs SET review_status='inactive',merged_into=? WHERE id=?", (target['id'], did))
+            audit(c, u, 'drug_merged', 'drug', did, dump({'keep_id': target['id'], 'reason': safe_reason(data.reason, {'document_number':'','citizen_id':''})}))
         return {'ok': True}
 
     @app.post('/api/clinical-prescriptions', status_code=201)
