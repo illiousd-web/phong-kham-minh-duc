@@ -403,8 +403,8 @@ def main(argv=None):
     parser.add_argument('--external-config')
     parser.add_argument('--alert-file')
     schedule = parser.add_mutually_exclusive_group()
-    schedule.add_argument('--daily', action='store_true', help='Lịch 20:00, luôn chạy kể cả trong giờ làm việc')
-    schedule.add_argument('--catchup', '--scheduled', dest='catchup', action='store_true', help='Chạy bù; hoãn trong giờ làm nếu bản tốt chưa quá 48 giờ')
+    schedule.add_argument('--daily', '--scheduled', dest='daily', action='store_true', help='Lịch 20:00, luôn chạy kể cả trong giờ làm việc')
+    schedule.add_argument('--catchup', action='store_true', help='Chạy bù; hoãn trong giờ làm nếu bản tốt chưa quá 48 giờ')
     return run(parser.parse_args(argv))
 
 

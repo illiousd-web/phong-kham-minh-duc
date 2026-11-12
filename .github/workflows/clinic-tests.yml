@@ -291,11 +291,42 @@ jobs:
           Add-Content "$b\schema.postgresql.sql" "`nCREATE TABLE IF NOT EXISTS ci_probe_update(id integer);"
           Add-Content "$b\app\main.py" "`nraise RuntimeError('CI: ban cap nhat loi co chu dich')"
           Push-Location $b; git add -A; git -c user.name=ci -c user.email=ci@example.invalid commit -qm broken; git archive --format=zip --prefix=phong-kham-minh-duc-main/ -o "$env:RUNNER_TEMP\minhduc-broken.zip" HEAD; Pop-Location
+      - name: Build task-registration fault update (restore path remains intact)
+        run: |
+          $fault = Join-Path $env:RUNNER_TEMP 'task-registration-fault'
+          git worktree add --detach $fault HEAD
+          $file = Join-Path $fault 'deploy\windows\MinhDuc.Install.psm1'
+          $text = [IO.File]::ReadAllText($file)
+          $needle = "        Register-ScheduledTask -TaskName (`$script:Names.BackupTask + ' - Chay bu')"
+          if (-not $text.Contains($needle)) { throw 'Fault-injection location missing' }
+          $text = $text.Replace($needle, "        throw 'CI: task registration failed after daily creation'`r`n" + $needle)
+          [IO.File]::WriteAllText($file, $text, (New-Object Text.UTF8Encoding($true)))
+          Push-Location $fault
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.invalid commit -qm task-registration-fault
+          git archive --format=zip --prefix=phong-kham-minh-duc-main/ -o "$env:RUNNER_TEMP\minhduc-task-fault.zip" HEAD
+          Pop-Location
+      - name: Seed a real installation with one legacy --scheduled backup task
+        run: .\.github\scripts\Test-S1BackupTasks.ps1 -Mode Legacy
+      - name: CAP_NHAT task-registration failure must roll back (expected exit 50)
+        shell: cmd
+        run: |
+          call C:\MinhDuc\deploy\windows\CAP_NHAT.bat -KhongHoi -TepZip "%RUNNER_TEMP%\minhduc-task-fault.zip"
+          if %errorlevel% neq 50 (echo Expected task rollback exit 50, got %errorlevel% & exit /b 1)
+          exit /b 0
+      - name: Verify exact old task restored, then retain the old-policy upgrade scenario
+        run: |
+          & .\.github\scripts\Test-S1BackupTasks.ps1 -Mode Restored
+          foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {
+            $text = [IO.File]::ReadAllText($f)
+            [IO.File]::WriteAllText($f, $text.Replace('CLINIC_BACKUP_KEEP=14', 'CLINIC_BACKUP_KEEP=30'), (New-Object Text.UTF8Encoding($false)))
+          }
       - name: CAP_NHAT.bat with a valid update
         shell: cmd
         run: call C:\MinhDuc\deploy\windows\CAP_NHAT.bat -KhongHoi -TepZip "%RUNNER_TEMP%\minhduc-ok.zip"
       - name: Verify update result
         run: |
+          & .\.github\scripts\Test-S1BackupTasks.ps1 -Mode New
           foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {
             $t = [IO.File]::ReadAllText($f)
             if (-not ($t.Contains("`nCLINIC_BACKUP_KEEP=14`n") -and $t.Contains("`nCLINIC_OFFSITE_KEEP=30`n"))) { throw "Retention not migrated in $f" }
@@ -319,6 +350,7 @@ jobs:
           exit /b 0
       - name: Verify rollback restored code, database and service
         run: |
+          & .\.github\scripts\Test-S1BackupTasks.ps1 -Mode New
           $r = Get-Content C:\ProgramData\MinhDuc\capnhat\ket-qua-cap-nhat.json -Raw | ConvertFrom-Json
           if ($r.status -ne 'da_quay_ve') { throw "Rollback status $($r.status)" }
           if (Select-String -Path C:\MinhDuc\app\main.py -Pattern 'ban cap nhat loi' -Quiet) { throw 'Broken code still installed' }

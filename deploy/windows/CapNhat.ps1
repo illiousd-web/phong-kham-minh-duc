@@ -27,7 +27,7 @@ $OldCode = Join-Path $P.Updates ('ma-cu-' + $Stamp)
 $NewDir = Join-Path $P.Updates ('moi-' + $Stamp)
 $OldVenv = Join-Path $P.Code '.venv-cu'
 $ResultFile = Join-Path $P.Updates 'ket-qua-cap-nhat.json'
-$State = @{ stopped = $false; code_replaced = $false; venv_moved = $false; migrated = $false; backup = $null; fingerprint = $null }
+$State = @{ backup_tasks_changed = $false; backup_task_snapshot = @(); stopped = $false; code_replaced = $false; venv_moved = $false; migrated = $false; backup = $null; fingerprint = $null }
 
 function Get-AppVersion([string]$Root) {
     $main = Join-Path $Root 'app\main.py'
@@ -74,6 +74,10 @@ function Invoke-QuayVe {
         }
         else { Write-Loi 'Khôi phục cơ sở dữ liệu thất bại; KHÔNG dùng phần mềm, báo người hỗ trợ ngay.'; $r.Output | Select-Object -Last 3 | ForEach-Object { Write-Thongtin $_ } }
     } elseif ($State.migrated) { Write-Dat 'Cơ sở dữ liệu không bị thay đổi, giữ nguyên.' }
+    if ($State.backup_tasks_changed) {
+        Restore-MinhDucBackupTasks -Snapshot $State.backup_task_snapshot
+        Write-Dat 'Đã kiểm lại và khôi phục lịch sao lưu cũ.'
+    }
     if ($State.stopped) {
         Start-Service -Name $Names.Service -ErrorAction SilentlyContinue
         $origin = (Read-EnvFile -Path $P.ClinicEnv)['CLINIC_ORIGIN']
@@ -176,6 +180,13 @@ try {
     Set-SecureAcl -Path $P.Settings -Directory -Writers @($Names.ServiceAcct)
     if (@((ConvertFrom-PythonJson $r).managed_changed).Count -gt 0) { Write-Dat 'Đã chuyển chính sách sao lưu: giữ 14 bản trên máy chủ (xóa bớt bản cũ chỉ sau lần sao lưu mới đầu tiên đã kiểm).' }
     Write-Dat 'Cấu trúc dữ liệu đã cập nhật.'
+    # Load the shared task installer from the NEW code, even on an old installation.
+    Import-Module (Join-Path $P.Code 'deploy\windows\MinhDuc.Install.psm1') -Force -DisableNameChecking
+    $State.backup_task_snapshot = @(Get-MinhDucBackupTaskSnapshot)
+    $State.backup_tasks_changed = $true
+    Set-MinhDucBackupTasks -Paths $P
+    Write-Dat 'Đã chuyển và kiểm lịch sao lưu: 20:00 và chạy bù riêng.'
+
 
     Write-Buoc 'Bước 8/8: Bật dịch vụ và kiểm tra sức khỏe'
     Set-SecureAcl -Path $P.Code -Directory -Readers @('*S-1-5-32-545', $Names.ServiceAcct)
@@ -196,10 +207,15 @@ try {
         Write-Result 'dung_truoc_khi_thay_doi' $_.Exception.Message
     } else {
         Write-Loi ('Cập nhật lỗi: ' + $_.Exception.Message)
-        try { Invoke-QuayVe } catch { Write-Loi ('Quay về bản cũ gặp lỗi: ' + $_.Exception.Message) }
-        Write-Result 'da_quay_ve' $_.Exception.Message
-        Write-Host ''
-        Write-Host 'CẬP NHẬT KHÔNG THÀNH CÔNG — ĐÃ QUAY VỀ BẢN CŨ. Gửi tệp nhật ký trong C:\ProgramData\MinhDuc\nhatky cho người hỗ trợ.' -ForegroundColor Yellow
+        $rollbackOk = $true
+        try { Invoke-QuayVe } catch { $rollbackOk = $false; Write-Loi ('Quay về bản cũ gặp lỗi: ' + $_.Exception.Message) }
+        if ($rollbackOk) {
+            Write-Result 'da_quay_ve' $_.Exception.Message
+            Write-Host 'CẬP NHẬT KHÔNG THÀNH CÔNG — ĐÃ QUAY VỀ BẢN CŨ. Gửi nhật ký cho người hỗ trợ.' -ForegroundColor Yellow
+        } else {
+            Write-Result 'quay_ve_that_bai' $_.Exception.Message
+            Write-Host 'CẬP NHẬT THẤT BẠI, CHƯA KHÔI PHỤC ĐỦ. Không dùng phần mềm; báo người hỗ trợ ngay.' -ForegroundColor Red
+        }
         $exitCode = 50
     }
 } finally {

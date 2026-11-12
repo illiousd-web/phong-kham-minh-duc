@@ -558,4 +558,96 @@ function New-AppShortcut {
     return $link
 }
 
+# Snapshot only the two backup tasks managed by this installer. No other task is touched.
+function Get-MinhDucBackupTaskSnapshot {
+    foreach ($name in @($script:Names.BackupTask, ($script:Names.BackupTask + ' - Chay bu'))) {
+        $task = Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+        if ($task) { [pscustomobject]@{ Name = $name; Xml = (Export-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop) } }
+    }
+}
+
+function Get-MinhDucBackupTaskSignature([string]$Xml) {
+    [xml]$document = $Xml
+    return ($document.Task.Actions.OuterXml + $document.Task.Triggers.OuterXml + $document.Task.Settings.OuterXml + $document.Task.Principals.OuterXml)
+}
+
+function Restore-MinhDucBackupTasks {
+    param([AllowEmptyCollection()][object[]]$Snapshot = @())
+    foreach ($name in @($script:Names.BackupTask, ($script:Names.BackupTask + ' - Chay bu'))) {
+        if (Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+        }
+    }
+    foreach ($old in $Snapshot) {
+        Register-ScheduledTask -TaskName $old.Name -TaskPath '\' -Xml $old.Xml -Force -ErrorAction Stop | Out-Null
+    }
+    $restored = @(Get-MinhDucBackupTaskSnapshot)
+    if ($restored.Count -ne $Snapshot.Count) { throw 'Khôi phục lịch sao lưu thiếu tác vụ.' }
+    foreach ($old in $Snapshot) {
+        $actual = @($restored | Where-Object { $_.Name -eq $old.Name })
+        if ($actual.Count -ne 1 -or (Get-MinhDucBackupTaskSignature $actual[0].Xml) -ne (Get-MinhDucBackupTaskSignature $old.Xml)) {
+            throw 'Khôi phục lịch sao lưu không khớp action/trigger/cài đặt cũ.'
+        }
+    }
+}
+
+function Test-MinhDucBackupTasks {
+    param([Parameter(Mandatory = $true)]$Paths)
+    $tasks = @(Get-MinhDucBackupTaskSnapshot)
+    if ($tasks.Count -ne 2) { throw 'Phải có đúng hai tác vụ sao lưu mới.' }
+    foreach ($mode in @('daily','catchup')) {
+        $name = $script:Names.BackupTask
+        if ($mode -eq 'catchup') { $name += ' - Chay bu' }
+        $task = Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+        $actions = @($task.Actions); $triggers = @($task.Triggers)
+        $expected = Get-MinhDucBackupJobArguments -Paths $Paths -Mode $mode
+        if ($actions.Count -ne 1 -or $actions[0].Execute -ne $Paths.VenvPython -or $actions[0].WorkingDirectory -ne $Paths.Code -or $actions[0].Arguments -ne $expected) {
+            throw ('Action sao lưu không đúng: ' + $name)
+        }
+        if ($triggers.Count -ne 1 -or $task.Settings.StartWhenAvailable) { throw ('Trigger sao lưu không đúng: ' + $name) }
+        if ($mode -eq 'daily') {
+            if ($triggers[0].CimClass.CimClassName -ne 'MSFT_TaskDailyTrigger' -or $triggers[0].DaysInterval -ne 1 -or ([datetime]$triggers[0].StartBoundary).TimeOfDay -ne [timespan]'20:00') {
+                throw 'Lịch hằng ngày phải chạy đúng 20:00.'
+            }
+        } elseif ($triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger' -or $triggers[0].Delay -ne 'PT2M') {
+            throw 'Chạy bù phải là trigger khởi động, trễ hai phút.'
+        }
+    }
+    return $true
+}
+
+function Get-MinhDucBackupJobArguments {
+    param([Parameter(Mandatory = $true)]$Paths, [ValidateSet('daily','catchup')][string]$Mode)
+    $alert = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) $script:Names.AlertFile
+    return (@('-m', 'scripts.with_env', ('"' + $Paths.ClinicEnv + '"'), 'scripts.backup_job', ('--' + $Mode), '--key', ('"' + $Paths.BackupKey + '"'),
+        '--directory', ('"' + $Paths.Backups + '"'), '--state', ('"' + $Paths.BackupState + '"'),
+        '--external-config', ('"' + $Paths.ExternalCfg + '"'), '--alert-file', ('"' + $alert + '"')) -join ' ')
+}
+
+function Set-MinhDucBackupTasks {
+    param([Parameter(Mandatory = $true)]$Paths)
+    $before = @(Get-MinhDucBackupTaskSnapshot)
+    try {
+        foreach ($old in $before) {
+            Unregister-ScheduledTask -TaskName $old.Name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+        }
+        $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 3) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        $dailyAction = New-ScheduledTaskAction -Execute $Paths.VenvPython -Argument (Get-MinhDucBackupJobArguments -Paths $Paths -Mode daily) -WorkingDirectory $Paths.Code
+        $daily = New-ScheduledTaskTrigger -Daily -At '20:00'
+        Register-ScheduledTask -TaskName $script:Names.BackupTask -TaskPath '\' -Action $dailyAction -Trigger $daily -Principal $principal -Settings $settings -Description 'Sao luu 20:00, luon chay ke ca trong gio lam.' -Force -ErrorAction Stop | Out-Null
+        $catchupAction = New-ScheduledTaskAction -Execute $Paths.VenvPython -Argument (Get-MinhDucBackupJobArguments -Paths $Paths -Mode catchup) -WorkingDirectory $Paths.Code
+        $catchup = New-ScheduledTaskTrigger -AtStartup
+        $catchup.Delay = 'PT2M'
+        # CI fault injection replaces this one registration, never the restore path.
+        Register-ScheduledTask -TaskName ($script:Names.BackupTask + ' - Chay bu') -TaskPath '\' -Action $catchupAction -Trigger $catchup -Principal $principal -Settings $settings -Description 'Chay bu sau khoi dong, xet gio lam/48 gio.' -Force -ErrorAction Stop | Out-Null
+        [void](Test-MinhDucBackupTasks -Paths $Paths)
+    } catch {
+        $failure = $_
+        try { Restore-MinhDucBackupTasks -Snapshot $before }
+        catch { throw ('Đăng ký lịch sao lưu lỗi và KHÔNG khôi phục được lịch cũ: ' + $_.Exception.Message) }
+        throw ('Đăng ký lịch sao lưu thất bại; đã khôi phục action/trigger cũ: ' + $failure.Exception.Message)
+    }
+}
+
 Export-ModuleMember -Function * -Variable @()

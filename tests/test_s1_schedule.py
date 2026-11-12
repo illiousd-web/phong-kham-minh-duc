@@ -30,6 +30,7 @@ import pytest
 
 
 @pytest.mark.parametrize('flag,instant,last,should_run', [
+    ('--scheduled','2026-11-12T13:00:00+00:00','2026-11-11T13:00:00+00:00',True),
     ('--daily','2026-11-12T13:00:00+00:00','2026-11-11T13:00:00+00:00',True),
     ('--catchup','2026-11-12T02:00:00+00:00','2026-11-11T13:00:00+00:00',False),
     ('--catchup','2026-11-12T02:00:00+00:00','2026-11-10T01:59:59+00:00',True)])
@@ -50,3 +51,14 @@ def test_daily_and_catchup_use_distinct_scheduling_policy(tmp_path,monkeypatch,f
     result=backup_job.main([flag,'--key',str(tmp_path/'fake.key'),'--directory',str(tmp_path/'backups'),'--state',str(state)])
     assert bool(calls) == should_run
     assert result == (1 if should_run else 0)
+
+
+def test_installer_and_updater_share_verified_backup_task_migration():
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]/'deploy/windows'
+    for file in ('CaiDat.ps1','CapNhat.ps1'):
+        assert 'Set-MinhDucBackupTasks -Paths $P' in (root/file).read_text(encoding='utf-8-sig')
+    source=(root/'MinhDuc.Install.psm1').read_text(encoding='utf-8-sig')
+    assert 'function Set-MinhDucBackupTasks' in source
+    assert 'function Restore-MinhDucBackupTasks' in source
+    assert 'function Test-MinhDucBackupTasks' in source
