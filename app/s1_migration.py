@@ -6,5 +6,5 @@ def migrate_s1(c):
     if c.execute('SELECT 1 FROM schema_migrations WHERE version=12').fetchone():
         return
     # Execute as one owner transaction: no partly installed protection.
-    c.connection.execute((Path(__file__).resolve().parents[1]/'migrations/012_s1_immutable.sql').read_text())
+    c.connection.execute((Path(__file__).resolve().parents[1]/'migrations/012_s1_immutable.sql').read_text(encoding='utf-8'))
     c.execute('INSERT INTO schema_migrations(version) VALUES(12)')
