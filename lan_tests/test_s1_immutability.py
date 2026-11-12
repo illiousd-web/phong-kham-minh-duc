@@ -71,3 +71,26 @@ def test_runtime_role_allows_supported_api_lifecycles(clients, monkeypatch, modu
         with psycopg.connect(URL,autocommit=True) as c:
             c.execute(sql.SQL('DROP OWNED BY {}').format(sql.Identifier(role)))
             c.execute(sql.SQL('DROP ROLE {}').format(sql.Identifier(role)))
+
+
+def test_c5_profile_upgrade_installs_snapshot_guards():
+    """C5 must start the same protected schema as an installed clinic server."""
+    from urllib.parse import urlsplit,urlunsplit
+    from .conftest import SOURCE
+    from app.database import PGConnection,record_factory
+    from app.migrations import migrate_v050
+    from app.manual_price_migration import migrate_manual_prices
+    from scripts.do_hieu_nang import migrate_profile_schema
+    name='s1_c5_upgrade_'+secrets.token_hex(5)
+    parts=urlsplit(SOURCE);url=urlunsplit(parts._replace(path='/'+name))
+    with psycopg.connect(SOURCE,autocommit=True) as c:c.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(name)))
+    try:
+        with psycopg.connect(url,row_factory=record_factory) as c:
+            root=Path(__file__).resolve().parents[1]
+            c.execute((root/'schema.postgresql.sql').read_text(encoding='utf-8'))
+            adapted=PGConnection(c);migrate_v050(adapted,postgres=True);migrate_manual_prices(adapted,postgres=True)
+            migrate_profile_schema(adapted)
+            rows=c.execute("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND tgname LIKE 's1_%'").fetchall()
+            assert {'s1_prescription_immutable','s1_prescription_items_immutable','s1_lab_immutable','s1_lab_results_immutable','s1_outbox_immutable'}.issubset({r['tgname'] for r in rows})
+    finally:
+        with psycopg.connect(SOURCE,autocommit=True) as c:c.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name)))
