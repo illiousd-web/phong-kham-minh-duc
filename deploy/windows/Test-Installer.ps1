@@ -99,3 +99,6 @@ try {
         Assert-True ($result.Code -eq $expected) ('CAP_NHAT wrapper exit: expected ' + $expected + ', got ' + $result.Code)
     }
 } finally { Remove-Item -LiteralPath $probe -Force }
+Write-Output 'PASS: CAP_NHAT preserves process exits 0, 23 and 50'
+# Expected nonzero probe exits must not become the test runner exit status.
+$global:LASTEXITCODE = 0
