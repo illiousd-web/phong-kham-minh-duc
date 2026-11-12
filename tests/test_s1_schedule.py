@@ -12,3 +12,14 @@ def test_catchup_defers_work_hours_but_not_48_hours(monkeypatch):
     assert not backup_job.should_defer_catchup({}, now)
     monkeypatch.setenv('CLINIC_WORK_START','10:00')
     assert not backup_job.should_defer_catchup(recent, now)
+
+
+def test_access_reserve_uses_service_writable_logs(tmp_path,monkeypatch):
+    from app import storage
+    monkeypatch.setattr(storage,'free_bytes',lambda path:storage.LIMITS.min_free_bytes+2*storage.ACCESS_RESERVE_BYTES)
+    storage.prepare_access_reserve(tmp_path)
+    reserve=tmp_path/'logs'/'.access-reserve'
+    assert reserve.stat().st_size==storage.ACCESS_RESERVE_BYTES
+    monkeypatch.setattr(storage,'free_bytes',lambda path:0)
+    storage.release_access_reserve(tmp_path)
+    assert not reserve.exists()

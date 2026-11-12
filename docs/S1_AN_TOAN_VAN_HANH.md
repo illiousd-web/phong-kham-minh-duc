@@ -10,7 +10,7 @@ Giao dịch truy cập chỉ cho phép đọc và ghi ba bảng `sessions`, `log
 
 Ghi nghiệp vụ vẫn kiểm dự phòng dung lượng, trả 507 khi thiếu. Chờ khóa ghi tối đa 250 ms rồi trả 503 với `Retry-After: 1`; thông báo đề nghị thử lại sau một giây. Khóa sao lưu và cách chụp CSDL/tệp không đổi. Phiên và audit không sửa tệp đính kèm nên không phá tính nhất quán của bản sao lưu.
 
-Khởi động dành riêng 8 MiB thật trong `.access-reserve` trên ổ dữ liệu; khi trống dưới 8 MiB thì giải phóng tệp dự phòng để phiên/audit có chỗ ghi. Tệp này không chứa hồ sơ và không phải bản sao lưu. Dự phòng có giới hạn: quản trị vẫn phải giải phóng dung lượng khi có cảnh báo, không thể tiếp tục ghi nhật ký vô hạn trên ổ đầy. Cần đặt dữ liệu PostgreSQL và thư mục dữ liệu trên ổ đã giám sát khi nghiệm thu máy thật.
+Khởi động dành riêng 8 MiB thật trong `logs/.access-reserve` trên ổ dữ liệu; khi trống dưới 8 MiB thì giải phóng tệp dự phòng để phiên/audit có chỗ ghi. Tệp này không chứa hồ sơ và không phải bản sao lưu. Dự phòng có giới hạn: quản trị vẫn phải giải phóng dung lượng khi có cảnh báo, không thể tiếp tục ghi nhật ký vô hạn trên ổ đầy. Cần đặt dữ liệu PostgreSQL và thư mục dữ liệu trên ổ đã giám sát khi nghiệm thu máy thật.
 
 ## Sao lưu bù
 

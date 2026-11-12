@@ -14,7 +14,7 @@ ACCESS_RESERVE_BYTES = 8 * 1024 * 1024
 
 def prepare_access_reserve(path):
     """Allocate real blocks, separately from business capacity, once at startup."""
-    target = Path(path) / '.access-reserve'
+    target = Path(path) / 'logs' / '.access-reserve'
     if target.exists() or free_bytes(path) < LIMITS.min_free_bytes + ACCESS_RESERVE_BYTES:
         return
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -25,12 +25,15 @@ def prepare_access_reserve(path):
             os.fsync(output.fileno())
     except FileExistsError:
         pass
+    except OSError:
+        import logging
+        logging.getLogger('clinic').warning('Không tạo được dự phòng truy cập; kiểm tra dung lượng và quyền thư mục logs')
 
 
 def release_access_reserve(path):
     """Emergency headroom for session and access-audit WAL, never patient deletion."""
     if free_bytes(path) < ACCESS_RESERVE_BYTES:
-        (Path(path) / '.access-reserve').unlink(missing_ok=True)
+        (Path(path) / 'logs' / '.access-reserve').unlink(missing_ok=True)
 
 
 def tree_bytes(path):
