@@ -178,7 +178,9 @@ def query_probes(url, since, output):
         function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name)
         return next(n.value for n in ast.walk(function) if isinstance(n,ast.Constant) and isinstance(n.value,str) and n.value.startswith(prefix))
     queries={'dues':(DUES_SQL,(since,)),
-             'orders':(orders_sql(),()),
+             # The before probe uses the populated pre-S1 schema. API measurements
+             # after migration use the normal atomic content+version query.
+             'orders':(orders_sql(include_versions=False),()),
              'payments':(query_in('list_payments','SELECT m.id,'),())}
     report={}
     with psycopg.connect(url) as c:
