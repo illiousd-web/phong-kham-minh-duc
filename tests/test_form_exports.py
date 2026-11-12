@@ -72,7 +72,7 @@ def test_result_forms_clinical_permissions(ctx,kind):
     for fmt in ('pdf','docx'):
         t=content_as_text(c.get(f'/api/orders/{oid}/forms/order?format={fmt}',headers=h['bs_noi']),fmt)
         assert 'Dịch vụ giả lập' in t
-    res=c.put(f'/api/orders/{oid}/result',headers=h['kythuat'],json={'result_text':'Kết quả thử nghiệm '+kind})
+    res=c.put(f'/api/orders/{oid}/result',headers=h['kythuat'],json={'version':0,'result_text':'Kết quả thử nghiệm '+kind})
     assert res.status_code==200
     assert c.get(f'/api/orders/{oid}/forms/result',headers=h['bs_noi']).status_code==409
     assert c.post(f'/api/orders/{oid}/approve',headers=h['bs_noi']).status_code==200

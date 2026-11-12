@@ -42,13 +42,14 @@ def orders_sql(where='',hide_results=False,limit=100):
     cap=' LIMIT '+str(int(limit)) if limit is not None else ''
     return f'''WITH candidates AS MATERIALIZED (
  SELECT o.id,o.visit_id,o.category,o.name,o.status,o.service_id,o.proposed_price,{results},o.created_at,
+ (SELECT COALESCE(MAX(rv.version),0) FROM order_result_versions rv WHERE rv.order_id=o.id) AS result_version,
  p.code AS patient_code,p.full_name AS patient_name
  FROM orders o JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id
  {predicate} ORDER BY o.id DESC{cap}),
  {priced_ctes('visit_id IN (SELECT visit_id FROM candidates)')},
  unpriced_orders AS MATERIALIZED (SELECT cs.source_id FROM priced ch
  JOIN charge_sources cs ON cs.charge_id=ch.id WHERE cs.source_type='order' AND ch.amount IS NULL)
- SELECT id,visit_id,category,name,status,service_id,proposed_price,result_text,file_name,created_at,
+ SELECT id,visit_id,category,name,status,service_id,proposed_price,result_text,file_name,created_at,result_version,
  CASE WHEN status='requested' AND proposed_price IS NULL THEN 1
  WHEN id IN (SELECT source_id FROM unpriced_orders) THEN 1 ELSE 0 END AS unpriced
  ,patient_code,patient_name

@@ -30,3 +30,11 @@ DO $$ BEGIN
   GRANT UPDATE(status) ON prescription_outbox TO clinic_app;
  END IF;
 END $$;
+
+-- S1b text-result content is append-only; approval may only fill its snapshot.
+DO $$ BEGIN
+ IF to_regclass('public.order_result_versions') IS NOT NULL THEN
+  REVOKE UPDATE, DELETE, TRUNCATE ON order_result_versions FROM clinic_app;
+  GRANT UPDATE(approved_by,approved_at,snapshot) ON order_result_versions TO clinic_app;
+ END IF;
+END $$;

@@ -62,11 +62,11 @@ def test_results_workflow_and_role_enforcement():
     doc,tech=token('bs_noi'),token('kythuat')
     o=client.post('/api/orders',headers=doc,json={'visit_id':visit,'category':'lab','name':'Xét nghiệm mẫu'}).json()['id']
     assert client.post(f'/api/orders/{o}/approve',headers=doc).status_code==409
-    assert client.put(f'/api/orders/{o}/result',headers=doc,json={'result_text':'Dữ liệu thử nghiệm'}).status_code==403
-    assert client.put(f'/api/orders/{o}/result',headers=tech,json={'result_text':'Dữ liệu thử nghiệm'}).status_code==200
+    assert client.put(f'/api/orders/{o}/result',headers=doc,json={'version':0,'result_text':'Dữ liệu thử nghiệm'}).status_code==403
+    assert client.put(f'/api/orders/{o}/result',headers=tech,json={'version':0,'result_text':'Dữ liệu thử nghiệm'}).status_code==200
     assert client.post(f'/api/orders/{o}/approve',headers=token('bs_san')).status_code==403
     assert client.post(f'/api/orders/{o}/approve',headers=doc).status_code==200
-    assert client.put(f'/api/orders/{o}/result',headers=tech,json={'result_text':'Sửa'}).status_code==409
+    assert client.put(f'/api/orders/{o}/result',headers=tech,json={'version':0,'result_text':'Sửa'}).status_code==409
 
 def test_attachment_restrictions():
     _,visit=prepare_visit()

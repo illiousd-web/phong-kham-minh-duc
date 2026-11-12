@@ -56,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=12").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=14").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -85,6 +85,8 @@ def init_db():
         migrate_source_catalogs(c)
         from .controlled_migration import migrate_controlled
         migrate_controlled(c)
+        from .order_result_migration import migrate_result_versions
+        migrate_result_versions(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -501,20 +503,23 @@ def list_orders(u=Depends(principal),visit_id:int|None=None,history:bool=False):
         return decorate_orders(c,rows)
 
 class ResultInput(BaseModel):
+    version:int=Field(ge=0)
     result_text:str=Field(min_length=1,max_length=10000)
 
 @app.put('/api/orders/{order_id}/result')
 def submit_result(order_id:int,data:ResultInput,u=Depends(principal)):
     require(u,'technician')
     with db(True) as c:
-        order=c.execute('SELECT o.status,v.status AS visit_status FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
+        order=c.execute('SELECT o.*,v.status AS visit_status FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
         if order and order['visit_status'] in ('completed','cancelled'):raise HTTPException(409,'Lượt khám đã kết thúc')
         if not order:raise HTTPException(404,'Không có chỉ định')
         if c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(order_id,)).fetchone():raise HTTPException(409,'Phiếu theo chỉ số phải sửa / điều chỉnh trong Xét nghiệm M5')
         if order['status'] not in ('ordered','pending_review'):raise HTTPException(409,'Kết quả đã duyệt, không được sửa trực tiếp')
+        from .order_result_versions import save_version
+        version=save_version(c,order,data,u,NOW())
         c.execute("UPDATE orders SET result_text=?,result_by=?,status='pending_review' WHERE id=?",(data.result_text,u['id'],order_id))
         audit(c,u,'result_submitted','order',order_id)
-        return {'status':'pending_review'}
+        return {'status':'pending_review','version':version}
 
 @app.post('/api/orders/{order_id}/approve')
 def approve_result(order_id:int,u=Depends(principal)):
@@ -528,7 +533,10 @@ def approve_result(order_id:int,u=Depends(principal)):
         if o['status']!='pending_review' or not o['result_text'].strip():raise HTTPException(409,'Chưa có kết quả chờ duyệt')
         from .ui_settings import read_settings, settings_path
         warnings=scope_warning(c,u,o['category'],order_id,NOW,block=read_settings(settings_path(FILES))['block_practitioner_scope'])
-        c.execute("UPDATE orders SET status='approved',approved_by=?,approved_at=? WHERE id=?",(u['id'],NOW(),order_id))
+        from .order_result_versions import approve_version
+        stamp=NOW()
+        approve_version(c,o,u,stamp)
+        c.execute("UPDATE orders SET status='approved',approved_by=?,approved_at=? WHERE id=?",(u['id'],stamp,order_id))
         status_refresh(c,o['visit_id'])
         audit(c,u,'result_approved_demo','order',order_id,'Chưa ký số; phê duyệt mô phỏng')
         return {'status':'approved','warnings':warnings,'note':'Chỉ xác nhận quy trình demo, không có chữ ký số chuyên môn'}
@@ -1138,3 +1146,6 @@ install_m5(app,db,principal,require,audit,visit_access,NOW)
 
 from .d0 import install_d0
 install_d0(app,db,principal,require,audit,visit_access,NOW)
+
+from .order_result_versions import install_result_history
+install_result_history(app,db,principal,require,audit,visit_access)

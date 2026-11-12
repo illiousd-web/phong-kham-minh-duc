@@ -79,6 +79,8 @@ def install_workflows(app, db, principal, require, audit, visit_access, now):
             order=c.execute('''SELECT o.*,v.doctor_id FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?''',(order_id,)).fetchone()
             if not order: raise HTTPException(404, 'Không có chỉ định')
             if order['doctor_id']!=u['id']: raise HTTPException(403, 'Không phải bác sĩ phụ trách')
+            from .order_result_versions import has_approved_result
+            if has_approved_result(c,order):raise HTTPException(409,'Chỉ định đã có kết quả duyệt; dùng giảm phí nếu cần bỏ phí')
             ensure_open(c.execute('SELECT * FROM visits WHERE id=?',(order['visit_id'],)).fetchone())
             if order['status']=='cancelled': raise HTTPException(409,'Chỉ định đã hủy')
             if c.execute("SELECT 1 FROM order_cancel_requests WHERE order_id=? AND status='pending'",(order_id,)).fetchone():
@@ -112,6 +114,8 @@ def install_workflows(app, db, principal, require, audit, visit_access, now):
             if r['requested_by']==u['id']:raise HTTPException(403,'Không tự duyệt yêu cầu của mình')
             order=c.execute('SELECT * FROM orders WHERE id=?',(r['order_id'],)).fetchone()
             if c.execute('SELECT status FROM visits WHERE id=?',(order['visit_id'],)).fetchone()[0] in ('completed','cancelled'):raise HTTPException(409,'Lượt đã khóa; dùng phụ lục, không đổi chỉ định cũ')
+            from .order_result_versions import has_approved_result
+            if data.approve and has_approved_result(c,order):raise HTTPException(409,'Chỉ định đã có kết quả duyệt; dùng giảm phí nếu cần bỏ phí')
             if order['status']=='cancelled':raise HTTPException(409,'Chỉ định đã hủy')
             state='approved' if data.approve else 'rejected'
             c.execute('UPDATE order_cancel_requests SET status=?,reviewed_by=?,reviewed_at=? WHERE id=?',(state,u['id'],now(),request_id))

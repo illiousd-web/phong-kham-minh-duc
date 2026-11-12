@@ -99,7 +99,7 @@ def test_administrative_practitioner_and_refund_ui(https_server, clients, reques
             sid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
             c.execute("INSERT INTO service_categories VALUES(?,'lab')",(sid,))
         oid=clients['doctor'].post('/api/orders',json={'visit_id':vid,'category':'lab','service_id':sid,'request_key':secrets.token_hex(16)}).json()['id']
-        assert clients['technician'].put(f'/api/orders/{oid}/result',json={'result_text':'Kết luận: giả lập'}).status_code==200
+        assert clients['technician'].put(f'/api/orders/{oid}/result',json={'version':0,'result_text':'Kết luận: giả lập'}).status_code==200
         logout();login('doctor');pick(page,'visit',vid)
         page.locator('[data-action=doctor-tab][data-target=orders]').click()
         page.locator(f'[data-action=approve][data-id="{oid}"]').click();settle(page)

@@ -36,7 +36,7 @@ def test_m6_missing_ingredient_complete_on_row_and_lock(https_server,clients,req
         page=browser.new_page(viewport={'width':width,'height':900});page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(origin);page.locator('[name=username]').fill('test_doctor');page.locator('[name=password]').fill(PASSWORDS['doctor']);page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page);pick(page,'visit',vid)
         row=page.locator('.m6-row').first
-        for key,value in {'name':'Tên thuốc mới giả lập '+str(width),'strength':'2 mg','dose':'1','frequency':'2','days':'5','unit':'viên','route':'Uống'}.items():row.locator('[name='+key+']').fill(value)
+        for key,value in {'name':'Tên thuốc mới giả lập '+str(width),'strength':'2 mg','dose':'1','frequency':'2','days':'5','unit':'viên','route':'Uống','timing':'sau ăn'}.items():row.locator('[name='+key+']').fill(value)
         expect(row.locator('[name=quantity]')).to_have_value('10')
         row.locator('[name=quantity]').fill('11')
         form=page.locator('[data-m6-form=rx]')
