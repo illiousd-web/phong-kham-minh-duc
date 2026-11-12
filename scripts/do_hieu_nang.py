@@ -148,10 +148,13 @@ def migrate_profile_schema(c):
     from app.d0_migration import migrate_d0
     from app.d0_source_migration import migrate_source_catalogs
     from app.s1_migration import migrate_s1
+    from app.controlled_migration import migrate_controlled
+    from app.order_result_migration import migrate_result_versions
     for _ in range(2):
         migrate_m0(c);migrate_administrative(c);migrate_public_catalog(c)
         migrate_m6(c,postgres=True);migrate_m5(c,postgres=True);migrate_d0(c,postgres=True);migrate_source_catalogs(c,postgres=True)
         migrate_s1(c)
+        migrate_controlled(c);migrate_result_versions(c,postgres=True)
 
 
 def database_state(url):
@@ -407,17 +410,21 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                 from app.database import PGConnection, record_factory
                 old_state = database_state(url)
                 with psycopg.connect(url, row_factory=record_factory) as con:
+                    legacy_result_count = con.execute("SELECT COUNT(*) FROM orders WHERE result_text<>''").fetchone()[0]
                     started = time.perf_counter()
                     migrate_profile_schema(PGConnection(con))
                     migration_seconds = time.perf_counter() - started
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 8  # versions 5–12, including immutable guards
+                expected_state['tables']['schema_migrations'] += 10  # versions 5–14, including S1a + S1b
                 expected_state['tables'].update({name: 0 for name in TABLES+M5_TABLES+D0_TABLES+SOURCE_TABLES})
                 expected_state['tables']['lab_tests'] = sum(len(v) for v in FRAMEWORK.values())
-                expected_state['tables']['audit_log'] += 6
-                expected_state['tables']['catalog_imports'] = 5
+                expected_state['tables']['audit_log'] += 7  # D0 plus one TT18 source-seed audit
+                expected_state['tables']['catalog_imports'] = 7
+                expected_state['tables']['controlled_substances'] = 122
+                expected_state['tables']['controlled_substance_aliases'] = 202  # exact two SHA-pinned TT18 files
+                expected_state['tables']['order_result_versions'] = legacy_result_count
                 for kind,spec in SOURCES.items():expected_state['tables'][kind]=spec[1]
                 expected_state['tables']['tech_catalog_pl01']=19438
                 expected_state['tables']['tech_pl02_links']=8252 # exact fragments in the SHA-256-pinned public PL02
