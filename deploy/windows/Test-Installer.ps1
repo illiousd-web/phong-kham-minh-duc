@@ -87,3 +87,15 @@ foreach ($path in Get-ChildItem $PSScriptRoot -Include *.ps1, *.psm1 -Recurse) {
 }
 & (Join-Path $PSScriptRoot 'Test-Rollback.ps1')
 Write-Output ('PASS: ' + $script:count + ' kiểm tra bộ cài Windows')
+
+# The wrapper must preserve the Python/PowerShell result through its parsed block.
+$batText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'CAP_NHAT.bat'))
+$tail = $batText.Substring($batText.IndexOf('  call set "RC=%%errorlevel%%"'))
+$probe = Join-Path $env:TEMP ('minhduc-exit-' + [guid]::NewGuid().ToString('N') + '.bat')
+try {
+    foreach ($expected in @(0, 23, 50)) {
+        [IO.File]::WriteAllText($probe, ("@echo off`r`nsetlocal`r`n(`r`n  cmd /c exit " + $expected + "`r`n" + $tail), [Text.Encoding]::ASCII)
+        $result = Invoke-Native -FilePath 'cmd.exe' -Arguments @('/c', $probe, '-KhongHoi') -Quiet
+        Assert-True ($result.Code -eq $expected) ('CAP_NHAT wrapper exit: expected ' + $expected + ', got ' + $result.Code)
+    }
+} finally { Remove-Item -LiteralPath $probe -Force }
