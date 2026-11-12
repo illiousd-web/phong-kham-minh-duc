@@ -76,7 +76,8 @@ def test_upgrade_preserves_every_old_column_and_backup_restore(version,tmp_path,
                     from app.d0_sources import SOURCES
                     assert [json.loads(r[columns.index('details')]) for r in added[1:]]==[
                         {'file':filename,'rows':count,'sha256':sha} for filename,count,sha,*_ in SOURCES.values()]
-                    assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0]==11
+                    assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0]==12
+                    assert c.execute("SELECT COUNT(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('s1_prescription_immutable','s1_prescription_items_immutable','s1_lab_immutable','s1_lab_results_immutable','s1_outbox_immutable')").fetchone()[0]==5
                 else:assert actual==rows,table
             assert c.execute('SELECT count(*) FROM schema_migrations WHERE version=3').fetchone()[0]==1
             assert c.execute('SELECT count(*) FROM charges').fetchone()[0]==(2 if version=='v042' else 1)
