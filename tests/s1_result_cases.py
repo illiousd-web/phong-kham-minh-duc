@@ -10,6 +10,8 @@ def check_text_versions(c,ids):
     assert order_response.status_code==201,order_response.text
     order=order_response.json()['id']
     url=f'/api/orders/{order}/result'
+    assert r.put(url,json={'version':0,'result_text':'Không có quyền'}).status_code==403
+    assert t.put(url,json={'result_text':'Thiếu phiên bản'}).status_code==422
     first=t.put(url,json={'version':0,'result_text':'Phiên bản một giả lập'})
     assert first.status_code==200,first.text
     stale=t.put(url,json={'version':0,'result_text':'Không được ghi đè'})

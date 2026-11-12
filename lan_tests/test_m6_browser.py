@@ -120,6 +120,8 @@ def test_s1_text_result_two_tabs_keep_first_version(https_server,clients,width):
         with second.expect_response(lambda response:response.url.endswith(f'/orders/{oid}/result')) as stale:second.locator('[data-form=result] button').click()
         assert stale.value.status==409
         expect(second.locator('[name=result_text]')).to_have_value('Nội dung chưa được phép ghi đè')
+        selected=first.locator(f'[data-action="pick"][data-kind="order"][data-id="{oid}"]').first
+        if not selected.is_visible():first.locator('details').filter(has=selected).first.locator('summary').click()
         pick(first,'order',oid)
         first.locator('[data-s1-result-history]').click()
         expect(first.locator('dialog')).to_contain_text('Phiên bản đầu giả lập S1')
