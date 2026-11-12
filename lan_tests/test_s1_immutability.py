@@ -128,6 +128,10 @@ def test_installed_s1_upgrade_refreshes_drug_guard():
         assert 'current_user' in source and 's1_merge_context' in source
         f=c.execute("SELECT prosecdef,proconfig,proowner FROM pg_proc WHERE oid='clinic_merge_drug(integer,integer,integer,text)'::regprocedure").fetchone()
         assert f['prosecdef'] and 'search_path=pg_catalog, public, pg_temp' in f['proconfig']
+        assert c.execute("""SELECT count(*) FROM pg_proc p,
+            LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+            WHERE p.oid='clinic_merge_drug(integer,integer,integer,text)'::regprocedure
+              AND a.grantee=0 AND a.privilege_type='EXECUTE'""").fetchone()[0]==0
         assert f['proowner']==c.execute("SELECT relowner FROM pg_class WHERE oid='clinical_prescription_items'::regclass").fetchone()[0]
 
 

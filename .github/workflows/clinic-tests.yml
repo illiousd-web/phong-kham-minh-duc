@@ -301,6 +301,11 @@ jobs:
           if (-not $text.Contains($needle)) { throw 'Fault-injection location missing' }
           $text = $text.Replace($needle, "        throw 'CI: task registration failed after daily creation'`r`n" + $needle)
           [IO.File]::WriteAllText($file, $text, (New-Object Text.UTF8Encoding($true)))
+          # Change only a function body too: rollback must detect this without a table/version change.
+          $migration = Join-Path $fault 'migrations\012_s1_immutable.sql'
+          $sql = [IO.File]::ReadAllText($migration)
+          $sql = $sql.Replace('  -- Acquire rows in a stable order', "  -- CI function-body rollback probe`n  -- Acquire rows in a stable order")
+          [IO.File]::WriteAllText($migration, $sql, (New-Object Text.UTF8Encoding($false)))
           Push-Location $fault
           git add -A
           git -c user.name=ci -c user.email=ci@example.invalid commit -qm task-registration-fault

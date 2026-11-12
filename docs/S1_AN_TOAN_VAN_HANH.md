@@ -14,7 +14,7 @@ Khởi động dành riêng 8 MiB thật trong `logs/.access-reserve` trên ổ 
 
 ## Sao lưu bù
 
-Windows dùng hai tác vụ: lịch hằng ngày 20:00 truyền `--daily`, luôn chạy kể cả giờ làm kéo tới 21:00; không dùng `StartWhenAvailable` cho tác vụ này. Tác vụ khởi động riêng, trễ hai phút, truyền `--catchup`. Chỉ chạy bù mới xét giờ làm mặc định 07:00–17:30 (giờ Việt Nam): hoãn tới lịch 20:00 nếu còn bản tốt trong 48 giờ; chưa có bản thành công hoặc quá 48 giờ thì chạy ngay. `--scheduled` cũ là bí danh của `--daily`, vì tác vụ cũ chính là lịch 20:00; không áp giờ làm cho cờ này. `CaiDat.ps1` và `CapNhat.ps1` gọi chung `Set-MinhDucBackupTasks`: chụp XML hai tác vụ được quản lý, xóa lịch cũ, đăng ký hai lịch mới, rồi đọc lại và kiểm action/trigger/giờ chạy. Nếu đăng ký hay kiểm tra lỗi thì khôi phục XML cũ và kiểm lại action, trigger, cài đặt và principal. Cập nhật tự thực hiện bước này sau thay mã/migration; không cần chạy lại bộ cài. Nếu phần cập nhật sau đó lỗi, lịch cũ cũng được khôi phục cùng đường quay về mã/CSDL.
+Windows dùng hai tác vụ: lịch hằng ngày 20:00 truyền `--daily`, luôn chạy kể cả giờ làm kéo tới 21:00; không dùng `StartWhenAvailable` cho tác vụ này. Tác vụ khởi động riêng, trễ hai phút, truyền `--catchup`. Chỉ chạy bù mới xét giờ làm mặc định 07:00–17:30 (giờ Việt Nam): hoãn tới lịch 20:00 nếu còn bản tốt trong 48 giờ; chưa có bản thành công hoặc quá 48 giờ thì chạy ngay. `--scheduled` cũ là bí danh của `--daily`, vì tác vụ cũ chính là lịch 20:00; không áp giờ làm cho cờ này. `CaiDat.ps1` và `CapNhat.ps1` gọi chung `Set-MinhDucBackupTasks`: chụp XML hai tác vụ được quản lý, xóa lịch cũ, đăng ký hai lịch mới, rồi đọc lại và kiểm action/trigger/giờ chạy. Nếu đăng ký hay kiểm tra lỗi thì khôi phục XML cũ và kiểm lại action, trigger, cài đặt và principal. Cập nhật tự thực hiện bước này sau thay mã/migration; không cần chạy lại bộ cài. Nếu phần cập nhật sau đó lỗi, lịch cũ cũng được khôi phục cùng đường quay về mã/CSDL. Dấu vân tay CSDL xét cả định nghĩa hàm, owner, SECURITY DEFINER, quyền hàm/bảng/cột để nhận thay đổi dù không thêm bảng/version; lỗi cập nhật sẽ không bỏ sót việc phục hồi CSDL. Sau restore không ACL, bước grant cũng thu EXECUTE khỏi PUBLIC cho hàm gộp/trigger và cấp lại đúng runtime.
 
 Người hỗ trợ cấu hình `CLINIC_WORK_START`, `CLINIC_WORK_END` theo HH:MM trong môi trường tác vụ. Hỗ trợ ca qua nửa đêm. Lệnh sao lưu thủ công/cài đặt không bị hoãn. Không đổi quy tắc giữ bản tốt, kiểm giải mã, sao lưu tệp hay khôi phục.
 
@@ -32,7 +32,7 @@ Trước nâng cấp phải sao lưu đã xác minh. Nếu nâng cấp lỗi, d�
 
 Lệnh: `CLINIC_PERF_SOURCE_DATABASE_URL=<PostgreSQL cục bộ /postgres> python -m scripts.do_khoa_ghi_s1 --output test_evidence/s1-write-lock-c5.json`. Công cụ chỉ tạo CSDL C5 mới có tên ngẫu nhiên, từ chối dùng CSDL có sẵn và xóa CSDL đo khi xong. Đo qua API thật, từ lúc lấy được khóa đến sau COMMIT, không tính chờ khóa/parse tệp/mạng. Không cài đo đạc vào mã chạy dịch vụ.
 
-Ngày 12/11/2026, Linux cục bộ, PostgreSQL 17; C5: 20.000 người bệnh, 22.000 lượt, 88.000 chỉ định, 546.543 audit, 2.000 tệp giả lập. Mỗi thao tác 20 mẫu; chưa đại diện Windows/i3 hay tải phòng khám thật.
+Đo tại head `dc4fd2b` trước lượt sửa definer/lịch cập nhật, ngày 12/11/2026, Linux cục bộ, PostgreSQL 17; C5: 20.000 người bệnh, 22.000 lượt, 88.000 chỉ định, 546.543 audit, 2.000 tệp giả lập. Mỗi thao tác 20 mẫu; chưa đại diện Windows/i3 hay tải phòng khám thật.
 
 | Thao tác | p50 (ms) | p95 (ms) |
 |---|---:|---:|
