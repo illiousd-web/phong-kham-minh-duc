@@ -290,7 +290,6 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
     @app.put('/api/standards/services/{sid}')
     def link_service(sid:int,data:Links,u=Depends(principal)):
         require(u,'admin')
-        if max(len(set(data.codes)),len(set(data.pl02_ids)))>1 and not data.package:raise HTTPException(422,'Dịch vụ lẻ chỉ gắn một mã; xác nhận dịch vụ gói để gắn nhiều mã')
         with db(True) as c:
             if not c.execute('SELECT 1 FROM service_catalog WHERE id=?',(sid,)).fetchone():raise HTTPException(404,'Không có dịch vụ')
             old_pl02=[r[0] for r in c.execute('SELECT pl02_id FROM service_pl02_codes WHERE service_id=?',(sid,))]
@@ -304,6 +303,7 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
             else:
                 if 'codes' not in data.model_fields_set:data.codes=old
                 if 'pl02_ids' not in data.model_fields_set:data.pl02_ids=list(map(str,old_pl02))
+            if max(len(set(data.codes)),len(set(data.pl02_ids)))>1 and not data.package:raise HTTPException(422,'Dịch vụ lẻ chỉ gắn một mã; xác nhận dịch vụ gói để gắn nhiều mã')
             removed=set(old)-set(data.codes);removed_pl02=set(map(str,old_pl02))-set(data.pl02_ids)
             if removed or removed_pl02:
                 require_review(data)
@@ -314,7 +314,7 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
                 if not c.execute('SELECT 1 FROM tech_catalog_pl02 WHERE id=? AND active=1',(pid,)).fetchone():raise HTTPException(422,'Dòng PL02 không có hoặc ngừng dùng')
             if (old or old_pl02) and (set(old)!=set(data.codes) or set(map(str,old_pl02))!=set(data.pl02_ids)):
                 require_review(data)
-            for pid in set(data.pl02_ids)-set(map(str,old_pl02)):
+            for pid in sorted(set(data.pl02_ids)):
                 matched=c.execute('SELECT pl01_code FROM tech_pl02_links WHERE pl02_id=? AND needs_review=0',(pid,)).fetchall()
                 valid=bool(set(r[0] for r in matched).intersection(data.codes))
                 uncertain=c.execute('SELECT 1 FROM tech_pl02_links WHERE pl02_id=? AND needs_review=1',(pid,)).fetchone() or not matched
