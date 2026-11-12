@@ -349,7 +349,7 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             if not source or not target or did == data.keep_id or source['merged_into']: raise HTTPException(422, 'Chọn hai mục đang dùng khác nhau')
             # PostgreSQL elevates only inside this audited, owner-controlled function.
             if hasattr(c, 'connection'):
-                c.execute('SELECT clinic_merge_drug(?,?,?,?)', (did, data.keep_id, u['id'], data.reason))
+                c.execute('SELECT public.clinic_merge_drug(?,?,?,?)', (did, data.keep_id, u['id'], data.reason))
             else:
                 c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?', (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], data.keep_id))
                 c.execute('UPDATE clinical_prescription_items SET drug_id=? WHERE drug_id=?', (data.keep_id, did))

@@ -129,3 +129,30 @@ def test_installed_s1_upgrade_refreshes_drug_guard():
         f=c.execute("SELECT prosecdef,proconfig,proowner FROM pg_proc WHERE oid='clinic_merge_drug(integer,integer,integer,text)'::regprocedure").fetchone()
         assert f['prosecdef'] and 'search_path=pg_catalog, public, pg_temp' in f['proconfig']
         assert f['proowner']==c.execute("SELECT relowner FROM pg_class WHERE oid='clinical_prescription_items'::regclass").fetchone()[0]
+
+
+def test_merge_definer_rolls_back_audit_and_catalog_together(visit):
+    import json
+    with db(True) as c:
+        drugs=[]
+        for name in ('Nguồn gộp giả lập','Đích gộp giả lập'):
+            c.execute('INSERT INTO drugs(name,name_key,strength_key) VALUES(?,?,?)',(name,secrets.token_hex(8),''))
+            drugs.append(c.execute('SELECT last_insert_rowid()').fetchone()[0])
+        source,target=drugs
+        c.execute("INSERT INTO clinical_prescriptions(visit_id,doctor_id,status,created_at) VALUES(?,?,'draft','synthetic')",(visit,IDS['doctor']))
+        rx=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO clinical_prescription_items(prescription_id,drug_id,position,content) VALUES(?,?,1,'{}')",(rx,source))
+        frozen=json.dumps({'synthetic_only':True})
+        c.execute("UPDATE clinical_prescriptions SET status='locked',snapshot=? WHERE id=?",(frozen,rx))
+    # Even the table owner cannot repoint a locked row outside the definer context.
+    with pytest.raises(psycopg.errors.CheckViolation), db(True) as c:
+        c.execute('UPDATE clinical_prescription_items SET drug_id=? WHERE prescription_id=?',(target,rx))
+    with pytest.raises(RuntimeError,match='Rollback giả lập'), db(True) as c:
+        c.execute('SELECT clinic_merge_drug(?,?,?,?)',(source,target,IDS['admin'],'Gộp giả lập kiểm giao dịch'))
+        assert c.execute("SELECT 1 FROM audit_log WHERE event='drug_merged' AND object_id=?",(str(source),)).fetchone()
+        raise RuntimeError('Rollback giả lập')
+    with db() as c:
+        assert c.execute('SELECT drug_id FROM clinical_prescription_items WHERE prescription_id=?',(rx,)).fetchone()[0]==source
+        assert c.execute('SELECT merged_into FROM drugs WHERE id=?',(source,)).fetchone()[0] is None
+        assert c.execute('SELECT snapshot FROM clinical_prescriptions WHERE id=?',(rx,)).fetchone()[0]==frozen
+        assert not c.execute("SELECT 1 FROM audit_log WHERE event='drug_merged' AND object_id=?",(str(source),)).fetchone()
