@@ -467,10 +467,10 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             patient = patient_for_rx(c, rid)
             for item in value['items']:
                 if item.get('controlled_acknowledged'):
-                    audit(c,u,'clinical_rx_controlled_acknowledged','clinical_prescription',rid,dump({'item_id':item['id'],'reason':safe_reason(item.get('controlled_reason',''),patient)}))
+                    audit(c,u,'clinical_rx_controlled_acknowledged','clinical_prescription',rid,dump({'item_id':item['id'],'reason':safe_reason(item.get('controlled_reason',''),patient)}),details_limit=3000)
                 if quantity_mismatch(item) and item.get('quantity_acknowledged'):
                     audit(c,u,'clinical_rx_quantity_acknowledged','clinical_prescription',rid,
-                          dump({'item_id':item['id'],'reason':safe_reason(item.get('quantity_reason',''),patient)}))
+                          dump({'item_id':item['id'],'reason':safe_reason(item.get('quantity_reason',''),patient)}),details_limit=3000)
                 if allergy_matches(patient['allergies'], item):
                     item['allergy_confirmed_by'] = u['id']; item['allergy_confirmed_at'] = stamp
                     content = {k: v for k, v in item.items() if k not in ('id','drug_id','toxic','display_name')}

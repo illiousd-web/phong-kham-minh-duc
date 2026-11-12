@@ -41,7 +41,7 @@ def _check_source_api(clients,ids,db,service):
     v=r.post('/api/visits',json={'patient_id':p,'doctor_id':ids['doctor'],'service_id':service}).json()['id']
     d.put(f'/api/visits/{v}/clinical',json={'version':0,'diagnosis':'Mô tả lâm sàng giả lập'})
     assert d.post(f'/api/visits/{v}/complete',json={'version':1}).status_code==422
-    line={'name':'Thuốc kiểm nguồn giả lập','ingredient':'Hoạt chất giả lập','unit':'viên','dose':'1','frequency':'1','days':'2','route':'Uống'}
+    line={'name':'Thuốc kiểm nguồn giả lập','ingredient':'Hoạt chất giả lập','strength':'5 mg','timing':'sau ăn','unit':'viên','dose':'1','frequency':'1','days':'2','route':'Uống'}
     rx=d.post('/api/clinical-prescriptions',json={'visit_id':v,'items':[line]});assert rx.status_code==201,rx.text
     rxurl='/api/clinical-prescriptions/'+str(rx.json()['id'])
     blocked=d.post(rxurl+'/lock',json={'version':0});assert blocked.status_code==422 and 'primary_icd10' in blocked.text

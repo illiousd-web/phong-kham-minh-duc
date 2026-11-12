@@ -95,7 +95,7 @@ def check_standard_snapshots(clients,ids,db,service):
         a.put('/api/prescription-settings',json={'clinic_facility_code':'ZZ001','clinic_name':'Cơ sở giả lập'})
         a.put('/api/practitioners/'+str(ids['doctor']),json={'practice_license':'FAKE-LICENSE','practice_scopes':['Nội','Xét nghiệm']})
         pid,vid,oid,rid,tid,data=setup_report(clients,ids,db,service)
-        line={'name':'Thuốc D0 giả lập '+suffix,'ingredient':'Hoạt chất giả lập','unit':'viên','dose':'1','frequency':'1','days':'2','route':'Uống'}
+        line={'name':'Thuốc D0 giả lập '+suffix,'ingredient':'Hoạt chất giả lập','strength':'5 mg','timing':'sau ăn','unit':'viên','dose':'1','frequency':'1','days':'2','route':'Uống'}
         rx=d.post('/api/clinical-prescriptions',json={'visit_id':vid,'items':[line]});assert rx.status_code==201,rx.text
         rxurl='/api/clinical-prescriptions/'+str(rx.json()['id'])
         blocked=d.post(rxurl+'/lock',json={'version':0});assert blocked.status_code==422 and 'ICD-10' in blocked.text

@@ -48,4 +48,5 @@ def migrate_controlled(c):
     def audit(conn,u,event,typ,obj,details):
         conn.execute('INSERT INTO audit_log(event,object_type,object_id,details,created_at) VALUES(?,?,?,?,?)',(event,typ,obj,details,stamp))
     for drug in c.execute('SELECT id,ingredient FROM drugs').fetchall():flag_drug(c,drug['id'],drug['ingredient'],None,audit)
+    audit(c,None,'controlled_catalog_seeded','catalog',None,json.dumps({'substances':122,'limits':62,'files':{f:v[1] for f,v in FILES.items()}},ensure_ascii=False))
     c.execute('INSERT INTO schema_migrations(version) VALUES(13)')

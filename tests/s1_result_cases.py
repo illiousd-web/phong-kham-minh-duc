@@ -4,7 +4,11 @@ def check_text_versions(c,ids):
     r,d,t=c['reception'],c['doctor'],c['technician']
     patient=r.post('/api/patients',json={'full_name':'Giả lập phiên bản '+secrets.token_hex(5),'sex':'Nam','date_of_birth':'1990-01-01','phone':'0900000000'}).json()['id']
     vid=r.post('/api/visits',json={'patient_id':patient,'doctor_id':ids['doctor'],'service_id':1}).json()['id']
-    order=d.post('/api/orders',json={'visit_id':vid,'category':'ultrasound','name':'Siêu âm giả lập S1','request_key':'s1-'+secrets.token_hex(8)}).json()['id']
+    service=c['admin'].post('/api/catalog/services',json={'name':'Siêu âm giả lập S1 '+secrets.token_hex(5),'category':'ultrasound','price':12345})
+    assert service.status_code==201,service.text
+    order_response=d.post('/api/orders',json={'visit_id':vid,'category':'ultrasound','service_id':service.json()['id'],'name':'Siêu âm giả lập S1','request_key':'s1-'+secrets.token_hex(8)})
+    assert order_response.status_code==201,order_response.text
+    order=order_response.json()['id']
     url=f'/api/orders/{order}/result'
     first=t.put(url,json={'version':0,'result_text':'Phiên bản một giả lập'})
     assert first.status_code==200,first.text

@@ -116,3 +116,5 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 .d0-preview{overflow-wrap:anywhere;max-height:280px;overflow:auto}
 
 .d0-hash{overflow-wrap:anywhere}
+
+.s1-controlled{min-width:0;overflow-wrap:anywhere}.s1-controlled select{min-width:0;max-width:100%;width:100%}
