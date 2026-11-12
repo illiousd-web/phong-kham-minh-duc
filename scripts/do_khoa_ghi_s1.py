@@ -42,7 +42,7 @@ def main():
             database.migrate()
             from app.main import app
             from fastapi.testclient import TestClient
-            credentials = json.loads((data/'credentials.json').read_text())
+            credentials = json.loads((data/'credentials.json').read_text(encoding='utf-8'))
             clients = {}
             for role in ('doctor','admin','cashier'):
                 c = TestClient(app, base_url=os.environ['CLINIC_ORIGIN'], client=('127.0.0.1',1234))
@@ -110,7 +110,7 @@ def main():
                 'operations':{k:{'n':len(v),'p50_ms':round(statistics.median(v)*1000,3),'p95_ms':round(sorted(v)[math.ceil(.95*len(v))-1]*1000,3)} for k,v in samples.items()}}
             assert all(len(v)==args.samples for v in samples.values()), {k:len(v) for k,v in samples.items()}
             args.output.parent.mkdir(parents=True,exist_ok=True)
-            args.output.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
+            args.output.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             print(json.dumps(result,ensure_ascii=False),flush=True)
             for c in clients.values(): c.close()
         finally:
