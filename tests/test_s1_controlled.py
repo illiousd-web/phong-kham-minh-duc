@@ -68,3 +68,15 @@ def test_alias_admin_only_and_audit(prescription):
     d,vid,line=prescription
     rid=create(d,vid,{**line,'ingredient':alias})
     assert d.post(f'/api/clinical-prescriptions/{rid}/lock',json={'version':0}).status_code==422
+
+
+def test_every_source_name_variant_is_matched_and_all_limits_preserved():
+    import json,re
+    from app.main import db
+    from app.controlled_migration import source_rows
+    from app.controlled_substances import matches
+    with db() as c:
+        for source in source_rows('TT18_2026_DUOC_CHAT_KIEM_SOAT.csv'):
+            for name in re.split('[;/]',source['ten_quoc_te']):
+                assert matches(c,name.strip()),name
+        assert sum(len(json.loads(r['limits_json'])) for r in c.execute('SELECT limits_json FROM controlled_substances'))==62

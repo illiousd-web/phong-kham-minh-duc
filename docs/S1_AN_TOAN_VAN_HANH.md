@@ -25,3 +25,19 @@ Trigger bảo vệ đơn đã khóa/hủy, dòng đơn, snapshot phiếu xét ng
 Outbox chỉ cho cập nhật cột trạng thái, và trigger chỉ cho hủy sau khi đơn bị hủy; không cho sửa payload/xóa/TRUNCATE. Các bảng nháp vẫn cần CRUD cho quy trình đã có; trigger khóa khi duyệt/khóa. Hàm trigger cố định search_path để bảng tạm không che bảng thật.
 
 Trước nâng cấp phải sao lưu đã xác minh. Nếu nâng cấp lỗi, dùng quy trình khôi phục bản sao lưu sang CSDL riêng và kiểm lại trước chuyển dịch vụ; không tắt trigger để sửa hồ sơ đã duyệt.
+
+## S1b — kiểm đơn thuốc và kết quả chữ (PR #22, chờ S1a)
+
+Nhánh S1b kế thừa S1a; PR giữ Draft cho tới khi S1a được chủ dự án merge. Khi đó rebase lên main mới và chạy lại toàn bộ tests/LAN/CI, gồm M6 cùng trigger bất biến.
+
+Khóa M6 yêu cầu số lượng, liều và tần suất dương; số ngày nguyên 1–30; hàm lượng và thời điểm dùng; đơn vị liều. Ô đơn vị liều mới được để trống để dùng đơn vị thuốc đã nhập (tương thích dòng cũ), bản in luôn ghép đơn vị với liều. Dòng nháp vẫn lưu thông tin chưa đủ. Số lượng lệch trên 20% yêu cầu xác nhận và lý do ít nhất 8 ký tự; đơn vị lỏng/ống/chai/lọ/tuýp/gói chỉ cảnh báo. Lưu xác nhận trong nội dung dòng và audit đã che chuỗi giấy tờ.
+
+Migration 13 nạp đúng hai CSV TT18 được chủ dự án cung cấp, kiểm SHA/số dòng trước DDL. Ghi nguồn, ngày, phiên bản và số dòng vào sổ nạp. Dược chất và alias ở hai bảng mới; tách tên gọi cùng ô nguồn theo dấu `;` hoặc `/`, giữ nguyên ô nguồn trong JSON. Khóa so không dấu/hoa thường; chuẩn hóa dấu phân cách trong tên, sinh alias bỏ E/INE→IN. Quản trị thêm alias có nhật ký và tự rà lại cờ thuốc, không tự bỏ cờ đã khai.
+
+Thuốc đơn thành phần trùng danh mục bị chặn N/H; phối hợp cần hàm lượng **từng hoạt chất cùng thứ tự**, ngăn bằng `+`, ví dụ `10 mg + 5 mg` tương ứng hai hoạt chất. Chỉ so ngưỡng mg/đơn vị chia liều khi xác định chắc chắn; giữ cả ngưỡng nồng độ gốc để đối chiếu, chưa tự suy đổi từ mg/ml hay phần trăm sang đơn vị chia liều. Không xác định được hoặc không có ngưỡng thì chặn. Tên gần giống chỉ cảnh báo và cần bác sĩ xác nhận có lý do. Phối hợp dưới ngưỡng có nhãn trong nội dung/in/snapshot. Cờ danh mục được gắn theo dược chất dù một phối hợp đủ điều kiện được kê; không dùng việc thiếu cờ thủ công để bỏ kiểm tra hoạt chất.
+
+Migration 14 thêm `order_result_versions`, bảo toàn kết quả chữ cũ. API gửi kết quả bắt buộc `version`; bản đầu version 0, mỗi lần gửi thành phiên bản mới, sai phiên bản trả 409. Bác sĩ chỉ xem các phiên bản đã duyệt; kỹ thuật viên xem lịch sử đã gửi. Duyệt lưu snapshot của phiên bản hiện tại; nội dung các phiên bản không sửa/xóa được qua API, PostgreSQL có trigger và giới hạn quyền cập nhật cột duyệt. Chỉ định đã có kết quả duyệt bị chặn cả lúc xin hủy và khi quản lý duyệt yêu cầu cũ; thông báo dùng giảm phí nếu cần bỏ phí. Không đổi phép tính tiền hay luồng duyệt giảm phí hiện có.
+
+Các kiểm thử cũ tiếp tục giữ nguyên assertion nghiệp vụ; dữ liệu thử được bổ sung trường version, hàm lượng/thời điểm và xác nhận số lượng nhập tay nay bắt buộc. Không nới quy tắc xác nhận, cảnh báo hoặc quyền để giữ test cũ xanh.
+
+Chưa làm: đơn N/H thật, S2, ký số/liên thông, suy diễn hàm lượng không xác định, nghiệm thu máy Windows thật và máy in.

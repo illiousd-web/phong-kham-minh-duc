@@ -2,6 +2,7 @@
 import csv
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,8 +32,8 @@ def migrate_controlled(c):
       alias TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(alias_key,substance_key))''')
     for row in substances:
         source_key=row['phu_luc']+':'+row['stt']
-        names = [x.strip() for x in row['ten_quoc_te'].split(';') if x.strip()]
-        alternate = [x.strip() for x in row['ten_thong_dung_khac'].split(';') if x.strip()]
+        names = [row['ten_quoc_te']] + [x.strip() for x in re.split(r'[;/]',row['ten_quoc_te']) if x.strip()]
+        alternate = [x.strip() for x in re.split(r'[;/]',row['ten_thong_dung_khac']) if x.strip()]
         all_aliases = {alias for name in names+alternate for alias in aliases(name)}
         keys = {key(alias) for alias in all_aliases}
         matched = [r for r in limits if key(r['duoc_chat']) in keys]

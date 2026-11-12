@@ -264,13 +264,13 @@ def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
 
 
 def flexible_unit(line):
-    return fold(line.get('unit','')) in ('ml','ong','chai','tuyp','goi')
+    return fold(line.get('unit','')) in ('ml','l','lit','giot','ong','chai','lo','tuyp','goi')
 
 
 def quantity_mismatch(line):
     actual = decimal(line.get('quantity',''))
     expected = decimal(quantity(line.get('dose',''),line.get('frequency',''),line.get('days','')))
-    return bool(actual and expected and abs(actual-expected)/expected > Decimal('0.2'))
+    return bool(actual and expected and (actual > expected*Decimal('1.2') or actual < expected*Decimal('0.8')))
 
 
 def payload(c, rx, code=None, locked_at=None):
