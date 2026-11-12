@@ -1,7 +1,7 @@
 """Encrypted, consistent PostgreSQL + attachment backups and empty-target restore.
 
 Run as service account on encrypted storage. All app writers and this backup
-share one DB advisory lock. A successful backup is published by atomic rename.
+share a backup gate, separate from the business writer lock. A successful backup is published by atomic rename.
 """
 import argparse
 from contextlib import contextmanager
@@ -20,7 +20,7 @@ from urllib.parse import urlsplit, unquote
 import psycopg
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from app.config import DATABASE_URL, DATA, LAN
-from app.database import LOCK_ID
+from app.database import BACKUP_LOCK_ID
 from app.resources import LIMITS
 from app.storage import tree_bytes, require_space, free_bytes, StorageLimitError
 from app.ui_settings import FILE_NAME as SETTINGS_NAME, settings_path, load_settings, parse_settings, serialize, write_settings, DEFAULTS as SETTINGS_DEFAULTS
@@ -96,11 +96,11 @@ def pg_tool(name, args, url):
 def maintenance_lock(url):
     with psycopg.connect(url, autocommit=True) as c:
         c.execute("SET lock_timeout='60s'")
-        c.execute('SELECT pg_advisory_lock(%s)', (LOCK_ID,))
+        c.execute('SELECT pg_advisory_lock(%s)', (BACKUP_LOCK_ID,))
         try:
             yield c
         finally:
-            c.execute('SELECT pg_advisory_unlock(%s)', (LOCK_ID,))
+            c.execute('SELECT pg_advisory_unlock(%s)', (BACKUP_LOCK_ID,))
 
 
 def encrypt_archive(members,target,key):

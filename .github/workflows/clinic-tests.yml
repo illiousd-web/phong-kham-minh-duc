@@ -136,7 +136,7 @@ jobs:
         env:
           CLINIC_TEST_DATABASE_URL: postgresql://clinic:ci-synthetic-only-not-a-deployment-secret@127.0.0.1:5432/clinic_test_source
           MINHDUC_EXPECT_CHROMIUM_MAJOR: '109'
-        run: python -m pytest lan_tests/test_browser_https.py lan_tests/test_v050_browser.py lan_tests/test_tls_chrome_compat.py lan_tests/test_price_import.py lan_tests/test_manual_prices.py lan_tests/test_manager_visits.py lan_tests/test_mot_ngay_kham.py lan_tests/test_c5_queue_pages.py lan_tests/test_pending_queues.py lan_tests/test_m0_browser.py lan_tests/test_administrative_browser.py lan_tests/test_m6_browser.py lan_tests/test_m5_browser.py lan_tests/test_d0_browser.py lan_tests/test_d0_source_browser.py -v
+        run: python -m pytest lan_tests/test_browser_https.py lan_tests/test_v050_browser.py lan_tests/test_tls_chrome_compat.py lan_tests/test_price_import.py lan_tests/test_manual_prices.py lan_tests/test_manager_visits.py lan_tests/test_mot_ngay_kham.py lan_tests/test_c5_queue_pages.py lan_tests/test_pending_queues.py lan_tests/test_m0_browser.py lan_tests/test_administrative_browser.py lan_tests/test_m6_browser.py lan_tests/test_m5_browser.py lan_tests/test_d0_browser.py lan_tests/test_d0_source_browser.py lan_tests/test_s1_retry_browser.py -v
       - uses: actions/upload-artifact@v4
         if: always()
         with:
