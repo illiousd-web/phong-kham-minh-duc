@@ -18,9 +18,13 @@ def check_text_versions(c,ids):
     assert stale.status_code==409,stale.text
     history=t.get(url+'/versions');assert history.status_code==200,history.text
     assert history.json()['items'][0]['result_text']=='Phiên bản một giả lập'
+    assert history.json()['items'][0]['created_by']==ids['technician']
+    assert history.json()['items'][0]['created_by_name']
     assert d.get(url+'/versions').json()['items']==[]
     updated=t.put(url,json={'version':1,'result_text':'Phiên bản hai giả lập'})
     assert updated.status_code==200,updated.text
+    listed=next(x for x in t.get('/api/orders',params={'visit_id':vid}).json() if x['id']==order)
+    assert listed['result_version']==2
     assert [x['version'] for x in t.get(url+'/versions').json()['items']]==[1,2]
     pending=d.post(f'/api/orders/{order}/request-cancel',json={'reason':'Yêu cầu trước duyệt giả lập'})
     assert pending.status_code==201,pending.text

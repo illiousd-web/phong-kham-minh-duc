@@ -499,6 +499,12 @@ def list_orders(u=Depends(principal),visit_id:int|None=None,history:bool=False):
         if visit_id is not None:where.append('o.visit_id=?');args.append(visit_id)
         if visit_id is None:where.append('NOT ('+ACTIVE_ORDERS+')' if history else ACTIVE_ORDERS)
         rows=[dict(x) for x in c.execute(orders_sql(' AND '.join(where),hide_results,limit=100 if history else None),args)]
+        if rows:
+            versions={}
+            for start in range(0,len(rows),500):
+                ids=tuple(x['id'] for x in rows[start:start+500])
+                versions.update({x['order_id']:x['version'] for x in c.execute('SELECT order_id,MAX(version) AS version FROM order_result_versions WHERE order_id IN ('+','.join('?' for _ in ids)+') GROUP BY order_id',ids)})
+            for item in rows:item['result_version']=versions.get(item['id'],0)
         from .m5 import decorate_orders
         return decorate_orders(c,rows)
 

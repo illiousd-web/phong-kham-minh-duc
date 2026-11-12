@@ -37,7 +37,7 @@ def install_result_history(app,db,principal,require,audit,visit_access):
             order=c.execute('SELECT * FROM orders WHERE id=?',(oid,)).fetchone()
             if not order:raise HTTPException(404,'Không có chỉ định')
             if 'technician' not in u['roles']:visit_access(c,u,order['visit_id'],clinical=True)
-            condition='' if 'technician' in u['roles'] else ' AND snapshot IS NOT NULL'
-            rows=[dict(r) for r in c.execute('SELECT * FROM order_result_versions WHERE order_id=?'+condition+' ORDER BY version',(oid,))]
+            condition='' if 'technician' in u['roles'] else ' AND rv.snapshot IS NOT NULL'
+            rows=[dict(r) for r in c.execute('SELECT rv.*,u.full_name AS created_by_name FROM order_result_versions rv LEFT JOIN users u ON u.id=rv.created_by WHERE rv.order_id=?'+condition+' ORDER BY rv.version',(oid,))]
             audit(c,u,'result_versions_viewed','order',oid)
             return {'items':rows}
