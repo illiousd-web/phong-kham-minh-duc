@@ -304,7 +304,9 @@ jobs:
           # Change only a function body too: rollback must detect this without a table/version change.
           $migration = Join-Path $fault 'migrations\012_s1_immutable.sql'
           $sql = [IO.File]::ReadAllText($migration)
-          $sql = $sql.Replace('  -- Acquire rows in a stable order', "  -- CI function-body rollback probe`n  -- Acquire rows in a stable order")
+          $guardLine = "    RAISE EXCEPTION 'Dòng đơn không còn nháp: cấm mọi cập nhật hoặc xóa'"
+          if (-not $sql.Contains($guardLine)) { throw 'Immutable guard fault-injection location missing' }
+          $sql = $sql.Replace($guardLine, ("    -- CI function-body rollback probe`n" + $guardLine))
           [IO.File]::WriteAllText($migration, $sql, (New-Object Text.UTF8Encoding($false)))
           Push-Location $fault
           git add -A
@@ -364,6 +366,10 @@ jobs:
           if ($now -ne $env:COUNT_BEFORE) { throw "Rollback did not restore database: $now vs $env:COUNT_BEFORE" }
           Write-Output 'PASS: CAP_NHAT loi -> tu quay ve ban cu (ma, thu vien, CSDL), dich vu chay lai'
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py settings-check; if ($LASTEXITCODE) { throw 'settings after rollback' }
+      - name: Rollback CLI nonzero must report quay_ve_that_bai (synthetic VM only)
+        run: .\.github\scripts\Test-S1RecoveryFailures.ps1 -Mode Database
+      - name: Old service cannot start must report quay_ve_that_bai (synthetic VM only)
+        run: .\.github\scripts\Test-S1RecoveryFailures.ps1 -Mode Service
       - name: Simulate a machine installed by the PR 7 installer (30 local backups) before the second CAI_DAT
         run: |
           foreach ($f in 'C:\ProgramData\MinhDuc\clinic.env','C:\ProgramData\MinhDuc\quantri\owner.env') {

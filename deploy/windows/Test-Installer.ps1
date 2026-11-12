@@ -85,4 +85,5 @@ foreach ($path in Get-ChildItem $PSScriptRoot -Include *.ps1, *.psm1 -Recurse) {
     $hasNonAscii = @($bytes | Where-Object { $_ -gt 127 }).Count -gt 0
     if ($hasNonAscii) { Assert-True ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) ('Thiếu BOM UTF-8: ' + $path.Name) }
 }
+& (Join-Path $PSScriptRoot 'Test-Rollback.ps1')
 Write-Output ('PASS: ' + $script:count + ' kiểm tra bộ cài Windows')
