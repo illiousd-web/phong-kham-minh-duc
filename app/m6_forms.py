@@ -27,7 +27,7 @@ def content(p, status):
     for i, item in enumerate(p['items'], 1):
         amount = item['quantity']; n = decimal(amount)
         if n is not None and n == n.to_integral_value() and n < 10: amount = '0'+str(int(n))
-        usage = 'Liều/lần: '+item['dose']+' × '+item['frequency']+' lần/ngày; '+item['route']
+        usage = 'Liều/lần: '+item['dose']+' '+(item.get('dose_unit') or item['unit'])+' × '+item['frequency']+' lần/ngày; '+item['route']
         if item['timing']: usage += '; '+item['timing']
         usage += '; '+item['days']+' ngày'
         if item['notes']: usage += '; '+item['notes']
