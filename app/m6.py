@@ -26,6 +26,17 @@ def norm_strength(value):
     return ''.join(fold(value).split()).replace(',', '.')
 
 
+def drug_equivalence_error(a, b):
+    for field, label in [('ingredient', 'hoạt chất'), ('strength', 'hàm lượng'),
+                         ('dosage_form', 'dạng bào chế'), ('route', 'đường dùng'), ('unit', 'đơn vị tính')]:
+        left, right = (norm_strength(a[field]), norm_strength(b[field])) if field == 'strength' else (fold(a[field]), fold(b[field]))
+        if field != 'strength':
+            if not left: return f'Không thể gộp: thuốc nguồn chưa có {label}, cần rà soát trước'
+            if not right: return f'Không thể gộp: thuốc đích chưa có {label}, cần rà soát trước'
+        if left != right: return f'Không thể gộp: khác {label}'
+    return None
+
+
 def components(value):
     return [v.strip() for v in value.split('+') if v.strip()]
 
@@ -197,7 +208,8 @@ def current_drug(c, drug_id):
 
 def merged_line_error(line, drug, pos):
     if (fold(line['ingredient']) != fold(drug['ingredient']) or
-            norm_strength(line['strength']) != norm_strength(drug['strength'])):
+            norm_strength(line['strength']) != norm_strength(drug['strength']) or
+            (line.get('route') and fold(line['route']) != fold(drug['route']))):
         label = ' '.join(v for v in (drug['name'], drug['strength']) if v)
         return f'Dòng {pos}: thuốc đã gộp sang {label}, chọn lại từ danh mục'
     return None
@@ -389,10 +401,8 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             target = current_drug(c, data.keep_id)
             if not source or source['merged_into'] is not None or did == target['id'] or target['review_status'] == 'inactive':
                 raise HTTPException(422, 'Chọn hai mục đang dùng khác nhau; không tạo vòng gộp')
-            if source['ingredient_key'] and target['ingredient_key'] and source['ingredient_key'] != target['ingredient_key']:
-                raise HTTPException(422, 'Không thể gộp thuốc khác hoạt chất')
-            if norm_strength(source['strength']) != norm_strength(target['strength']):
-                raise HTTPException(422, 'Không thể gộp thuốc khác hàm lượng')
+            equivalence_error = drug_equivalence_error(source, target)
+            if equivalence_error: raise HTTPException(422, equivalence_error)
             # Only the catalog changes. Every locked row keeps its original FK forever.
             c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?',
                       (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], target['id']))
