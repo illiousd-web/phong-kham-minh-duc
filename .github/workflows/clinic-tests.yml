@@ -304,7 +304,8 @@ jobs:
           # Change only a function body too: rollback must detect this without a table/version change.
           $migration = Join-Path $fault 'migrations\012_s1_immutable.sql'
           $sql = [IO.File]::ReadAllText($migration)
-          $guardLine = "    RAISE EXCEPTION 'Dòng đơn không còn nháp: cấm mọi cập nhật hoặc xóa'"
+          # Keep inline PS5 anchors ASCII: runner-generated scripts have no UTF-8 BOM.
+          $guardLine = "  IF TG_OP='UPDATE' AND NEW.prescription_id <> OLD.prescription_id THEN"
           if (-not $sql.Contains($guardLine)) { throw 'Immutable guard fault-injection location missing' }
           $sql = $sql.Replace($guardLine, ("    -- CI function-body rollback probe`n" + $guardLine))
           [IO.File]::WriteAllText($migration, $sql, (New-Object Text.UTF8Encoding($false)))
