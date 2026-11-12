@@ -33,6 +33,11 @@ BEGIN
     IF TG_OP='DELETE' THEN
       RAISE EXCEPTION 'Dòng đơn đã khóa không được xóa' USING ERRCODE='23514';
     END IF;
+    IF NEW.drug_id IS DISTINCT FROM OLD.drug_id AND
+       (OLD.drug_id::text IS DISTINCT FROM current_setting('clinic.merge_from', true) OR
+        NEW.drug_id::text IS DISTINCT FROM current_setting('clinic.merge_to', true)) THEN
+      RAISE EXCEPTION 'Chỉ được đổi thuốc trong giao dịch gộp hợp lệ' USING ERRCODE='23514';
+    END IF;
     IF (to_jsonb(NEW)-'drug_id') IS DISTINCT FROM (to_jsonb(OLD)-'drug_id') THEN
       RAISE EXCEPTION 'Nội dung dòng đơn đã khóa bất biến' USING ERRCODE='23514';
     END IF;

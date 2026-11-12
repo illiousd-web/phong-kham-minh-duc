@@ -11,6 +11,8 @@ def test_runtime_role_cannot_change_locked_evidence(visit):
     with db(True) as c:
         c.execute("INSERT INTO drugs(name,name_key,strength_key) VALUES(?,?,?)", ('Giả lập bất biến', secrets.token_hex(8), ''))
         did = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO drugs(name,name_key,strength_key) VALUES(?,?,?)", ('Đích gộp giả lập', secrets.token_hex(8), ''))
+        other_did = c.execute('SELECT last_insert_rowid()').fetchone()[0]
         c.execute("INSERT INTO clinical_prescriptions(visit_id,doctor_id,status,snapshot,created_at) VALUES(?,?,'draft',NULL,'synthetic')", (visit, IDS['doctor']))
         rid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
         c.execute("INSERT INTO clinical_prescription_items(prescription_id,drug_id,position,content) VALUES(?,?,1,'{}')", (rid,did))
@@ -32,6 +34,8 @@ def test_runtime_role_cannot_change_locked_evidence(visit):
             grants = (root/'deploy/postgresql-roles.sql').read_text().replace('clinic_app',role).replace('DATABASE minhduc','DATABASE '+c.info.dbname)
             c.execute(grants)
             c.execute(sql.SQL('SET ROLE {}').format(sql.Identifier(role)))
+            with pytest.raises(psycopg.Error):
+                c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did, rid))
             for statement in ("UPDATE clinical_prescriptions SET snapshot='tampered' WHERE id=%s", "DELETE FROM clinical_prescription_items WHERE prescription_id=%s", "DELETE FROM clinical_prescriptions WHERE id=%s"):
                 with pytest.raises(psycopg.Error):
                     c.execute(statement,(rid,))
@@ -47,7 +51,7 @@ def test_runtime_role_cannot_change_locked_evidence(visit):
             c.execute(sql.SQL('DROP ROLE {}').format(sql.Identifier(role)))
 
 
-@pytest.mark.parametrize('module,function', [('tests.m6_followup_cases','check_followup'), ('tests.m5_cases','check_m5')])
+@pytest.mark.parametrize('module,function', [('tests.m6_followup_cases','check_followup'), ('tests.m6_cases','check_m6'), ('tests.m5_cases','check_m5')])
 def test_runtime_role_allows_supported_api_lifecycles(clients, monkeypatch, module, function):
     from contextlib import contextmanager
     import importlib
@@ -94,3 +98,14 @@ def test_c5_profile_upgrade_installs_snapshot_guards():
             assert {'s1_prescription_immutable','s1_prescription_items_immutable','s1_lab_immutable','s1_lab_results_immutable','s1_outbox_immutable'}.issubset({r['tgname'] for r in rows})
     finally:
         with psycopg.connect(SOURCE,autocommit=True) as c:c.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name)))
+
+
+def test_installed_s1_upgrade_refreshes_drug_guard():
+    from app.s1_migration import migrate_s1
+    with db(True) as c:
+        assert c.execute('SELECT 1 FROM schema_migrations WHERE version=12').fetchone()
+        # Simulate the older installed function, then run the owner upgrade again.
+        c.connection.execute("CREATE OR REPLACE FUNCTION s1_prescription_item_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$")
+        migrate_s1(c)
+        source = c.execute("SELECT pg_get_functiondef('s1_prescription_item_guard()'::regprocedure)").fetchone()[0]
+        assert 'clinic.merge_from' in source and 'clinic.merge_to' in source

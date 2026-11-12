@@ -348,6 +348,9 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             if not source or not target or did == data.keep_id or source['merged_into']: raise HTTPException(422, 'Chọn hai mục đang dùng khác nhau')
             # Content JSON and locked snapshots deliberately remain untouched.
             c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?', (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], data.keep_id))
+            if hasattr(c, 'connection'):
+                # set_config(..., true) is transaction-local (SET LOCAL), never pooled.
+                c.execute("SELECT set_config('clinic.merge_from', ?, true), set_config('clinic.merge_to', ?, true)", (str(did), str(data.keep_id)))
             c.execute('UPDATE clinical_prescription_items SET drug_id=? WHERE drug_id=?', (data.keep_id, did))
             c.execute("UPDATE drugs SET review_status='inactive',merged_into=? WHERE id=?", (data.keep_id, did))
             audit(c, u, 'drug_merged', 'drug', did, dump({'keep_id': data.keep_id}))
