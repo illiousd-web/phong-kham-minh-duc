@@ -75,5 +75,8 @@ def install_import(app, db, principal, require, audit):
                     c.execute('UPDATE drugs SET '+','.join(k+'=?' for k in values)+' WHERE id=?', (*values.values(), old['id'])); updated += 1
                 else:
                     c.execute('INSERT INTO drugs('+','.join(values)+') VALUES('+','.join('?' for _ in values)+')', tuple(values.values())); added += 1
+                from .controlled_substances import flag_drug
+                did=old['id'] if old else c.execute('SELECT last_insert_rowid()').fetchone()[0]
+                flag_drug(c,did,d['ingredient'],u,audit)
             audit(c, u, 'drugs_imported', 'drug', None, dump({'added': added, 'updated': updated}))
         return {'added': added, 'updated': updated, 'skipped': len(rows)-added-updated}

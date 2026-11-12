@@ -156,3 +156,6 @@ def migrate():
 
         from .s1_migration import migrate_s1
         migrate_s1(PGConnection(con))
+
+        from .controlled_migration import migrate_controlled
+        migrate_controlled(PGConnection(con))

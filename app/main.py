@@ -83,6 +83,8 @@ def init_db():
         migrate_d0(c)
         from .d0_source_migration import migrate_source_catalogs
         migrate_source_catalogs(c)
+        from .controlled_migration import migrate_controlled
+        migrate_controlled(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:

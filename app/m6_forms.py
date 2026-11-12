@@ -31,6 +31,7 @@ def content(p, status):
         if item['timing']: usage += '; '+item['timing']
         usage += '; '+item['days']+' ngày'
         if item['notes']: usage += '; '+item['notes']
+        if item.get('controlled_label'): usage += '; '+item['controlled_label']
         rows.append([str(i), (item['display_name']+' '+item['strength']).strip(), (amount+' '+item['unit']).strip(), usage])
     tail = [(label, advice[key]) for key, label in [('lifestyle_advice', 'Chế độ dinh dưỡng, sinh hoạt'),
         ('follow_up_advice', 'Lịch tái khám'), ('purchase_advice', 'Thời hạn tốt nhất để mua thuốc')] if advice[key]]

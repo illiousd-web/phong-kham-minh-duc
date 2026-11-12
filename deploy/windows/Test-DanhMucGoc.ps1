@@ -9,7 +9,7 @@ try {
     Set-Content -LiteralPath (Join-Path $source 'data\danh_muc_goc\KHONG_DUOC_CHEP.csv') -Value 'DU LIEU GIA LAP KHONG CONG KHAI'
     Copy-D0PublicCatalogs -SourceRoot $source -DestinationRoot $target
     Test-D0PublicCatalogs -SourceRoot $target
-    if ((Get-ChildItem (Join-Path $target 'data\danh_muc_goc') -File).Count -ne 5) { throw 'Must copy exactly five public sources' }
+    if ((Get-ChildItem (Join-Path $target 'data\danh_muc_goc') -File).Count -ne 7) { throw 'Must copy exactly seven public sources' }
     Copy-D0PublicCatalogs -SourceRoot $source -DestinationRoot $target
     Copy-D0PublicCatalogs -SourceRoot $target -DestinationRoot $target
     $before = @{}
@@ -19,5 +19,5 @@ try {
     try { Copy-D0PublicCatalogs -SourceRoot $source -DestinationRoot $target } catch { $blocked = $true }
     if (-not $blocked) { throw 'Invalid source hash must stop before writing' }
     foreach ($name in $before.Keys) { if ((Get-FileHash (Join-Path (Join-Path $target 'data\danh_muc_goc') $name)).Hash -ne $before[$name]) { throw 'Destination changed after invalid source' } }
-    Write-Output 'PASS: five exact public files, no private files, idempotent copy, invalid hash leaves destination intact'
+    Write-Output 'PASS: seven exact public files, no private files, idempotent copy, invalid hash leaves destination intact'
 } finally { if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force } }

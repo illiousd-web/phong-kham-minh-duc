@@ -208,6 +208,11 @@ def save_lines(c, rid, items, u, audit):
                 c.execute('UPDATE drugs SET ingredient=?,ingredient_key=?,brand_name=?,brand_key=? WHERE id=?', (item.ingredient, fold(item.ingredient), item.brand_name or drug['brand_name'], fold(item.brand_name or drug['brand_name']), did))
                 if item.ingredient != drug['ingredient']:
                     audit(c, u, 'drug_updated', 'drug', did, dump({'fields': ['ingredient']}))
+        from .controlled_substances import flag_drug, assess
+        flag_drug(c,did,item.ingredient,u,audit)
+        assessed=assess(c,value)
+        warnings.extend(f'Dòng {pos}: '+w for w in assessed['warnings'])
+        if assessed['label']: warnings.append(f'Dòng {pos}: '+assessed['label'])
         for active in components(value['ingredient']):
             k = fold(active)
             if k in seen: warnings.append(f'Dòng {pos}: trùng hoạt chất {active}')
@@ -250,7 +255,10 @@ def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
         if quantity_mismatch(line) and not flexible_unit(line) and not (line.get('quantity_acknowledged') is True and len(line.get('quantity_reason','').strip())>=8):
             error('Số lượng lệch trên 20% cách dùng; xác nhận Số lượng khác cách dùng và nhập lý do ít nhất 8 ký tự',pos,'quantity_reason')
         drug = c.execute('SELECT * FROM drugs WHERE id=?', (line['drug_id'],)).fetchone()
-        if drug['controlled_type']: error('Đơn N/H chưa hỗ trợ', pos, 'name')
+        from .controlled_substances import assess
+        assessed=assess(c,line)
+        for message in assessed['errors']: error(message,pos,'ingredient')
+        if drug['controlled_type'] and not assessed['label']: error('Đơn N/H chưa hỗ trợ', pos, 'name')
         if drug['review_status'] == 'inactive': error('Thuốc đã ngừng dùng', pos, 'name')
     return errors
 
@@ -275,6 +283,8 @@ def payload(c, rx, code=None, locked_at=None):
     for item in items:
         drug = c.execute('SELECT toxic FROM drugs WHERE id=?', (item['drug_id'],)).fetchone()
         item['toxic'] = bool(drug['toxic'])
+        from .controlled_substances import assess
+        item['controlled_label']=assess(c,item)['label']
         active = components(item['ingredient'])
         item['display_name'] = ((item['brand_name'] or item['name']) if len(active) > 1 else (active[0] if active else item['name']) + (' ('+item['brand_name']+')' if item['brand_name'] else ''))
     items.sort(key=lambda x: not x['toxic'])
@@ -360,6 +370,8 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             duplicate = c.execute('SELECT id FROM drugs WHERE name_key=? AND strength_key=? AND id<>?', (values['name_key'], values['strength_key'], did)).fetchone()
             if duplicate: raise HTTPException(409, 'Tên và hàm lượng đã có; dùng chức năng gộp')
             c.execute('UPDATE drugs SET '+','.join(k+'=?' for k in values)+' WHERE id=?', (*values.values(), did))
+            from .controlled_substances import flag_drug
+            flag_drug(c,did,data.ingredient,u,audit)
             audit(c, u, 'drug_updated', 'drug', did, dump({'fields': [k for k in values if old[k] != values[k]]}))
         return {'ok': True}
 
@@ -427,6 +439,10 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             # Snapshot contains identifiers: detail endpoint never exposes it.
             items = lines(c, rid); patient = patient_for_rx(c, rid); warnings = []
             for pos, item in enumerate(items, 1):
+                from .controlled_substances import assess
+                assessment=assess(c,item)
+                item['controlled_label']=assessment['label']
+                item['controlled_warning']=' · '.join(assessment['warnings'])
                 if quantity_mismatch(item): item['quantity_warning'] = 'Số lượng lệch trên 20% so với cách dùng'
                 matches = allergy_matches(patient['allergies'], item)
                 if matches:
@@ -450,6 +466,8 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             value.pop('errors')
             patient = patient_for_rx(c, rid)
             for item in value['items']:
+                if item.get('controlled_acknowledged'):
+                    audit(c,u,'clinical_rx_controlled_acknowledged','clinical_prescription',rid,dump({'item_id':item['id'],'reason':safe_reason(item.get('controlled_reason',''),patient)}))
                 if quantity_mismatch(item) and item.get('quantity_acknowledged'):
                     audit(c,u,'clinical_rx_quantity_acknowledged','clinical_prescription',rid,
                           dump({'item_id':item['id'],'reason':safe_reason(item.get('quantity_reason',''),patient)}))
@@ -506,6 +524,9 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             audit(c, u, 'clinical_rx_printed', 'clinical_prescription', rid, fmt)
         mime = 'application/pdf' if fmt == 'pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         return Response(content, media_type=mime, headers={'Cache-Control': 'no-store', 'Content-Disposition': f'attachment; filename="Don_thuoc_{rid}.{fmt}"'})
+
+    from .controlled_substances import install_controlled
+    install_controlled(app,db,principal,require,audit)
 
     from .m6_import import install_import
     install_import(app, db, principal, require, audit)

@@ -6,6 +6,8 @@ function Get-D0PublicCatalogs {
         'TT23_PL01_DANH_MUC_KY_THUAT.csv' = 'd4854c88304456c615d28d6bd7f3a0b5ab4a56dc0f00533604c57aaaf9984b1f'
         'TT23_PL02_DANH_MUC_KY_THUAT_TU_01072026.csv' = '38eab59894dbec1c904b1d7b54cad5e9f43afe75e854de7ea1497409e0fd666f'
         'DVHC_XA_CV1027_2025.csv' = '3a657a35fd6427d98774c8d74209cf3ec335e4225c4c8b35677358a1b1d8d06a'
+        'TT18_2026_DUOC_CHAT_KIEM_SOAT.csv' = '27eefdbfcd095ab09ef69da83c92b23a62b0fd34c0d42ecf904fe46807d4b7cd'
+        'TT18_2026_GIOI_HAN_PHOI_HOP.csv' = '9019e0d8569c4e6ff81145ca0f3d3bfc2a804d1d1085620f0dd374e515e186f7'
     }
 }
 function Test-D0PublicCatalogs {
