@@ -47,7 +47,15 @@ def install_auth(app, db, lan, now):
             key = hashlib.sha256(data.username.casefold().encode()).hexdigest()
             if lan:
                 # Serialize only this login name, retaining exact lockout counters.
-                c.execute('SELECT pg_advisory_xact_lock(?)', (-int(key[:15],16)-1,))
+                import psycopg
+                previous_timeout = c.execute("SELECT current_setting('lock_timeout')").fetchone()[0]
+                c.execute("SELECT set_config('lock_timeout', '250ms', true)")
+                try:
+                    c.execute('SELECT pg_advisory_xact_lock(?)', (-int(key[:15],16)-1,))
+                except psycopg.errors.LockNotAvailable:
+                    # The outer transaction rolls back; no attempt/session is changed.
+                    raise HTTPException(503, 'Đang xử lý đăng nhập, thử lại', headers={'Retry-After': '1'}) from None
+                c.execute("SELECT set_config('lock_timeout', ?, true)", (previous_timeout,))
                 attempt = c.execute('SELECT * FROM login_attempts WHERE key=?', (key,)).fetchone()
                 if attempt and attempt['locked_until'] > instant.isoformat():
                     raise HTTPException(429, 'Tạm khóa đăng nhập, thử lại sau 15 phút', headers={'Retry-After': '900'})
