@@ -103,9 +103,13 @@ def check_m6(clients, ids, db, service):
             text=' '.join(text.split())
             for word in expected:assert word in text,(fmt,word,text)
             assert text.index(code)<text.index('Cơ sở giả lập')<text.index('Người giả lập M6')
-        # Merge changes only references; snapshot/JSON remains exactly identical.
-        with db() as c:
-            target=c.execute('SELECT drug_id FROM clinical_prescription_items WHERE prescription_id=? AND drug_id<>?',(rid,did)).fetchone()[0]
+        # Merge equivalent catalog entries only; snapshot/JSON stays identical.
+        with db(True) as c:
+            original=c.execute('SELECT * FROM drugs WHERE id=?',(did,)).fetchone()
+            target_name='Thuốc đích tương đương giả lập '+suffix
+            c.execute('INSERT INTO drugs(name,name_key,strength,strength_key,ingredient,ingredient_key) VALUES(?,?,?,?,?,?)',
+                      (target_name,fold(target_name),original['strength'],original['strength_key'],original['ingredient'],original['ingredient_key']))
+            target=c.execute('SELECT last_insert_rowid()').fetchone()[0]
         assert a.post('/api/drugs/'+str(did)+'/merge',json={'keep_id':target}).status_code==200
         assert d.get(url+'/json').json()==value
         assert a.put('/api/prescription-settings',json={'clinic_facility_code':'ZZ002'}).status_code==200

@@ -22,6 +22,10 @@ def fold(value):
     return ' '.join(''.join(c for c in unicodedata.normalize('NFD', value.lower().replace('đ', 'd')) if not unicodedata.combining(c)).split())
 
 
+def norm_strength(value):
+    return ''.join(fold(value).split()).replace(',', '.')
+
+
 def components(value):
     return [v.strip() for v in value.split('+') if v.strip()]
 
@@ -191,6 +195,14 @@ def current_drug(c, drug_id):
     raise HTTPException(422, 'Chuỗi gộp thuốc không hợp lệ')
 
 
+def merged_line_error(line, drug, pos):
+    if (fold(line['ingredient']) != fold(drug['ingredient']) or
+            norm_strength(line['strength']) != norm_strength(drug['strength'])):
+        label = ' '.join(v for v in (drug['name'], drug['strength']) if v)
+        return f'Dòng {pos}: thuốc đã gộp sang {label}, chọn lại từ danh mục'
+    return None
+
+
 def save_lines(c, rid, items, u, audit):
     c.execute('DELETE FROM clinical_prescription_items WHERE prescription_id=?', (rid,))
     warnings = []; seen = set(); allergy_warnings = []
@@ -205,8 +217,14 @@ def save_lines(c, rid, items, u, audit):
         value['quantity'] = value['quantity'] or quantity(value['dose'], value['frequency'], value['days'])
         key, strength = fold(item.name), fold(item.strength)
         drug = c.execute('SELECT * FROM drugs WHERE name_key=? AND strength_key=?', (key, strength)).fetchone()
+        was_merged = False
         if drug:
-            drug = current_drug(c, drug['id'])
+            original_id = drug['id']
+            drug = current_drug(c, original_id)
+            was_merged = drug['id'] != original_id
+            if was_merged:
+                message = merged_line_error(value, drug, pos)
+                if message: raise HTTPException(422, message)
         if drug and drug['review_status'] == 'inactive':
             raise HTTPException(422, f'Dòng {pos}: thuốc đã ngừng dùng, chọn lại từ danh mục')
         if not drug:
@@ -217,7 +235,7 @@ def save_lines(c, rid, items, u, audit):
             did = drug['id']
             # Suggestions are applied in the UI. Explicit row values, including
             # cleared use fields, are never silently filled back by the API.
-            if drug['review_status'] == 'unreviewed' and item.ingredient:
+            if not was_merged and drug['review_status'] == 'unreviewed' and item.ingredient:
                 c.execute('UPDATE drugs SET ingredient=?,ingredient_key=?,brand_name=?,brand_key=? WHERE id=?', (item.ingredient, fold(item.ingredient), item.brand_name or drug['brand_name'], fold(item.brand_name or drug['brand_name']), did))
                 if item.ingredient != drug['ingredient']:
                     audit(c, u, 'drug_updated', 'drug', did, dump({'fields': ['ingredient']}))
@@ -256,6 +274,9 @@ def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
         if line['days'] and (days is None or days != days.to_integral_value() or days > 30): error('Số ngày dùng phải là số nguyên từ 1 đến 30', pos, 'days')
         if not line['quantity']: error('Cần nhập số lượng hoặc đủ số để tự tính', pos, 'quantity')
         drug = current_drug(c, line['drug_id'])
+        if drug['id'] != line['drug_id']:
+            message = merged_line_error(line, drug, pos)
+            if message: error(message, pos, 'name')
         if drug['controlled_type']: error('Đơn N/H chưa hỗ trợ', pos, 'name')
         if drug['review_status'] == 'inactive': error('Thuốc đã ngừng dùng', pos, 'name')
     return errors
@@ -368,6 +389,10 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             target = current_drug(c, data.keep_id)
             if not source or source['merged_into'] is not None or did == target['id'] or target['review_status'] == 'inactive':
                 raise HTTPException(422, 'Chọn hai mục đang dùng khác nhau; không tạo vòng gộp')
+            if source['ingredient_key'] and target['ingredient_key'] and source['ingredient_key'] != target['ingredient_key']:
+                raise HTTPException(422, 'Không thể gộp thuốc khác hoạt chất')
+            if norm_strength(source['strength']) != norm_strength(target['strength']):
+                raise HTTPException(422, 'Không thể gộp thuốc khác hàm lượng')
             # Only the catalog changes. Every locked row keeps its original FK forever.
             c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?',
                       (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], target['id']))

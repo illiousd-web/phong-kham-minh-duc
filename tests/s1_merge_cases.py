@@ -10,8 +10,8 @@ def check_catalog_only_merge(clients, ids, db, service):
     with db(True) as c:
         drugs=[]
         for i,name in enumerate(names):
-            c.execute('INSERT INTO drugs(name,name_key,strength_key,toxic,controlled_type) VALUES(?,?,?, ?,?)',
-                      (name,fold(name),'',int(i==0),'N' if i==0 else ''))
+            c.execute('INSERT INTO drugs(name,name_key,strength_key,toxic,controlled_type,ingredient,ingredient_key) VALUES(?,?,?, ?,?,?,?)',
+                      (name,fold(name),'',int(i==0),'N' if i==0 else '', 'Hoạt chất giả lập', fold('Hoạt chất giả lập')))
             drugs.append(c.execute('SELECT last_insert_rowid()').fetchone()[0])
     a,b,z=drugs
     r,d,admin=clients['reception'],clients['doctor'],clients['admin']
