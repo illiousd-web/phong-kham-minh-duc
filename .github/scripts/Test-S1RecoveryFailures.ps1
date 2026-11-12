@@ -30,13 +30,22 @@ try {
     $resultPath = Join-Path $paths.Updates 'ket-qua-cap-nhat.json'
     Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue
     $attempt = Invoke-Native -FilePath 'cmd.exe' -Arguments @('/c',(Join-Path $paths.Code 'deploy\windows\CAP_NHAT.bat'),'-KhongHoi','-TepZip',(Join-Path $env:RUNNER_TEMP 'minhduc-broken.zip')) -Quiet -WorkingDirectory $paths.Code
-    if ($attempt.Code -eq 0) { throw 'Failed recovery must have a nonzero process exit' }
+    Write-Output ('Fault-drill child exit: ' + $attempt.Code)
+    $attempt.Output | ForEach-Object { Write-Output $_ }
+    # Read the recovery record before asserting the exit code so CI cleanup can
+    # restore the exact backup even when a wrapper exit-code assertion fails.
     $failedResult = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+    Write-Output ('Fault-drill recovery status: ' + $failedResult.status)
+    $failedResult.rollback_errors | ForEach-Object { Write-Output ('Recovery error: ' + $_) }
+    if ($attempt.Code -eq 0) { throw 'Failed recovery must have a nonzero process exit' }
     if ($failedResult.status -ne 'quay_ve_that_bai') { throw ('Recovery falsely reported: ' + $failedResult.status) }
     if (@($failedResult.rollback_errors).Count -eq 0) { throw 'Recovery did not retain failed steps' }
     if ($Mode -eq 'Database' -and ($failedResult.rollback_errors -join ' ') -notmatch '23') { throw 'CLI exit 23 was not recorded as a recovery failure' }
     if ($Mode -eq 'Service' -and ($failedResult.rollback_errors -join ' ') -notmatch 'HTTPS') { throw 'Service/HTTPS failure was not recorded' }
     Write-Output ('PASS: ' + $Mode + ' fault -> quay_ve_that_bai and nonzero exit, with failed steps retained')
+} catch {
+    Write-Output ('PRIMARY FAULT-DRILL FAILURE: ' + $_.Exception.Message)
+    throw
 } finally {
     # Repair the disposable test VM explicitly; this is not product auto-recovery.
     $service = Get-Service -Name $names.Service -ErrorAction Stop
