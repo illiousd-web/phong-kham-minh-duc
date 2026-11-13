@@ -30,3 +30,12 @@ Số dòng không tính tiêu đề. Giữ nguyên byte UTF-8 BOM; SHA-256 kiể
 | `DVHC_XA_CV1027_2025.csv` | 3,321 | `3a657a35fd6427d98774c8d74209cf3ec335e4225c4c8b35677358a1b1d8d06a` |
 
 PL02 không có cột mã kỹ thuật riêng: STT chỉ định danh dòng trong từng lần nạp, có ID nội bộ riêng; không là mã kỹ thuật mới. Chuỗi ma_lien_ket_pl01 giữ nguyên; 8.252 mảnh sau tách có 7.343 khớp PL01 và 909 cần rà soát tay. Không nối/sửa các mảnh vỡ. Hai tên CLS và 58 tên PL02 rỗng được giữ nguyên theo nguồn, không tự điền. File ĐVHC chỉ có mã xã, không tự tạo mã tỉnh hay cắt đầu mã xã để suy ra mã tỉnh.
+
+## TT 18/2026/TT-BYT — tệp chủ dự án cung cấp cho S1
+
+Thông tin theo yêu cầu chủ dự án: ban hành **01/6/2026**, hiệu lực **16/7/2026**; bãi bỏ TT 20/2017/TT-BYT và TT 27/2024/TT-BYT. Áp dụng kiểm dược chất kiểm soát M6/S1; chưa hỗ trợ đơn N/H thật. Hai CSV công khai được chủ dự án cho phép lưu trong kho; lưu nguyên byte, không tự bổ sung danh mục y khoa.
+
+| Tệp | Số dòng dữ liệu | SHA-256 |
+|---|---:|---|
+| TT18_2026_DUOC_CHAT_KIEM_SOAT.csv | 122 (I: 42, II: 72, III: 8) | `27eefdbfcd095ab09ef69da83c92b23a62b0fd34c0d42ecf904fe46807d4b7cd` |
+| TT18_2026_GIOI_HAN_PHOI_HOP.csv | 62 (IV: 13, V: 43, VI: 6) | `9019e0d8569c4e6ff81145ca0f3d3bfc2a804d1d1085620f0dd374e515e186f7` |

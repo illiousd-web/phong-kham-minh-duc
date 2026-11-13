@@ -58,7 +58,7 @@ def check_m5(clients,ids,db,service):
     assert clients['doctor2'].post(url+'/approve',json={'version':2}).status_code==403
     assert d.get(f'/api/lab/visits/{visit}/results').json()['reports']==[]
     # No bypass through the legacy text/approval APIs.
-    assert t.put(f'/api/orders/{order_id}/result',json={'result_text':'không được sửa'}).status_code==409
+    assert t.put(f'/api/orders/{order_id}/result',json={'version':0,'result_text':'không được sửa'}).status_code==409
     assert d.post(f'/api/orders/{order_id}/approve').status_code==409
     approved=d.post(url+'/approve',json={'version':2});assert approved.status_code==200,approved.text
     assert t.get(f'/api/lab/queue?visit_id={visit}&status=approved').json()['total']==1

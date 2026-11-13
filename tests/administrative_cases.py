@@ -210,7 +210,7 @@ def check_scopes(clients, ids, db, service_id):
             o=d.post('/api/orders',json={'visit_id':vid,'category':category,'name':'Dịch vụ giả lập','service_id':category_services[category],'request_key':secrets.token_hex(16)})
             assert o.status_code==201,o.text
             oid=o.json()['id']
-            assert t.put(f'/api/orders/{oid}/result',json={'result_text':'Kết luận: Giả lập'}).status_code==200
+            assert t.put(f'/api/orders/{oid}/result',json={'version':0,'result_text':'Kết luận: Giả lập'}).status_code==200
             res=d.post(f'/api/orders/{oid}/approve');assert res.status_code==200,res.text
             assert bool(res.json()['warnings'])==(category!='ecg')
             for path in (f'/api/forms/{category}/{oid}?fmt=docx',f'/api/orders/{oid}/forms/result?format=docx'):
@@ -222,7 +222,7 @@ def check_scopes(clients, ids, db, service_id):
             assert c.execute("SELECT COUNT(*) FROM audit_log WHERE event='practitioner_scope_warning' AND object_id IN (SELECT id FROM orders WHERE visit_id=?)",(vid,)).fetchone()[0]==3
         assert a.put('/api/ui-settings',json={'block_practitioner_scope':True}).status_code==200
         oid=d.post('/api/orders',json={'visit_id':vid,'category':'lab','name':'Xét nghiệm giả lập','service_id':category_services['lab'],'request_key':secrets.token_hex(16)}).json()['id']
-        assert t.put(f'/api/orders/{oid}/result',json={'result_text':'Kết luận: Giả lập'}).status_code==200
+        assert t.put(f'/api/orders/{oid}/result',json={'version':0,'result_text':'Kết luận: Giả lập'}).status_code==200
         assert d.post(f'/api/orders/{oid}/approve').status_code==422
         assert a.put(f'/api/practitioners/{ids["doctor"]}',json={'practice_scopes':['Xét nghiệm','Chẩn đoán hình ảnh']}).status_code==200
         assert d.post(f'/api/orders/{oid}/approve').json()['warnings']==[]

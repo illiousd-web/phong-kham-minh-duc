@@ -25,7 +25,7 @@ def check_followup(clients,ids,db,service):
         pid=r.post('/api/patients',json={'full_name':'Người giả lập thay đơn '+secrets.token_hex(4),'date_of_birth':'1990-01-01','sex':'Nam','phone':'0900000000','citizen_id':'000000000789'}).json()['id']
         vid=r.post('/api/visits',json={'patient_id':pid,'doctor_id':ids['doctor'],'service_id':service}).json()['id']
         assert d.put(f'/api/visits/{vid}/clinical',json={'version':0,'diagnosis':'Chẩn đoán giả lập'}).status_code==200
-        body={'visit_id':vid,'items':[{'name':'Thuốc giả lập thay thế','ingredient':'Hoạt chất giả lập','dose':'1','frequency':'2','days':'3','route':'Uống','unit':'viên'}]}
+        body={'visit_id':vid,'items':[{'name':'Thuốc giả lập thay thế','ingredient':'Hoạt chất giả lập','strength':'5 mg','timing':'sau ăn','dose':'1','frequency':'2','days':'3','route':'Uống','unit':'viên'}]}
         base=d.post('/api/clinical-prescriptions',json=body);assert base.status_code==201,base.text
         root=base.json()['id'];url=lambda rid:f'/api/clinical-prescriptions/{rid}'
         assert d.post(url(root)+'/lock',json={'version':0}).status_code==200
@@ -83,7 +83,7 @@ def check_followup(clients,ids,db,service):
         with db() as c:assert c.execute("SELECT COUNT(*) FROM clinical_prescriptions WHERE id IN (?,?,?) AND status='locked'",(root,child,grand)).fetchone()[0]==1
         # M0 allergy text is checked on save and checked again at lock.
         with db(True) as c:c.execute('UPDATE patients SET allergies=? WHERE id=?',('Amoxicillin',pid))
-        medicine={'name':'Tên thương mại giả lập dị ứng','ingredient':'Amoxicillin + Acid clavulanic','brand_name':'Thương mại giả lập','dose':'1','frequency':'2','days':'3','route':'Uống','unit':'viên'}
+        medicine={'name':'Tên thương mại giả lập dị ứng','ingredient':'Amoxicillin + Acid clavulanic','brand_name':'Thương mại giả lập','strength':'5 mg + 5 mg','timing':'sau ăn','dose':'1','frequency':'2','days':'3','route':'Uống','unit':'viên'}
         allergic=d.post('/api/clinical-prescriptions',json={'visit_id':vid,'items':[medicine]});assert allergic.status_code==201,allergic.text
         rid=allergic.json()['id'];assert allergic.json()['allergy_warnings'][0]['row']==1
         assert 'amoxicillin' in allergic.json()['allergy_warnings'][0]['message']

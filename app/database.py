@@ -19,7 +19,7 @@ BACKUP_LOCK_ID = 764209432
 CATALOG_LOCK_ID = 764209433
 ID_TABLES=set(re.findall(r'CREATE TABLE IF NOT EXISTS (\w+)\s*\(\s*id\b',
     (ROOT/'schema.postgresql.sql').read_text(encoding='utf-8')+(ROOT/'migrations/003_v050.sql').read_text(encoding='utf-8')+(ROOT/'migrations/004_manual_prices.sql').read_text(encoding='utf-8'),re.I))
-ID_TABLES.update(('catalog_imports','tech_catalog_pl02'))
+ID_TABLES.update(('catalog_imports','tech_catalog_pl02','order_result_versions'))
 ID_TABLES.update(('lab_tests','lab_reference_ranges','lab_reports','lab_results'))
 ID_TABLES.update(('drugs','clinical_prescriptions','clinical_prescription_items','prescription_outbox'))
 _pool = None
@@ -167,3 +167,9 @@ def migrate():
 
         from .s1_migration import migrate_s1
         migrate_s1(PGConnection(con))
+
+        from .controlled_migration import migrate_controlled
+        migrate_controlled(PGConnection(con))
+
+        from .order_result_migration import migrate_result_versions
+        migrate_result_versions(PGConnection(con),postgres=True)

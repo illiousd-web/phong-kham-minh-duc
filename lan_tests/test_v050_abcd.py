@@ -48,7 +48,7 @@ def test_a_draft_authorization_and_request_retry_exact_once(clients,visit):
     assert state(clients,visit)['billing']['charged']==initial
     repeat=clients['doctor'].post('/api/orders',json=body)
     assert repeat.status_code==201 and repeat.json()['id']==oid
-    assert clients['technician'].put(f'/api/orders/{oid}/result',json={'result_text':'Không được thực hiện trước duyệt'}).status_code==409
+    assert clients['technician'].put(f'/api/orders/{oid}/result',json={'version':0,'result_text':'Không được thực hiện trước duyệt'}).status_code==409
     assert clients['cashier'].post(f'/api/orders/{oid}/authorize').status_code==403
     with ThreadPoolExecutor(max_workers=3) as executor:
         responses=list(executor.map(lambda _:clients['doctor'].post(f'/api/orders/{oid}/authorize'),range(3)))

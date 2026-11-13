@@ -30,6 +30,24 @@ Outbox chỉ cho cập nhật cột trạng thái, và trigger chỉ cho hủy s
 
 Trước nâng cấp phải sao lưu đã xác minh. Nếu nâng cấp lỗi, dùng quy trình khôi phục bản sao lưu sang CSDL riêng và kiểm lại trước chuyển dịch vụ; không tắt trigger để sửa hồ sơ đã duyệt.
 
+## S1b — kiểm đơn thuốc và kết quả chữ (PR #22)
+
+Nhánh S1b đã merge main sau khi S1a được chủ dự án merge. Chạy test liên quan xung đột cục bộ; CI kiểm toàn bộ, gồm M6 cùng trigger bất biến.
+
+Khóa M6 yêu cầu số lượng, liều và tần suất dương; số ngày nguyên 1–30; hàm lượng và thời điểm dùng; đơn vị liều. Ô đơn vị liều mới được để trống để dùng đơn vị thuốc đã nhập (tương thích dòng cũ), bản in luôn ghép đơn vị với liều. Dòng nháp vẫn lưu thông tin chưa đủ. Số lượng lệch trên 20% yêu cầu xác nhận và lý do ít nhất 8 ký tự; đơn vị lỏng/ống/chai/lọ/tuýp/gói chỉ cảnh báo. Lưu xác nhận trong nội dung dòng và audit đã che chuỗi giấy tờ.
+
+Migration 13 nạp đúng hai CSV TT18 được chủ dự án cung cấp, kiểm SHA/số dòng trước DDL. Ghi nguồn, ngày, phiên bản và số dòng vào sổ nạp. Dược chất và alias ở hai bảng mới; tách tên gọi cùng ô nguồn theo dấu `;` hoặc `/`, giữ nguyên ô nguồn trong JSON. Khóa so không dấu/hoa thường; chuẩn hóa dấu phân cách trong tên, sinh alias bỏ E/INE→IN. Quản trị thêm alias có nhật ký và tự rà lại cờ thuốc, không tự bỏ cờ đã khai.
+
+Thuốc đơn thành phần trùng danh mục bị chặn N/H; phối hợp cần hàm lượng **từng hoạt chất cùng thứ tự**, ngăn bằng `+`, ví dụ `10 mg + 5 mg` tương ứng hai hoạt chất. Chỉ so ngưỡng mg/đơn vị chia liều khi xác định chắc chắn; giữ cả ngưỡng nồng độ gốc để đối chiếu, chưa tự suy đổi từ mg/ml hay phần trăm sang đơn vị chia liều. Không xác định được hoặc không có ngưỡng thì chặn. Tên gần giống chỉ cảnh báo và cần bác sĩ xác nhận có lý do. Phối hợp dưới ngưỡng có nhãn trong nội dung/in/snapshot. Cờ danh mục được gắn theo dược chất dù một phối hợp đủ điều kiện được kê; không dùng việc thiếu cờ thủ công để bỏ kiểm tra hoạt chất.
+
+Migration 14 thêm `order_result_versions`, bảo toàn kết quả chữ cũ. API gửi kết quả bắt buộc `version`; bản đầu version 0, mỗi lần gửi thành phiên bản mới, sai phiên bản trả 409. Bác sĩ chỉ xem các phiên bản đã duyệt; kỹ thuật viên xem lịch sử đã gửi. Duyệt lưu snapshot của phiên bản hiện tại; nội dung các phiên bản không sửa/xóa được qua API, PostgreSQL có trigger và giới hạn quyền cập nhật cột duyệt. Chỉ định đã có kết quả duyệt bị chặn cả lúc xin hủy và khi quản lý duyệt yêu cầu cũ; thông báo dùng giảm phí nếu cần bỏ phí. Không đổi phép tính tiền hay luồng duyệt giảm phí hiện có.
+
+Các kiểm thử cũ tiếp tục giữ nguyên assertion nghiệp vụ; dữ liệu thử được bổ sung trường version, hàm lượng/thời điểm và xác nhận số lượng nhập tay nay bắt buộc. Không nới quy tắc xác nhận, cảnh báo hoặc quyền để giữ test cũ xanh.
+
+Chưa làm: đơn N/H thật, S2, ký số/liên thông, suy diễn hàm lượng không xác định, nghiệm thu máy Windows thật và máy in.
+
+Kiểm lệch số lượng tính độc lập với giới hạn tự điền của nháp; vượt giới hạn tự điền không được bỏ qua xác nhận. Khi đổi đơn vị hàm lượng TT18, giữ đủ độ chính xác đầu vào, không làm tròn giá trị vượt ngưỡng xuống ngưỡng. Hai biên này có test FAIL trước sửa và PASS sau sửa.
+
 ## Đo giữ khóa trên C5 giả lập
 
 Lệnh: `CLINIC_PERF_SOURCE_DATABASE_URL=<PostgreSQL cục bộ /postgres> python -m scripts.do_khoa_ghi_s1 --output test_evidence/s1-write-lock-c5.json`. Công cụ chỉ tạo CSDL C5 mới có tên ngẫu nhiên, từ chối dùng CSDL có sẵn và xóa CSDL đo khi xong. Đo qua API thật, từ lúc lấy được khóa đến sau COMMIT, không tính chờ khóa/parse tệp/mạng. Không cài đo đạc vào mã chạy dịch vụ.
@@ -51,7 +69,7 @@ Nạp ICD-10 có thể giữ giao dịch hơn 5 giây nên không dùng khóa gh
 - Chưa thử `pg_dump` đồng thời với ghi nghiệp vụ. Test mới kiểm khóa sao lưu thật và tranh chấp giao dịch; không coi là nghiệm thu bản dump trong tải ghi đồng thời.
 - Dự phòng 8 MiB ở `logs/.access-reserve` chưa chắc cùng phân vùng với thư mục dữ liệu PostgreSQL; giải phóng tệp này không bảo đảm PostgreSQL có thêm dung lượng nếu nằm khác phân vùng. Phải kiểm và giám sát cả hai phân vùng trên máy thật.
 - Số đo giữ khóa là Linux với dữ liệu C5 giả lập, chưa thay thế nghiệm thu Windows i3/8 GB, SSD và máy in thật.
-- PR #22 vẫn Draft dựa trên S1a. Chỉ sau khi chủ dự án merge #21 mới rebase #22 lên main mới và chạy lại toàn bộ, đặc biệt khóa đơn M6 với trigger S1a.
+- PR #21 đã merge; PR #22 nhận main bằng merge. Chỉ chạy kiểm liên quan xung đột cục bộ, để CI kiểm toàn bộ, đặc biệt khóa đơn M6 với trigger S1a.
 
 ## Kết luận quay lui cập nhật
 

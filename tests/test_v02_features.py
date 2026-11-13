@@ -54,7 +54,7 @@ def test_orders_result_requires_approved_state_for_pdf():
     order=client.post('/api/orders',headers=doctor,json={'visit_id':visit,'category':'lab','name':'Xét nghiệm tổng hợp mô phỏng'}).json()['id']
     assert client.get(f'/api/print/order/{order}',headers=doctor).status_code==200
     assert client.get(f'/api/print/result/{order}',headers=doctor).status_code==409
-    assert client.put(f'/api/orders/{order}/result',headers=tech,json={'result_text':'Giá trị giả định 123'}).status_code==200
+    assert client.put(f'/api/orders/{order}/result',headers=tech,json={'version':0,'result_text':'Giá trị giả định 123'}).status_code==200
     assert client.post(f'/api/orders/{order}/approve',headers=doctor).status_code==200
     pdf=client.get(f'/api/print/result/{order}',headers=doctor)
     assert pdf.status_code==200

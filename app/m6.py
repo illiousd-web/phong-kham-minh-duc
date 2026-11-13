@@ -4,7 +4,7 @@ import re
 import secrets
 import unicodedata
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, DecimalException, localcontext
 from io import BytesIO
 from typing import Literal
 
@@ -96,6 +96,11 @@ class LineInput(BaseModel):
     notes: str = Field(default='', max_length=500)
     allergy_acknowledged: StrictBool = False
     allergy_reason: str = Field(default='', max_length=500)
+    dose_unit: str = Field(default='', max_length=80)
+    quantity_acknowledged: StrictBool = False
+    quantity_reason: str = Field(default='', max_length=500)
+    controlled_acknowledged: StrictBool = False
+    controlled_reason: str = Field(default='', max_length=500)
 
     @field_validator('*', mode='before')
     @classmethod
@@ -227,6 +232,8 @@ def save_lines(c, rid, items, u, audit):
             warning = allergy_warning(pos, matches)
             allergy_warnings.append(warning); warnings.append('Dòng '+str(pos)+': '+warning['message'])
         value['quantity'] = value['quantity'] or quantity(value['dose'], value['frequency'], value['days'])
+        if quantity_mismatch(value):
+            warnings.append(f'Dòng {pos}: số lượng lệch trên 20% so với cách dùng')
         key, strength = fold(item.name), fold(item.strength)
         drug = c.execute('SELECT * FROM drugs WHERE name_key=? AND strength_key=?', (key, strength)).fetchone()
         was_merged = False
@@ -251,6 +258,11 @@ def save_lines(c, rid, items, u, audit):
                 c.execute('UPDATE drugs SET ingredient=?,ingredient_key=?,brand_name=?,brand_key=? WHERE id=?', (item.ingredient, fold(item.ingredient), item.brand_name or drug['brand_name'], fold(item.brand_name or drug['brand_name']), did))
                 if item.ingredient != drug['ingredient']:
                     audit(c, u, 'drug_updated', 'drug', did, dump({'fields': ['ingredient']}))
+        from .controlled_substances import flag_drug, assess
+        flag_drug(c,did,item.ingredient,u,audit)
+        assessed=assess(c,value)
+        warnings.extend(f'Dòng {pos}: '+w for w in assessed['warnings'])
+        if assessed['label']: warnings.append(f'Dòng {pos}: '+assessed['label'])
         for active in components(value['ingredient']):
             k = fold(active)
             if k in seen: warnings.append(f'Dòng {pos}: trùng hoạt chất {active}')
@@ -280,18 +292,48 @@ def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
         active = components(line['ingredient'])
         if not active: error('Bổ sung hoạt chất để in đúng tên theo TT 26/2025', pos, 'ingredient')
         if len(active) > 1 and not line['brand_name']: error('Thuốc nhiều hoạt chất phải có tên thương mại', pos, 'brand_name')
-        for field, label in [('dose', 'liều mỗi lần'), ('frequency', 'số lần/ngày'), ('route', 'đường dùng'), ('days', 'số ngày dùng')]:
+        for field, label in [('dose', 'liều mỗi lần'), ('frequency', 'số lần/ngày'), ('route', 'đường dùng'), ('days', 'số ngày dùng'), ('strength', 'hàm lượng/nồng độ'), ('timing', 'thời điểm dùng')]:
             if not line[field]: error('Thiếu '+label, pos, field)
+        for field in ('dose','frequency','quantity'):
+            if decimal(line[field]) is None:
+                error('Cần nhập số dương, chấp nhận dấu phẩy thập phân',pos,field)
+        if not (line.get('dose_unit') or line['unit']).strip():
+            error('Liều mỗi lần phải có đơn vị',pos,'unit')
         days = decimal(line['days'])
         if line['days'] and (days is None or days != days.to_integral_value() or days > 30): error('Số ngày dùng phải là số nguyên từ 1 đến 30', pos, 'days')
         if not line['quantity']: error('Cần nhập số lượng hoặc đủ số để tự tính', pos, 'quantity')
+        if quantity_mismatch(line) and not flexible_unit(line) and not (line.get('quantity_acknowledged') is True and len(line.get('quantity_reason','').strip())>=8):
+            error('Số lượng lệch trên 20% cách dùng; xác nhận Số lượng khác cách dùng và nhập lý do ít nhất 8 ký tự',pos,'quantity_reason')
         drug = current_drug(c, line['drug_id'])
         if drug['id'] != line['drug_id']:
             message = merged_line_error(line, drug, pos)
             if message: error(message, pos, 'name')
-        if drug['controlled_type']: error('Đơn N/H chưa hỗ trợ', pos, 'name')
+        from .controlled_substances import assess
+        assessed=assess(c,line)
+        for message in assessed['errors']: error(message,pos,'ingredient')
+        if drug['controlled_type'] and not assessed['label']: error('Đơn N/H chưa hỗ trợ', pos, 'name')
         if drug['review_status'] == 'inactive': error('Thuốc đã ngừng dùng', pos, 'name')
     return errors
+
+
+def flexible_unit(line):
+    return fold(line.get('unit','')) in ('ml','l','lit','giot','ong','chai','lo','tuyp','goi')
+
+
+def quantity_mismatch(line):
+    actual = decimal(line.get('quantity',''))
+    factors = [decimal(line.get(k,'')) for k in ('dose','frequency','days')]
+    if actual is None or any(value is None for value in factors): return False
+    try:
+        # Validation must not inherit the draft autofill's one-million cap.
+        # Each input has at most 180 characters; retain all significant digits.
+        with localcontext() as context:
+            context.prec = 600
+            expected = factors[0]*factors[1]*factors[2]
+            return actual > expected*Decimal('1.2') or actual < expected*Decimal('0.8')
+    except DecimalException:
+        # Unrepresentable arithmetic never silently bypasses acknowledgement.
+        return True
 
 
 def payload(c, rx, code=None, locked_at=None):
@@ -304,6 +346,8 @@ def payload(c, rx, code=None, locked_at=None):
     for item in items:
         drug = current_drug(c, item['drug_id'])
         item['toxic'] = bool(drug['toxic'])
+        from .controlled_substances import assess
+        item['controlled_label']=assess(c,item)['label']
         active = components(item['ingredient'])
         item['display_name'] = ((item['brand_name'] or item['name']) if len(active) > 1 else (active[0] if active else item['name']) + (' ('+item['brand_name']+')' if item['brand_name'] else ''))
     items.sort(key=lambda x: not x['toxic'])
@@ -390,6 +434,8 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             duplicate = c.execute('SELECT id FROM drugs WHERE name_key=? AND strength_key=? AND id<>?', (values['name_key'], values['strength_key'], did)).fetchone()
             if duplicate: raise HTTPException(409, 'Tên và hàm lượng đã có; dùng chức năng gộp')
             c.execute('UPDATE drugs SET '+','.join(k+'=?' for k in values)+' WHERE id=?', (*values.values(), did))
+            from .controlled_substances import flag_drug
+            flag_drug(c,did,data.ingredient,u,audit)
             audit(c, u, 'drug_updated', 'drug', did, dump({'fields': [k for k in values if old[k] != values[k]]}))
         return {'ok': True}
 
@@ -460,6 +506,11 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             # Snapshot contains identifiers: detail endpoint never exposes it.
             items = lines(c, rid); patient = patient_for_rx(c, rid); warnings = []
             for pos, item in enumerate(items, 1):
+                from .controlled_substances import assess
+                assessment=assess(c,item)
+                item['controlled_label']=assessment['label']
+                item['controlled_warning']=' · '.join(assessment['warnings'])
+                if quantity_mismatch(item): item['quantity_warning'] = 'Số lượng lệch trên 20% so với cách dùng'
                 matches = allergy_matches(patient['allergies'], item)
                 if matches:
                     warning = allergy_warning(pos, matches); warnings.append(warning)
@@ -482,6 +533,11 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             value.pop('errors')
             patient = patient_for_rx(c, rid)
             for item in value['items']:
+                if item.get('controlled_acknowledged'):
+                    audit(c,u,'clinical_rx_controlled_acknowledged','clinical_prescription',rid,dump({'item_id':item['id'],'reason':safe_reason(item.get('controlled_reason',''),patient)}),details_limit=3000)
+                if quantity_mismatch(item) and item.get('quantity_acknowledged'):
+                    audit(c,u,'clinical_rx_quantity_acknowledged','clinical_prescription',rid,
+                          dump({'item_id':item['id'],'reason':safe_reason(item.get('quantity_reason',''),patient)}),details_limit=3000)
                 if allergy_matches(patient['allergies'], item):
                     item['allergy_confirmed_by'] = u['id']; item['allergy_confirmed_at'] = stamp
                     content = {k: v for k, v in item.items() if k not in ('id','drug_id','toxic','display_name')}
@@ -540,6 +596,9 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
             audit(c, u, 'clinical_rx_printed', 'clinical_prescription', rid, fmt)
         mime = 'application/pdf' if fmt == 'pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         return Response(content, media_type=mime, headers={'Cache-Control': 'no-store', 'Content-Disposition': f'attachment; filename="Don_thuoc_{rid}.{fmt}"'})
+
+    from .controlled_substances import install_controlled
+    install_controlled(app,db,principal,require,audit)
 
     from .m6_import import install_import
     install_import(app, db, principal, require, audit)

@@ -80,7 +80,7 @@ def check_m6(clients, ids, db, service):
         editable.update(controlled_type='',toxic=True,dosage_form='Viên nén',route='Uống',unit='viên')
         assert a.put('/api/drugs/'+str(did),json=editable).status_code==200
         # Add an ordinary line first; toxic item must be printed first.
-        body['items']=[{**line,'name':'Thuốc giả lập thường '+suffix,'ingredient':'Hoạt chất giả lập B','quantity':'3'},line]
+        body['items']=[{**line,'name':'Thuốc giả lập thường '+suffix,'ingredient':'Hoạt chất giả lập B','quantity':'3','quantity_acknowledged':True,'quantity_reason':'Số lượng nhập tay giả lập'},line]
         body['version']=version
         assert d.put(url,json=body).status_code==200;version+=1
         locked=d.post(url+'/lock',json={'version':version});assert locked.status_code==200,locked.text
@@ -131,7 +131,7 @@ def check_m6(clients, ids, db, service):
         child=r.post('/api/patients',json={'full_name':'Trẻ M6 giả lập','date_of_birth':'2025-01-01','sex':'Nam','phone':'0900000000'}).json()['id']
         cv=r.post('/api/visits',json={'patient_id':child,'doctor_id':ids['doctor'],'service_id':service}).json()['id']
         assert d.put(f'/api/visits/{cv}/clinical',json={'version':0,'diagnosis':'Chẩn đoán trẻ giả lập'}).status_code==200
-        compound={'name':'Hỗn hợp giả lập '+suffix,'ingredient':'Chất X giả lập + Chất Y giả lập','brand_name':'Thương mại giả lập','dose':'1','frequency':'2','days':'3','route':'Uống','unit':'viên'}
+        compound={'name':'Hỗn hợp giả lập '+suffix,'ingredient':'Chất X giả lập + Chất Y giả lập','brand_name':'Thương mại giả lập','strength':'5 mg + 5 mg','timing':'sau ăn','dose':'1','frequency':'2','days':'3','route':'Uống','unit':'viên'}
         cr=d.post('/api/clinical-prescriptions',json={'visit_id':cv,'items':[compound,{**compound,'name':'Trùng hoạt chất giả lập '+suffix,'ingredient':'Chất X giả lập','brand_name':''}]});assert cr.status_code==201,cr.text
         assert cr.json()['warnings']
         brand_matches=a.get('/api/drugs',params={'q':'thuong mai gia lap'}).json()

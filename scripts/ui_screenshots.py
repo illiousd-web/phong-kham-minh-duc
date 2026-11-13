@@ -59,7 +59,7 @@ def seed(base, password):
     order = ok(doctor.post('/api/orders', json={'visit_id': v, 'category': 'lab', 'service_id': lab['id'], 'request_key': secrets.token_hex(8), 'defer_approval': False}))
     us = next(s for s in ok(doctor.get('/api/cls-services')) if s['category'] == 'ultrasound')
     ok(doctor.post('/api/orders', json={'visit_id': visits[1], 'category': 'ultrasound', 'service_id': us['id'], 'request_key': secrets.token_hex(8), 'defer_approval': False}))
-    ok(tech.put(f"/api/orders/{order['id']}/result", json={'result_text': 'Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nKết luận: Đường huyết cao (giả lập)'}))
+    ok(tech.put(f"/api/orders/{order['id']}/result", json={'version':0,'result_text': 'Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nKết luận: Đường huyết cao (giả lập)'}))
     ok(doctor.post(f"/api/orders/{order['id']}/approve"))
     ok(doctor.post('/api/prescriptions', json={'visit_id': v, 'items': [{'medicine_id': med['id'], 'quantity': 10, 'unit_id': None, 'directions': 'Uống sau ăn (giả lập)'}], 'instructions': 'Tái khám khi mệt', 'follow_up': None}))
     nurses = ok(doctor.get('/api/nurses'))

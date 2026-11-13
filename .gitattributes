@@ -8,3 +8,6 @@
 
 # Preserve exact public source bytes, BOM and SHA-256 on Windows/Linux.
 data/danh_muc_goc/*.csv -text
+# These supplied CSVs retain their original CRLF and exact source checksums.
+data/danh_muc_goc/TT18_2026_DUOC_CHAT_KIEM_SOAT.csv whitespace=cr-at-eol
+data/danh_muc_goc/TT18_2026_GIOI_HAN_PHOI_HOP.csv whitespace=cr-at-eol

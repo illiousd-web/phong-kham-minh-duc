@@ -42,7 +42,7 @@ def test_documents_full_workflow_with_role_scope():
         oid=n.json()['id']
         assert client.get(f'/api/forms/{category}/{oid}',headers=doc).status_code==409
         assert client.get(f'/api/forms/order/{oid}?fmt=docx',headers=doc).status_code==200
-        assert client.put(f'/api/orders/{oid}/result',json={'result_text':'Kết quả giả lập - không điều trị'},headers=tec).status_code==200
+        assert client.put(f'/api/orders/{oid}/result',json={'version':0,'result_text':'Kết quả giả lập - không điều trị'},headers=tec).status_code==200
         assert client.post(f'/api/orders/{oid}/approve',headers=doc).status_code==200
         for fmt in ('docx','pdf'):
             res=client.get(f'/api/forms/{category}/{oid}?fmt={fmt}',headers=doc)

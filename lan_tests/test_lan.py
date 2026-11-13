@@ -117,12 +117,12 @@ def test_complete_workflow_all_nine_forms(clients,visit):
     for category in ('lab','ultrasound','xray','ecg'):
         oid=create_order(clients,visit,category)
         assert doc.get(f'/api/forms/{category}/{oid}').status_code==409
-        assert tech.put(f'/api/orders/{oid}/result',json={'result_text':'Kết quả giả lập đã duyệt'}).status_code==200
+        assert tech.put(f'/api/orders/{oid}/result',json={'version':0,'result_text':'Kết quả giả lập đã duyệt'}).status_code==200
         upload=tech.post(f'/api/orders/{oid}/attachment',files={'file':('fake.pdf',b'%PDF-1.5\nFAKE', 'application/pdf')})
         assert upload.status_code==200
         assert clients['doctor2'].post(f'/api/orders/{oid}/approve').status_code==403
         assert doc.post(f'/api/orders/{oid}/approve').status_code==200
-        assert tech.put(f'/api/orders/{oid}/result',json={'result_text':'Thay đổi trái phép'}).status_code==409
+        assert tech.put(f'/api/orders/{oid}/result',json={'version':0,'result_text':'Thay đổi trái phép'}).status_code==409
         assert doc.get(f'/api/orders/{oid}/attachment').content.startswith(b'%PDF-')
         assert r.get(f'/api/orders/{oid}/attachment').status_code==403
         forms.append((doc,category,oid))
@@ -224,7 +224,7 @@ def test_long_exports_preserve_tail_and_intake_hides_clinical(clients,visit):
     oid=create_order(clients,visit,'lab')
     result=('Kết quả thử '*800)+' RESULT_TAIL_MARKER'
     assert len(result)<=10000
-    assert tech.put(f'/api/orders/{oid}/result',json={'result_text':result}).status_code==200
+    assert tech.put(f'/api/orders/{oid}/result',json={'version':0,'result_text':result}).status_code==200
     assert doc.post(f'/api/orders/{oid}/approve').status_code==200
     rid=create_rx(clients,visit,instructions=instructions)['id']
     for kind,item,marker in [('visit',visit,'HISTORY_TAIL_MARKER'),('lab',oid,'RESULT_TAIL_MARKER'),('rx',rid,'INSTRUCTION_TAIL_MARKER')]:

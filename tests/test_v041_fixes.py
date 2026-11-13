@@ -63,7 +63,7 @@ def test_printed_forms_use_vietnamese_status_and_lab_table():
     pending = pdf_text(client.get(f'/api/forms/visit/{visit}?fmt=pdf', headers=doc))
     assert 'Chờ thực hiện' in pending and '20/12/2026' in pending
     result = 'Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nUre | 5,1 | mmol/L | 2,5–7,5\nMẫu lấy lúc đói\nKết luận: Tăng glucose máu (giả lập)'
-    assert client.put(f'/api/orders/{order}/result', headers=tech, json={'result_text': result}).status_code == 200
+    assert client.put(f'/api/orders/{order}/result', headers=tech, json={'version':0,'result_text': result}).status_code == 200
     assert client.post(f'/api/orders/{order}/approve', headers=doc).status_code == 200
     lab = pdf_text(client.get(f'/api/forms/lab/{order}?fmt=pdf', headers=doc))
     for expected in ('Glucose', '9,2', 'mmol/L', '3,9–5,6', 'Ure', 'Mẫu lấy lúc đói',

@@ -327,7 +327,7 @@ class Day:
                 d = self.ui('doctor')
                 send(d, d.locator(f'[data-action="approve"][data-id="{oid}"]'))
             else:
-                self.call('technician', 'PUT', f'/api/orders/{oid}/result', {'result_text': text})
+                self.call('technician', 'PUT', f'/api/orders/{oid}/result', {'version':0,'result_text': text})
                 self.call('doctor', 'POST', f'/api/orders/{oid}/approve')
             self.audit('result_submitted', 'order', oid, 'technician')
             self.audit('result_approved_demo', 'order', oid, 'doctor')

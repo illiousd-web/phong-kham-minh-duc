@@ -240,6 +240,9 @@ def test_nightly_job_backup_verify_external_copy_and_rollback(creds, tmp_path):
     assert len(list((tmp_path / 'backups').glob('minhduc-*.mdbackup'))) == 2
     assert len(list((tmp_path / 'backups').glob('*.mdbackup.verified'))) == 2
     backup_file = sorted((tmp_path / 'backups').glob('minhduc-*.mdbackup'))[0]
+    before_fingerprint = install_db.fingerprint(owner_url(creds))
+    with psycopg.connect(owner_url(creds)) as c:
+        before_acl = c.execute("SELECT proacl::text FROM pg_proc WHERE oid='s1_text_result_guard()'::regprocedure").fetchone()[0]
     # Simulate a failed update that changed data/schema, then roll back via the CLI.
     with psycopg.connect(owner_url(creds)) as c:
         c.execute("INSERT INTO service_catalog(name,price) VALUES('Dữ liệu sau cập nhật lỗi',1)")
@@ -262,6 +265,10 @@ def test_nightly_job_backup_verify_external_copy_and_rollback(creds, tmp_path):
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report['kept_database'].startswith(DB + '_loi_')
+    with psycopg.connect(owner_url(creds)) as c:
+        restored_acl = c.execute("SELECT proacl::text FROM pg_proc WHERE oid='s1_text_result_guard()'::regprocedure").fetchone()[0]
+    assert restored_acl == before_acl, 'Restore phải giữ ACL riêng của trigger S1b'
+    assert install_db.fingerprint(owner_url(creds)) == before_fingerprint
     assert creds['app'] not in result.stdout + result.stderr
     with psycopg.connect(app_url(creds)) as c:
         names = [r[0] for r in c.execute('SELECT name FROM service_catalog ORDER BY id')]
