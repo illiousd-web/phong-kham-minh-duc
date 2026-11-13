@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'MinhDuc.Install.psm1') -Force -DisableNameChecking
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'MinhDuc.Install.psm1'),[ref]$tokens,[ref]$errors)
-foreach ($name in @('Test-MinhDucVenvPythonPath','Wait-MinhDucVenvPythonExit','Invoke-MinhDucAccessRetry','Suspend-MinhDucBackupTasks')) {
+foreach ($name in @('Test-MinhDucVenvPythonPath','Wait-MinhDucVenvPythonExit','Invoke-MinhDucAccessRetry','Suspend-MinhDucBackupTasks','Get-MinhDucPythonScriptLabel')) {
     $definition=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -14,7 +14,7 @@ function Start-Sleep { param($Seconds,$Milliseconds) $script:delays.Add(@{Second
 function Get-CimInstance {
     param($ClassName,$Filter,$ErrorAction)
     $script:queries++
-    if ($script:alive -and ($script:case -ne 'Natural' -or $script:queries -eq 1)) { [pscustomobject]@{ProcessId=101;ExecutablePath=$exe;CommandLine='python.exe -m scripts.backup_job --daily'} }
+    if ($script:alive -and ($script:case -ne 'Natural' -or $script:queries -eq 1)) { [pscustomobject]@{ProcessId=101;ExecutablePath=$exe;CommandLine='python.exe -m scripts.backup_job --password abc --token sensitive-token --key secret-key -c hidden-code postgresql://hidden-uri'} }
     [pscustomobject]@{ProcessId=202;ExecutablePath=$other}
     [pscustomobject]@{ProcessId=303;ExecutablePath=$null}
 }
@@ -40,7 +40,7 @@ foreach ($script:case in @('Natural','Timeout','Reused')) {
     $seconds=0;if($script:case -eq 'Natural'){$seconds=30}
     Wait-MinhDucVenvPythonExit -Venv $venv -Seconds $seconds
     if (($script:case -eq 'Timeout' -and $script:stopped -ne 1) -or ($script:case -ne 'Timeout' -and $script:stopped -ne 0)) { throw ('Wrong process action: '+$script:case) }
-    if($script:case -eq 'Timeout' -and ($script:killLog -notmatch 'PID=101' -or $script:killLog -notmatch 'scripts.backup_job')){throw 'Missing killed backup PID/command line log'}
+    if($script:case -eq 'Timeout' -and ($script:killLog -notmatch 'PID=101' -or $script:killLog -notmatch 'scripts.backup_job' -or $script:killLog -match 'abc|sensitive-token|secret-key|hidden-code|hidden-uri|postgresql://')){throw 'Missing killed backup PID/command line log'}
 }
 foreach ($mode in @('Transient','Denied','Other')) {
     $script:attempts=0;$script:delays=New-Object 'System.Collections.Generic.List[object]';$threw=$false
@@ -71,9 +71,26 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     }
     function Stop-Service {param($Name,[switch]$Force,$ErrorAction) $script:serviceStatus='Stopped'}
     function Start-Service {param($Name,$ErrorAction) $script:serviceStatus='Running'}
-    function Get-MinhDucBackupTaskSnapshot { return @([pscustomobject]@{Name='fake-daily';Xml='original-daily'},[pscustomobject]@{Name='fake-catchup';Xml='original-catchup'}) }
-    function Disable-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:disabled++ }
-    function Restore-MinhDucBackupTasks {param($Snapshot) if($Snapshot.Count -ne 2){throw 'Lost original task snapshot'} }
+    $script:Names=@{BackupTask='fake-daily'}
+    foreach($helper in @('Get-MinhDucScheduledTask','Get-MinhDucBackupTaskSnapshot','Get-MinhDucBackupTaskSignature','Restore-MinhDucBackupTasks','Assert-MinhDucBackupTaskSnapshot')) {
+        $found=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $helper},$true)
+        Invoke-Expression $found.Extent.Text
+    }
+    function Get-ScheduledTask { [CmdletBinding()]param($TaskName,$TaskPath)
+        if($script:taskCase -eq 'Scheduler'){throw [UnauthorizedAccessException]::new('scheduler denied')}
+        if(-not $script:tasks.ContainsKey($TaskName)){
+            $PSCmdlet.ThrowTerminatingError([Management.Automation.ErrorRecord]::new([Exception]::new('missing'),'MSFT_ScheduledTask_NotFound',[Management.Automation.ErrorCategory]::ObjectNotFound,$TaskName))
+        }
+        return $script:tasks[$TaskName]
+    }
+    function Export-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) return $script:tasks[$TaskName].Xml}
+    function Disable-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:disabled++;$script:tasks[$TaskName].Settings.Enabled=$false }
+    function Register-ScheduledTask {param($TaskName,$TaskPath,$Xml,[switch]$Force,$ErrorAction)
+        $script:registrations++
+        if($script:taskCase -eq 'RegisterSecond' -and $script:registrations -eq 2){throw 'register second failed'}
+        $script:tasks[$TaskName]=[pscustomobject]@{State='Ready';Settings=[pscustomobject]@{Enabled=$true};Xml=$Xml}
+    }
+    function Unregister-ScheduledTask {param($TaskName,$TaskPath,$Confirm,$ErrorAction) $script:removals++;$script:tasks.Remove($TaskName)}
     function Wait-MinhDucVenvPythonExit {param($Venv)
         if($script:serviceStatus -ne 'Stopped'){throw 'Process wait before service stopped'}
         if($script:disabled -ne 2){throw 'Python wait before backup schedules disabled'}
@@ -91,8 +108,9 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     function Wait-Https {param($Origin,$Seconds) return $true}
     $root=Join-Path ([IO.Path]::GetTempPath()) ('robocopy-fake-'+[guid]::NewGuid().ToString('N'))
     try {
-        foreach($script:alwaysFail in @($false,$true)) {
-            $caseRoot=Join-Path $root ([string]$script:alwaysFail)
+        foreach($script:taskCase in @('Normal','CopyFailure','RegisterSecond','Scheduler','Missing')) {
+            $script:alwaysFail=$script:taskCase -eq 'CopyFailure'
+            $caseRoot=Join-Path $root $script:taskCase
             $OldCode=Join-Path $caseRoot 'old'
             $P=[pscustomobject]@{Code=(Join-Path $caseRoot 'live');Venv=(Join-Path $caseRoot '.venv');VenvPython=(Join-Path $caseRoot 'fake.exe');ClinicEnv='fake'}
             foreach($dir in @((Join-Path $OldCode 'app'),(Join-Path $P.Code 'app'))){New-Item -ItemType Directory -Force -Path $dir | Out-Null}
@@ -101,11 +119,25 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
             Set-Content $P.VenvPython 'never executed'
             $Names=@{Service='fake';ServiceAcct='fake'}
             $State=@{stopped=$true;code_replaced=$true;venv_moved=$false;migrated=$false;backup_tasks_changed=$false;rollback_errors=@()}
+            $script:tasks=@{}
+            foreach($taskName in @('fake-daily','fake-daily - Chay bu')){
+                $script:tasks[$taskName]=[pscustomobject]@{State='Ready';Settings=[pscustomobject]@{Enabled=$true};Xml=('<Task><Actions>'+ $taskName +'</Actions><Triggers/><Settings><Enabled>true</Enabled></Settings><Principals/></Task>')}
+            }
+            if($script:taskCase -eq 'Missing'){$script:tasks.Remove('fake-daily - Chay bu')}
+            $script:registrations=0;$script:removals=0
             $script:disabled=0;$script:copies=0;$script:pythonWaited=$false;$script:serviceStatus='Running'
             $script:delays=New-Object 'System.Collections.Generic.List[object]'
             $thrown=$false
             try {Invoke-QuayVe} catch {$thrown=$true}
             $expected=3;if($script:alwaysFail){$expected=5}
+            if($script:taskCase -in @('Scheduler','Missing')) {
+                if(-not $thrown -or $script:copies -ne 0){throw 'Scheduler error incorrectly accepted'}
+                continue
+            }
+            if($script:taskCase -eq 'RegisterSecond'){
+                if(-not $thrown -or -not $script:tasks.ContainsKey('fake-daily') -or $script:removals -ne 0){throw 'Second registration failure removed working task or reported recovery success'}
+                continue
+            }
             if($script:copies -ne $expected -or $thrown -ne $script:alwaysFail){throw 'Wrong robocopy recovery outcome'}
             if($script:delays.Count -ne ($expected-1)){throw 'Wrong robocopy delay count'}
             foreach($delay in $script:delays){if($delay.Seconds -ne 2){throw 'Wrong robocopy delay'}}
@@ -134,3 +166,9 @@ foreach($file in @('CaiDat.ps1','CapNhat.ps1')) {
 }
 if($copyCount -ne 4){throw ('Expected four robocopy calls, got '+$copyCount)}
 Write-Output 'PASS: four robocopy AST argument bounds; backup schedules disabled before Python wait; killed backup PID/command line logged'
+
+foreach($command in @('python.exe --password abc --token secret --key private -c hidden postgresql://hidden','python.exe -c "abc password"','python.exe -m scripts.backup_job --password=abc')) {
+    $safe=Get-MinhDucPythonScriptLabel $command
+    if($safe -match 'abc|secret|private|hidden|postgresql://'){throw 'Sensitive argument leaked'}
+}
+Write-Output 'PASS: missing/denied scheduler fail closed; second registration preserves first task and fails recovery; logs omit secrets'

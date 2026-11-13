@@ -75,6 +75,7 @@ function Invoke-QuayVe {
             if ($service.Status -ne 'Stopped') { throw 'Dịch vụ chưa dừng; không thay mã hoặc dữ liệu đang chạy.' }
             if (-not $State.backup_tasks_changed) {
                 $State.backup_task_snapshot = @(Get-MinhDucBackupTaskSnapshot)
+                if ($State.backup_task_snapshot.Count -ne 2) { throw 'Bản cài thiếu tác vụ sao lưu; không thể chụp lịch để quay về.' }
                 $State.backup_tasks_changed = $true
             }
             Suspend-MinhDucBackupTasks
@@ -143,6 +144,9 @@ function Invoke-QuayVe {
         if ($service.Status -ne 'Running') { throw 'Dịch vụ cũ chưa chạy.' }
         $origin = (Read-EnvFile -Path $P.ClinicEnv)['CLINIC_ORIGIN']
         if (-not (Wait-Https -Origin $origin -Seconds 120)) { throw 'HTTPS bản cũ không lên sau khi khởi động.' }
+    })
+    [void](Invoke-RecoveryStep 'Kiểm lịch sao lưu trước xác nhận quay về' {
+        Assert-MinhDucBackupTaskSnapshot -Snapshot $State.backup_task_snapshot -RequireBoth
     })
     $State.rollback_errors = @($failures.ToArray())
     if ($failures.Count -gt 0) { throw ('Quay về chưa đạt: ' + ($failures -join '; ')) }
