@@ -49,14 +49,14 @@ def assess(c, line):
     for index, substance in exact:
         limits = json.loads(substance['limits_json'])
         part = strengths[index] if len(strengths)==len(actives) else ''
-        dose = re.fullmatch(r'\s*(\d+(?:[.,]\d+)?)\s*(mg|g|mcg|µg)\s*',part,re.I)
+        dose = re.fullmatch(r'\s*(\d+(?:[.,]\d+)?)\s*(mg|g|mcg|[µμ]g)\s*',part,re.I)
         maximums = [Decimal(r['ham_luong_toi_da_mg_moi_don_vi_chia_lieu'].replace(',','.')) for r in limits if r['ham_luong_toi_da_mg_moi_don_vi_chia_lieu']]
         if not dose or not maximums:
             result['errors'].append('Đơn thuốc N/H chưa hỗ trợ: không xác định được hàm lượng mỗi đơn vị chia liều hoặc ngưỡng phối hợp')
             continue
         with localcontext() as context:
             context.prec = 600
-            amount = Decimal(dose[1].replace(',','.')) * {'mg':Decimal(1),'g':Decimal(1000),'mcg':Decimal('0.001'),'µg':Decimal('0.001')}[dose[2].lower()]
+            amount = Decimal(dose[1].replace(',','.')) * {'mg':Decimal(1),'g':Decimal(1000),'mcg':Decimal('0.001'),'μg':Decimal('0.001')}[dose[2].casefold()]
         if amount > min(maximums): result['errors'].append('Đơn thuốc N/H chưa hỗ trợ: vượt ngưỡng phối hợp')
     if not result['errors']: result['label']=LABEL
     return result
