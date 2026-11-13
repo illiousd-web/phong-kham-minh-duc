@@ -774,3 +774,14 @@ new MutationObserver(()=>{for(const f of document.querySelectorAll('[data-d0="li
 
 function s1ResultTime(x){return x.legacy_time_unknown?'Kết quả nhập trước nâng cấp – không rõ thời điểm gửi':showDay(x.created_at);}
 document.addEventListener('click',async event=>{const button=event.target.closest('[data-s1-result-history]');if(!button)return;event.preventDefault();event.stopImmediatePropagation();try{const result=await api('/orders/'+button.dataset.s1ResultHistory+'/result/versions');const dialog=document.createElement('dialog');dialog.innerHTML='<h2>Các phiên bản kết quả</h2>'+t(result.items.map(x=>`<tr><td>${x.version}</td><td>${esc(x.result_text)}</td><td>${esc(x.created_by_name||'—')}</td><td>${s1ResultTime(x)}</td><td>${x.snapshot?'Đã duyệt':'Chưa duyệt'}</td></tr>`),['Phiên bản','Nội dung','Người gửi','Thời điểm','Trạng thái'])+'<button type="button">Đóng</button>';dialog.querySelector('button').addEventListener('click',()=>dialog.remove());document.body.append(dialog);dialog.showModal()}catch(error){notify(error.message,true)}},true);
+
+// Presentation only: keep startup connections available to the workflow scripts.
+window.addEventListener('load',async()=>{
+ try{
+  for(const face of document.fonts){
+   if(face.family.replace(/["']/g,'')==='Be Vietnam Pro'){
+    try{await face.load()}catch(error){console.warn('Không tải được font nội bộ:',error.message)}
+   }
+  }
+ }finally{document.documentElement.classList.remove('fonts-pending')}
+},{once:true});

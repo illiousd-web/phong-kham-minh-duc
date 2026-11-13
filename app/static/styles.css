@@ -214,3 +214,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .catalog-results button small{color:var(--muted)}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.card,.stat{background:#fff}}
 @media print{.card,.stat{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}}
+
+/* Avoid a burst of ten font requests while deferred workflow scripts boot. */
+html.fonts-pending body{font-family:system-ui,sans-serif}
