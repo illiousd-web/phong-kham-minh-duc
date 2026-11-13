@@ -77,7 +77,7 @@ def check_m6(clients, ids, db, service):
             editable.update(controlled_type=controlled_type)
             assert a.put('/api/drugs/'+str(did),json=editable).status_code==200
             blocked=d.post(url+'/lock',json={'version':version});assert blocked.status_code==422 and 'Đơn N/H chưa hỗ trợ' in blocked.text
-        editable.update(controlled_type='',toxic=True)
+        editable.update(controlled_type='',toxic=True,dosage_form='Viên nén',route='Uống',unit='viên')
         assert a.put('/api/drugs/'+str(did),json=editable).status_code==200
         # Add an ordinary line first; toxic item must be printed first.
         body['items']=[{**line,'name':'Thuốc giả lập thường '+suffix,'ingredient':'Hoạt chất giả lập B','quantity':'3'},line]
@@ -107,8 +107,8 @@ def check_m6(clients, ids, db, service):
         with db(True) as c:
             original=c.execute('SELECT * FROM drugs WHERE id=?',(did,)).fetchone()
             target_name='Thuốc đích tương đương giả lập '+suffix
-            c.execute('INSERT INTO drugs(name,name_key,strength,strength_key,ingredient,ingredient_key) VALUES(?,?,?,?,?,?)',
-                      (target_name,fold(target_name),original['strength'],original['strength_key'],original['ingredient'],original['ingredient_key']))
+            c.execute('INSERT INTO drugs(name,name_key,strength,strength_key,ingredient,ingredient_key,dosage_form,route,unit) VALUES(?,?,?,?,?,?,?,?,?)',
+                      (target_name,fold(target_name),original['strength'],original['strength_key'],original['ingredient'],original['ingredient_key'],original['dosage_form'],original['route'],original['unit']))
             target=c.execute('SELECT last_insert_rowid()').fetchone()[0]
         assert a.post('/api/drugs/'+str(did)+'/merge',json={'keep_id':target}).status_code==200
         assert d.get(url+'/json').json()==value

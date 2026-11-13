@@ -131,10 +131,12 @@ def test_installed_s1_upgrade_refreshes_drug_guard():
 
 def test_catalog_merge_rolls_back_audit_and_catalog_together(visit,clients):
     import json
+    from app.m6 import fold
     with db(True) as c:
         drugs=[]
         for name in ('Nguồn gộp giả lập','Đích gộp giả lập'):
-            c.execute('INSERT INTO drugs(name,name_key,strength_key) VALUES(?,?,?)',(name,secrets.token_hex(8),''))
+            c.execute('INSERT INTO drugs(name,name_key,ingredient,ingredient_key,strength,strength_key,dosage_form,route,unit) VALUES(?,?,?,?,?,?,?,?,?)',
+                      (name,fold(name),'Hoạt chất giả lập A',fold('Hoạt chất giả lập A'),'10 mg',fold('10 mg'),'Viên nén','Uống','Viên'))
             drugs.append(c.execute('SELECT last_insert_rowid()').fetchone()[0])
         source,target=drugs
         c.execute("INSERT INTO clinical_prescriptions(visit_id,doctor_id,status,created_at) VALUES(?,?,'draft','synthetic')",(visit,IDS['doctor']))

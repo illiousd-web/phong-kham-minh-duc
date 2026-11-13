@@ -10,8 +10,8 @@ def check_catalog_only_merge(clients, ids, db, service):
     with db(True) as c:
         drugs=[]
         for i,name in enumerate(names):
-            c.execute('INSERT INTO drugs(name,name_key,strength_key,toxic,controlled_type,ingredient,ingredient_key) VALUES(?,?,?, ?,?,?,?)',
-                      (name,fold(name),'',int(i==0),'N' if i==0 else '', 'Hoạt chất giả lập', fold('Hoạt chất giả lập')))
+            c.execute('INSERT INTO drugs(name,name_key,strength,strength_key,toxic,controlled_type,ingredient,ingredient_key,dosage_form,route,unit) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                      (name,fold(name),'10 mg',fold('10 mg'),int(i==0),'N' if i==0 else '', 'Hoạt chất giả lập', fold('Hoạt chất giả lập'),'Viên nén','Uống','viên'))
             drugs.append(c.execute('SELECT last_insert_rowid()').fetchone()[0])
     a,b,z=drugs
     r,d,admin=clients['reception'],clients['doctor'],clients['admin']
@@ -19,7 +19,7 @@ def check_catalog_only_merge(clients, ids, db, service):
     assert p.status_code==201,p.text
     v=r.post('/api/visits',json={'patient_id':p.json()['id'],'doctor_id':ids['doctor'],'service_id':service})
     assert v.status_code==201,v.text
-    line={'name':names[0],'ingredient':'Hoạt chất giả lập','dose':'1','frequency':'1','days':'1','route':'Uống','unit':'viên'}
+    line={'name':names[0],'strength':'10 mg','ingredient':'Hoạt chất giả lập','dose':'1','frequency':'1','days':'1','route':'Uống','unit':'viên'}
     body={'visit_id':v.json()['id'],'items':[line]}
     locked=d.post('/api/clinical-prescriptions',json=body);draft=d.post('/api/clinical-prescriptions',json=body)
     assert locked.status_code==draft.status_code==201
