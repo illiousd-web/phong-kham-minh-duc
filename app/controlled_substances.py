@@ -41,8 +41,8 @@ def assess(c, line):
     if result['warnings'] and not (line.get('controlled_acknowledged') is True and len(line.get('controlled_reason','').strip())>=8):
         result['errors'].append('Tên gần chất kiểm soát; bác sĩ xác nhận đã rà soát và nhập lý do ít nhất 8 ký tự')
     if not exact: return result
-    if len(actives)==1:
-        result['errors'].append('Đơn thuốc N/H chưa hỗ trợ')
+    if all(rows for _, rows in found):
+        result['errors'].append('Đơn thuốc N/H chưa hỗ trợ: thuốc chỉ gồm chất kiểm soát')
         return result
     # Explicit strengths must correspond to ingredient order, separated by +.
     strengths = components(line.get('strength',''))

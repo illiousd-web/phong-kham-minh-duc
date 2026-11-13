@@ -80,3 +80,26 @@ def test_every_source_name_variant_is_matched_and_all_limits_preserved():
             for name in re.split('[;/]',source['ten_quoc_te']):
                 assert matches(c,name.strip()),name
         assert sum(len(json.loads(r['limits_json'])) for r in c.execute('SELECT limits_json FROM controlled_substances'))==62
+
+
+@pytest.mark.parametrize('ingredient,strength,blocked', [
+    ('Codeine + Ethylmorphine','10 mg + 10 mg',True),
+    ('Diazepam + Alprazolam','1 mg + 1 mg',True),
+    ('Codeine + Paracetamol','10 mg + 500 mg',False),
+])
+def test_only_controlled_components_never_receive_combination_label(prescription, ingredient, strength, blocked):
+    from app.main import db
+    from app.controlled_substances import assess, LABEL
+    d,vid,line=prescription
+    row={**line,'ingredient':ingredient,'strength':strength,'brand_name':'Phối hợp giả lập'}
+    with db() as c: result=assess(c,row)
+    message='Đơn thuốc N/H chưa hỗ trợ: thuốc chỉ gồm chất kiểm soát'
+    if blocked:
+        assert message in result['errors']
+        assert result['label']==''
+    else:
+        assert result['errors']==[] and result['label']==LABEL
+    rid=create(d,vid,row)
+    response=d.post(f'/api/clinical-prescriptions/{rid}/lock',json={'version':0})
+    assert response.status_code==(422 if blocked else 200),response.text
+    if blocked: assert message in response.text
