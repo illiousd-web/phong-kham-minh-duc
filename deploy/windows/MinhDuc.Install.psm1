@@ -558,10 +558,19 @@ function New-AppShortcut {
     return $link
 }
 
+function Get-MinhDucScheduledTask {
+    param([string]$Name)
+    try { return Get-ScheduledTask -TaskName $Name -TaskPath '\' -ErrorAction Stop }
+    catch {
+        if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { return $null }
+        throw
+    }
+}
+
 # Snapshot only the two backup tasks managed by this installer. No other task is touched.
 function Get-MinhDucBackupTaskSnapshot {
     foreach ($name in @($script:Names.BackupTask, ($script:Names.BackupTask + ' - Chay bu'))) {
-        $task = Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue
+        $task = Get-MinhDucScheduledTask -Name $name
         if ($task) { [pscustomobject]@{ Name = $name; Xml = (Export-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop) } }
     }
 }
@@ -573,17 +582,41 @@ function Get-MinhDucBackupTaskSignature([string]$Xml) {
 
 function Restore-MinhDucBackupTasks {
     param([AllowEmptyCollection()][object[]]$Snapshot = @())
-    foreach ($name in @($script:Names.BackupTask, ($script:Names.BackupTask + ' - Chay bu'))) {
-        if (Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction SilentlyContinue) {
-            Unregister-ScheduledTask -TaskName $name -TaskPath '\' -Confirm:$false -ErrorAction Stop
+    try {
+        foreach ($old in $Snapshot) {
+            Register-ScheduledTask -TaskName $old.Name -TaskPath '\' -Xml $old.Xml -Force -ErrorAction Stop | Out-Null
+        }
+    } catch {
+        $originalFailure = $_
+        foreach ($old in $Snapshot) {
+            try {
+                if (Get-MinhDucScheduledTask -Name $old.Name) {
+                    Enable-ScheduledTask -TaskName $old.Name -TaskPath '\' -ErrorAction Stop | Out-Null
+                }
+            } catch {
+                Write-Loi ('Không bật lại được lịch sao lưu ' + $old.Name + ': ' + $_.Exception.Message)
+            }
+        }
+        throw $originalFailure
+    }
+    # Never remove a working task before every saved task has registered.
+    foreach ($current in @(Get-MinhDucBackupTaskSnapshot)) {
+        if (@($Snapshot | ForEach-Object { $_.Name }) -notcontains $current.Name) {
+            Unregister-ScheduledTask -TaskName $current.Name -TaskPath '\' -Confirm:$false -ErrorAction Stop
         }
     }
-    foreach ($old in $Snapshot) {
-        Register-ScheduledTask -TaskName $old.Name -TaskPath '\' -Xml $old.Xml -Force -ErrorAction Stop | Out-Null
-    }
+    Assert-MinhDucBackupTaskSnapshot -Snapshot $Snapshot
+}
+
+function Assert-MinhDucBackupTaskSnapshot {
+    param([AllowEmptyCollection()][object[]]$Snapshot = @(), [switch]$RequireBoth)
     $restored = @(Get-MinhDucBackupTaskSnapshot)
+    # Historical switch name: require the complete ORIGINAL layout, including legacy daily-only.
+    if ($RequireBoth -and ($Snapshot.Count -notin @(1,2) -or @($Snapshot | Where-Object { $_.Name -eq $script:Names.BackupTask }).Count -ne 1)) { throw 'Snapshot lịch ban đầu không hợp lệ trước khi xác nhận quay về.' }
     if ($restored.Count -ne $Snapshot.Count) { throw 'Khôi phục lịch sao lưu thiếu tác vụ.' }
     foreach ($old in $Snapshot) {
+        $task = Get-MinhDucScheduledTask -Name $old.Name
+        if (-not $task -or [string]$task.State -ne 'Ready' -or -not $task.Settings.Enabled) { throw ('Lịch sao lưu chưa Ready/Enabled: ' + $old.Name) }
         $actual = @($restored | Where-Object { $_.Name -eq $old.Name })
         if ($actual.Count -ne 1 -or (Get-MinhDucBackupTaskSignature $actual[0].Xml) -ne (Get-MinhDucBackupTaskSignature $old.Xml)) {
             throw 'Khôi phục lịch sao lưu không khớp action/trigger/cài đặt cũ.'
@@ -650,6 +683,21 @@ function Set-MinhDucBackupTasks {
     }
 }
 
+function Suspend-MinhDucBackupTasks {
+    foreach ($task in @(Get-MinhDucBackupTaskSnapshot)) {
+        Disable-ScheduledTask -TaskName $task.Name -TaskPath '\' -ErrorAction Stop | Out-Null
+        Write-Thongtin ('Tạm dừng lịch sao lưu: ' + $task.Name)
+    }
+}
+
+function Get-MinhDucPythonScriptLabel {
+    param([string]$CommandLine)
+    $parts = @([regex]::Matches($CommandLine, '"[^"\r\n]*"|[^\s]+') | ForEach-Object { $_.Value.Trim('"') })
+    if ($parts.Count -gt 2 -and $parts[1] -eq '-m' -and $parts[2] -match '^[a-zA-Z_][a-zA-Z0-9_.]*$') { return ('module=' + $parts[2]) }
+    if ($parts.Count -gt 1 -and $parts[1] -match '^[a-zA-Z0-9_ .:/\\-]+\.py$') { return ('script=' + ($parts[1] -split '[/\\]')[-1]) }
+    return 'script/module=[đã che]'
+}
+
 function Test-MinhDucVenvPythonPath {
     param([string]$ExecutablePath, [string]$Venv)
     if (-not $ExecutablePath) { return $false }
@@ -675,6 +723,7 @@ function Wait-MinhDucVenvPythonExit {
         }
         # Recheck the current process object before stopping it (PID reuse).
         if (-not (Test-MinhDucVenvPythonPath -ExecutablePath $process.Path -Venv $Venv)) { continue }
+        Write-Luu ('Quá hạn chờ Python 30 giây; dừng tiến trình ' + $process.ProcessName + '; PID=' + $process.Id + '; ' + (Get-MinhDucPythonScriptLabel -CommandLine $candidate.CommandLine))
         Stop-Process -InputObject $process -Force -ErrorAction Stop
         if (-not $process.WaitForExit(5000)) { throw 'Python trong môi trường phòng khám chưa thoát; dừng phục hồi.' }
     }

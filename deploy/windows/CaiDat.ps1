@@ -157,7 +157,7 @@ function Step-ChepMa {
     Write-Buoc "Bước 4/${Tong}: Chép mã vào $($P.Code), tạo môi trường Python và cài thư viện"
     if ($SourceRoot.TrimEnd('\') -ne $P.Code.TrimEnd('\')) {
         New-Item -ItemType Directory -Force -Path $P.Code | Out-Null
-        $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($SourceRoot, $P.Code, '/MIR',
+        $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($SourceRoot, $P.Code, '/MIR', '/R:2', '/W:2',
             '/XD', '.venv', '.venv-cu', '.git', '__pycache__', 'test_evidence', 'data', 'backups', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
         if (-not $r.Ok) { Stop-CaiDat 'Không chép được mã nguồn.' $r.Output 11 }
         Write-Dat "Đã chép mã từ $SourceRoot."

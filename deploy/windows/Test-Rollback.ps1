@@ -8,6 +8,15 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSS
 if ($errors.Count) { throw 'Updater parse failed' }
 $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-QuayVe' }, $true)
 Invoke-Expression $definition.Extent.Text
+# Keep the production snapshot/signature validator; fake only the scheduler data.
+$moduleAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'MinhDuc.Install.psm1'),[ref]$tokens,[ref]$errors)
+foreach($name in @('Get-MinhDucScheduledTask','Get-MinhDucBackupTaskSnapshot','Get-MinhDucBackupTaskSignature','Assert-MinhDucBackupTaskSnapshot')) {
+    $fn=$moduleAst.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
+    Invoke-Expression $fn.Extent.Text
+}
+function Get-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) return $script:fakeTasks[$TaskName]}
+function Export-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) return $script:fakeTasks[$TaskName].Xml}
+function Suspend-MinhDucBackupTasks {foreach($task in $script:fakeTasks.Values){$task.Settings.Enabled=$false}}
 function Invoke-Native {
     param($FilePath, $Arguments, [switch]$Quiet, $OkCodes)
     if ($script:mode -eq 'Code') { return [pscustomobject]@{ Ok = $false; Code = 16; Output = @() } }
@@ -29,6 +38,7 @@ function Restore-MinhDucBackupTasks {
     param($Snapshot)
     $script:calls.Add('Tasks')
     if ($script:mode -in @('Tasks','DatabaseAndTasks')) { throw 'Lỗi lịch giả lập' }
+    foreach($task in $script:fakeTasks.Values){$task.Settings.Enabled=$true}
 }
 function Stop-Service { param($Name, [switch]$Force, $ErrorAction)
     if ($script:mode -eq 'Stop') { throw 'Không dừng được dịch vụ giả lập' }
@@ -57,7 +67,12 @@ try {
         Set-Content -LiteralPath (Join-Path $OldVenv 'Scripts\python.exe') -Value 'fake executable; never launched'
         if ($script:mode -eq 'Venv') { Remove-Item -LiteralPath $OldVenv -Recurse -Force }
         $State = @{ stopped = $true; code_replaced = $true; venv_moved = $true; migrated = $true; backup_tasks_changed = $true; backup_task_snapshot = @(); backup = 'fake'; fingerprint = 'baseline'; rollback_errors = @() }
-        $Names = @{ Service = 'S1-Fake'; ServiceAcct = 'S1-Fake' }
+        $Names = @{ Service = 'S1-Fake'; ServiceAcct = 'S1-Fake'; BackupTask = 'S1-Fake-Backup' }
+        $script:fakeTasks=@{}
+        foreach($taskName in @($Names.BackupTask,($Names.BackupTask+' - Chay bu'))){
+            $script:fakeTasks[$taskName]=[pscustomobject]@{State='Ready';Settings=[pscustomobject]@{Enabled=$true};Xml=('<Task><Actions>'+ $taskName +'</Actions><Triggers/><Settings><Enabled>true</Enabled></Settings><Principals/></Task>')}
+        }
+        $State.backup_task_snapshot=@(Get-MinhDucBackupTaskSnapshot)
         $script:fp = 'modified'
         $script:serviceStatus = 'Running'
         $script:calls = New-Object System.Collections.Generic.List[string]

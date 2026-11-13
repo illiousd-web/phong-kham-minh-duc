@@ -27,7 +27,7 @@ $OldCode = Join-Path $P.Updates ('ma-cu-' + $Stamp)
 $NewDir = Join-Path $P.Updates ('moi-' + $Stamp)
 $OldVenv = Join-Path $P.Code '.venv-cu'
 $ResultFile = Join-Path $P.Updates 'ket-qua-cap-nhat.json'
-$State = @{ rollback_errors = @(); backup_tasks_changed = $false; backup_task_snapshot = @(); stopped = $false; code_replaced = $false; venv_moved = $false; migrated = $false; backup = $null; fingerprint = $null }
+$State = @{ rollback_errors = @(); backup_tasks_captured = $false; backup_tasks_changed = $false; backup_task_snapshot = @(); stopped = $false; code_replaced = $false; venv_moved = $false; migrated = $false; backup = $null; fingerprint = $null }
 
 function Get-AppVersion([string]$Root) {
     $main = Join-Path $Root 'app\main.py'
@@ -47,6 +47,16 @@ function Get-Fingerprint {
 function Write-Result([string]$Status, [string]$Detail) {
     New-Item -ItemType Directory -Force -Path $P.Updates | Out-Null
     @{ status = $Status; detail = $Detail; time = (Get-Date).ToString('o'); backup = $State.backup; rollback_errors = $State.rollback_errors } | ConvertTo-Json | Set-Content -LiteralPath $ResultFile -Encoding UTF8
+}
+
+function Save-InitialBackupTaskSnapshot {
+    if ($State.backup_tasks_captured) { return }
+    $snapshot = @(Get-MinhDucBackupTaskSnapshot)
+    if ($snapshot.Count -notin @(1,2) -or @($snapshot | Where-Object { $_.Name -eq $Names.BackupTask }).Count -ne 1) {
+        throw 'Lịch sao lưu ban đầu không hợp lệ: cần lịch hằng ngày cũ hoặc đủ hai lịch mới.'
+    }
+    $State.backup_task_snapshot = $snapshot
+    $State.backup_tasks_captured = $true
 }
 
 function Invoke-QuayVe {
@@ -73,6 +83,9 @@ function Invoke-QuayVe {
             $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
             $service.Refresh()
             if ($service.Status -ne 'Stopped') { throw 'Dịch vụ chưa dừng; không thay mã hoặc dữ liệu đang chạy.' }
+            if (-not $State.backup_task_snapshot.Count) { throw 'Thiếu snapshot lịch ban đầu; không chụp lại trong quay về.' }
+            $State.backup_tasks_changed = $true
+            Suspend-MinhDucBackupTasks
             Wait-MinhDucVenvPythonExit -Venv $P.Venv
         }
     }
@@ -81,7 +94,7 @@ function Invoke-QuayVe {
         if ($State.code_replaced) {
             if (-not (Test-Path -LiteralPath $OldCode -PathType Container)) { throw 'Thiếu thư mục mã nguồn cũ.' }
             $r = Invoke-MinhDucAccessRetry -Action {
-            Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+                Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/R:0', '/W:0', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
             } -RetryResult { param($result) $result.Code -ge 8 }
             if (-not $r.Ok) { throw ('Chép trả mã nguồn thất bại, mã ' + $r.Code) }
             foreach ($file in Get-ChildItem -LiteralPath $OldCode -Recurse -File -Force -ErrorAction Stop) {
@@ -139,6 +152,9 @@ function Invoke-QuayVe {
         $origin = (Read-EnvFile -Path $P.ClinicEnv)['CLINIC_ORIGIN']
         if (-not (Wait-Https -Origin $origin -Seconds 120)) { throw 'HTTPS bản cũ không lên sau khi khởi động.' }
     })
+    [void](Invoke-RecoveryStep 'Kiểm lịch sao lưu trước xác nhận quay về' {
+        Assert-MinhDucBackupTaskSnapshot -Snapshot $State.backup_task_snapshot -RequireBoth
+    })
     $State.rollback_errors = @($failures.ToArray())
     if ($failures.Count -gt 0) { throw ('Quay về chưa đạt: ' + ($failures -join '; ')) }
 }
@@ -155,6 +171,7 @@ try {
     Set-SecureAcl -Path $P.Updates -Directory
     Start-Transcript -Path (Join-Path $P.Journal ('cap-nhat-' + $Stamp + '.log')) | Out-Null
     $transcript = $true
+    Save-InitialBackupTaskSnapshot
     Write-Host 'CẬP NHẬT PHẦN MỀM PHÒNG KHÁM ĐA KHOA MINH ĐỨC' -ForegroundColor Cyan
 
     Write-Buoc 'Bước 1/8: Chọn tệp cập nhật (.zip)'
@@ -204,13 +221,13 @@ try {
     Write-Dat 'Đã dừng dịch vụ (máy trạm tạm thời không vào được).'
 
     Write-Buoc 'Bước 5/8: Thay mã nguồn'
-    $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($P.Code, $OldCode, '/MIR', '/XD', '.venv', '.venv-cu', '__pycache__', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+    $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($P.Code, $OldCode, '/MIR', '/R:2', '/W:2', '/XD', '.venv', '.venv-cu', '__pycache__', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
     if (-not $r.Ok) { throw 'Không sao chép được mã cũ để dự phòng.' }
     if (Test-Path -LiteralPath $OldVenv) { Remove-Item -LiteralPath $OldVenv -Recurse -Force }
     Rename-Item -LiteralPath $P.Venv -NewName '.venv-cu'
     $State.venv_moved = $true
     $State.code_replaced = $true
-    $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($newRoot, $P.Code, '/MIR', '/XD', '.venv', '.venv-cu', '.git', '__pycache__', 'test_evidence', 'data', 'backups', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+    $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($newRoot, $P.Code, '/MIR', '/R:2', '/W:2', '/XD', '.venv', '.venv-cu', '.git', '__pycache__', 'test_evidence', 'data', 'backups', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
     if (-not $r.Ok) { throw 'Không chép được mã mới.' }
     Copy-D0PublicCatalogs -SourceRoot $newRoot -DestinationRoot $P.Code
     Write-Dat 'Đã thay mã nguồn (bản cũ được giữ để quay về).'
@@ -240,7 +257,7 @@ try {
     Write-Dat 'Cấu trúc dữ liệu đã cập nhật.'
     # Load the shared task installer from the NEW code, even on an old installation.
     Import-Module (Join-Path $P.Code 'deploy\windows\MinhDuc.Install.psm1') -Force -DisableNameChecking
-    $State.backup_task_snapshot = @(Get-MinhDucBackupTaskSnapshot)
+    # Keep the single pre-update snapshot; never replace it after task changes.
     $State.backup_tasks_changed = $true
     Set-MinhDucBackupTasks -Paths $P
     Write-Dat 'Đã chuyển và kiểm lịch sao lưu: 20:00 và chạy bù riêng.'
