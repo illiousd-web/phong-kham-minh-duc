@@ -27,7 +27,7 @@ $OldCode = Join-Path $P.Updates ('ma-cu-' + $Stamp)
 $NewDir = Join-Path $P.Updates ('moi-' + $Stamp)
 $OldVenv = Join-Path $P.Code '.venv-cu'
 $ResultFile = Join-Path $P.Updates 'ket-qua-cap-nhat.json'
-$State = @{ rollback_errors = @(); backup_tasks_changed = $false; backup_task_snapshot = @(); stopped = $false; code_replaced = $false; venv_moved = $false; migrated = $false; backup = $null; fingerprint = $null }
+$State = @{ rollback_errors = @(); backup_tasks_captured = $false; backup_tasks_changed = $false; backup_task_snapshot = @(); stopped = $false; code_replaced = $false; venv_moved = $false; migrated = $false; backup = $null; fingerprint = $null }
 
 function Get-AppVersion([string]$Root) {
     $main = Join-Path $Root 'app\main.py'
@@ -47,6 +47,16 @@ function Get-Fingerprint {
 function Write-Result([string]$Status, [string]$Detail) {
     New-Item -ItemType Directory -Force -Path $P.Updates | Out-Null
     @{ status = $Status; detail = $Detail; time = (Get-Date).ToString('o'); backup = $State.backup; rollback_errors = $State.rollback_errors } | ConvertTo-Json | Set-Content -LiteralPath $ResultFile -Encoding UTF8
+}
+
+function Save-InitialBackupTaskSnapshot {
+    if ($State.backup_tasks_captured) { return }
+    $snapshot = @(Get-MinhDucBackupTaskSnapshot)
+    if ($snapshot.Count -notin @(1,2) -or @($snapshot | Where-Object { $_.Name -eq $Names.BackupTask }).Count -ne 1) {
+        throw 'Lịch sao lưu ban đầu không hợp lệ: cần lịch hằng ngày cũ hoặc đủ hai lịch mới.'
+    }
+    $State.backup_task_snapshot = $snapshot
+    $State.backup_tasks_captured = $true
 }
 
 function Invoke-QuayVe {
@@ -73,11 +83,8 @@ function Invoke-QuayVe {
             $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
             $service.Refresh()
             if ($service.Status -ne 'Stopped') { throw 'Dịch vụ chưa dừng; không thay mã hoặc dữ liệu đang chạy.' }
-            if (-not $State.backup_tasks_changed) {
-                $State.backup_task_snapshot = @(Get-MinhDucBackupTaskSnapshot)
-                if ($State.backup_task_snapshot.Count -ne 2) { throw 'Bản cài thiếu tác vụ sao lưu; không thể chụp lịch để quay về.' }
-                $State.backup_tasks_changed = $true
-            }
+            if (-not $State.backup_task_snapshot.Count) { throw 'Thiếu snapshot lịch ban đầu; không chụp lại trong quay về.' }
+            $State.backup_tasks_changed = $true
             Suspend-MinhDucBackupTasks
             Wait-MinhDucVenvPythonExit -Venv $P.Venv
         }
@@ -164,6 +171,7 @@ try {
     Set-SecureAcl -Path $P.Updates -Directory
     Start-Transcript -Path (Join-Path $P.Journal ('cap-nhat-' + $Stamp + '.log')) | Out-Null
     $transcript = $true
+    Save-InitialBackupTaskSnapshot
     Write-Host 'CẬP NHẬT PHẦN MỀM PHÒNG KHÁM ĐA KHOA MINH ĐỨC' -ForegroundColor Cyan
 
     Write-Buoc 'Bước 1/8: Chọn tệp cập nhật (.zip)'
@@ -249,7 +257,7 @@ try {
     Write-Dat 'Cấu trúc dữ liệu đã cập nhật.'
     # Load the shared task installer from the NEW code, even on an old installation.
     Import-Module (Join-Path $P.Code 'deploy\windows\MinhDuc.Install.psm1') -Force -DisableNameChecking
-    $State.backup_task_snapshot = @(Get-MinhDucBackupTaskSnapshot)
+    # Keep the single pre-update snapshot; never replace it after task changes.
     $State.backup_tasks_changed = $true
     Set-MinhDucBackupTasks -Paths $P
     Write-Dat 'Đã chuyển và kiểm lịch sao lưu: 20:00 và chạy bù riêng.'

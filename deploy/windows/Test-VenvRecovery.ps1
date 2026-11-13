@@ -63,6 +63,8 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     if($errors.Count){throw 'Updater syntax error'}
     $definition=$updater.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-QuayVe'},$true)
     Invoke-Expression $definition.Extent.Text
+    $capture=$updater.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Save-InitialBackupTaskSnapshot'},$true)
+    Invoke-Expression $capture.Extent.Text
     function Get-Service {param($Name,$ErrorAction)
         $s=[pscustomobject]@{Status=$script:serviceStatus}
         $s | Add-Member ScriptMethod WaitForStatus {param($status,$timeout) if($script:serviceStatus -ne $status){throw 'Wrong service wait order'}}
@@ -83,7 +85,7 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
         }
         return $script:tasks[$TaskName]
     }
-    function Export-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) return $script:tasks[$TaskName].Xml}
+    function Export-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:snapshotReads++;return $script:tasks[$TaskName].Xml}
     function Disable-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:disabled++;$script:tasks[$TaskName].Settings.Enabled=$false }
     function Register-ScheduledTask {param($TaskName,$TaskPath,$Xml,[switch]$Force,$ErrorAction)
         $script:registrations++
@@ -108,7 +110,7 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     function Wait-Https {param($Origin,$Seconds) return $true}
     $root=Join-Path ([IO.Path]::GetTempPath()) ('robocopy-fake-'+[guid]::NewGuid().ToString('N'))
     try {
-        foreach($script:taskCase in @('Normal','CopyFailure','RegisterSecond','Scheduler','Missing')) {
+        foreach($script:taskCase in @('Normal','CopyFailure','RegisterSecond','Scheduler','NoDaily','Legacy')) {
             $script:alwaysFail=$script:taskCase -eq 'CopyFailure'
             $caseRoot=Join-Path $root $script:taskCase
             $OldCode=Join-Path $caseRoot 'old'
@@ -117,20 +119,33 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
             Set-Content (Join-Path $OldCode 'app/main.py') 'old synthetic'
             Set-Content (Join-Path $P.Code 'app/main.py') 'new synthetic'
             Set-Content $P.VenvPython 'never executed'
-            $Names=@{Service='fake';ServiceAcct='fake'}
-            $State=@{stopped=$true;code_replaced=$true;venv_moved=$false;migrated=$false;backup_tasks_changed=$false;rollback_errors=@()}
+            $Names=@{Service='fake';ServiceAcct='fake';BackupTask='fake-daily'}
+            $State=@{stopped=$true;code_replaced=$true;venv_moved=$false;migrated=$false;backup_tasks_changed=$false;backup_tasks_captured=$false;backup_task_snapshot=@();rollback_errors=@()}
             $script:tasks=@{}
             foreach($taskName in @('fake-daily','fake-daily - Chay bu')){
                 $script:tasks[$taskName]=[pscustomobject]@{State='Ready';Settings=[pscustomobject]@{Enabled=$true};Xml=('<Task><Actions>'+ $taskName +'</Actions><Triggers/><Settings><Enabled>true</Enabled></Settings><Principals/></Task>')}
             }
-            if($script:taskCase -eq 'Missing'){$script:tasks.Remove('fake-daily - Chay bu')}
+            if($script:taskCase -eq 'NoDaily'){$script:tasks.Remove('fake-daily')}
+            if($script:taskCase -eq 'Legacy'){$script:tasks.Remove('fake-daily - Chay bu')}
             $script:registrations=0;$script:removals=0
             $script:disabled=0;$script:copies=0;$script:pythonWaited=$false;$script:serviceStatus='Running'
             $script:delays=New-Object 'System.Collections.Generic.List[object]'
             $thrown=$false
-            try {Invoke-QuayVe} catch {$thrown=$true}
+            try {
+                $script:snapshotReads=0
+                Save-InitialBackupTaskSnapshot
+                $reads=$script:snapshotReads
+                $saved=@($State.backup_task_snapshot)
+                if($script:taskCase -eq 'Legacy'){
+                    $script:tasks['fake-daily - Chay bu']=[pscustomobject]@{State='Ready';Settings=[pscustomobject]@{Enabled=$true};Xml='<Task><Actions>new task from failed update</Actions><Triggers/><Settings/><Principals/></Task>'}
+                }
+                Save-InitialBackupTaskSnapshot
+                if($script:snapshotReads -ne $reads -or $State.backup_task_snapshot.Count -ne $saved.Count){throw 'Snapshot was recaptured'}
+                Invoke-QuayVe
+                if($script:taskCase -eq 'Legacy' -and $script:tasks.Count -ne 1){throw 'Legacy layout not restored exactly'}
+            } catch {$thrown=$true}
             $expected=3;if($script:alwaysFail){$expected=5}
-            if($script:taskCase -in @('Scheduler','Missing')) {
+            if($script:taskCase -in @('Scheduler','NoDaily')) {
                 if(-not $thrown -or $script:copies -ne 0){throw 'Scheduler error incorrectly accepted'}
                 continue
             }
@@ -172,3 +187,11 @@ foreach($command in @('python.exe --password abc --token secret --key private -c
     if($safe -match 'abc|secret|private|hidden|postgresql://'){throw 'Sensitive argument leaked'}
 }
 Write-Output 'PASS: missing/denied scheduler fail closed; second registration preserves first task and fails recovery; logs omit secrets'
+
+$tokens=$null;$errors=$null
+$flow=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'CapNhat.ps1'),[ref]$tokens,[ref]$errors)
+$assignments=$flow.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$State.backup_task_snapshot'},$true)
+if($assignments.Count -ne 1){throw 'More than one snapshot assignment in updater'}
+$text=$flow.Extent.Text
+if($text.IndexOf('    Save-InitialBackupTaskSnapshot') -gt $text.IndexOf("Write-Buoc 'Bước 1/8")){throw 'Snapshot captured too late'}
+Write-Output 'PASS: one pre-update snapshot capture, no recapture; exact legacy one-task and modern two-task restore'

@@ -597,7 +597,8 @@ function Restore-MinhDucBackupTasks {
 function Assert-MinhDucBackupTaskSnapshot {
     param([AllowEmptyCollection()][object[]]$Snapshot = @(), [switch]$RequireBoth)
     $restored = @(Get-MinhDucBackupTaskSnapshot)
-    if ($RequireBoth -and ($Snapshot.Count -ne 2 -or $restored.Count -ne 2)) { throw 'Phải có đủ hai tác vụ sao lưu trước khi xác nhận quay về.' }
+    # Historical switch name: require the complete ORIGINAL layout, including legacy daily-only.
+    if ($RequireBoth -and ($Snapshot.Count -notin @(1,2) -or @($Snapshot | Where-Object { $_.Name -eq $script:Names.BackupTask }).Count -ne 1)) { throw 'Snapshot lịch ban đầu không hợp lệ trước khi xác nhận quay về.' }
     if ($restored.Count -ne $Snapshot.Count) { throw 'Khôi phục lịch sao lưu thiếu tác vụ.' }
     foreach ($old in $Snapshot) {
         $task = Get-MinhDucScheduledTask -Name $old.Name
