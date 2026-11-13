@@ -128,7 +128,7 @@ function labelTables(root){root.querySelectorAll('table.table').forEach(table=>{
 // ---------- Khung trang, menu, số đếm hàng chờ ----------
 const shellHeader=document.querySelector('.shell-header');
 function stickyOffset(){return (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shell-h'))||0)+(document.querySelector('.doctor-sticky')?.getBoundingClientRect().height||0)+12;}
-let lastDoctorTab={visit:null,target:null};
+let lastDoctorTab={visit:null,target:null,at:-Infinity};
 function measureShellHeader(){
  const height=shellHeader&&!window.matchMedia('(max-width:900px)').matches?shellHeader.getBoundingClientRect().height:0;
  document.documentElement.style.setProperty('--shell-h',height+'px');
@@ -611,7 +611,7 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
  if(action==='close-abandoned'){showM0Dialog(`<h2>Đóng lượt bỏ dở #${id}</h2><p>Lượt có tiền thu, khoản phí hoặc thuốc đã cấp phải qua quy trình hủy/hoàn hiện có.</p><form class="fields" data-form="close-abandoned">${hidden('visit_id',id)}${selectField('Lý do bắt buộc','close_reason',[['Người bệnh bỏ về','Người bệnh bỏ về'],['Tạo nhầm','Tạo nhầm'],['Khác','Khác (phải ghi chú)']])}${textarea('Ghi chú','close_note')}<div class="wide"><button class="btn-danger">Xác nhận đóng lượt</button></div></form>`);return;}
  if(action==='doctor-tab'){
   const target=element.dataset.target,vid=sel.visit;
-  lastDoctorTab={visit:vid,target};
+  lastDoctorTab={visit:vid,target,at:performance.now()};
   document.querySelectorAll('.doctor-tabs button').forEach(b=>b.setAttribute('aria-current',String(b===element)));
   if(target==='history'){
    const rows=await api('/visits/'+vid+'/patient-history');
@@ -711,7 +711,11 @@ document.addEventListener('keydown',event=>{
  if(event.key==='F8'){const finish=document.querySelector('[data-action="complete-visit"]');if(finish&&!finish.disabled){event.preventDefault();finish.click()}}
 });
 
-window.addEventListener('scroll',()=>{if(active!=='doctor')return;const sections=[...document.querySelectorAll('.doctor-section')];const offset=stickyOffset();const top=offset+4;const atBottom=scrollY+innerHeight>=document.documentElement.scrollHeight-2;const clicked=lastDoctorTab.visit===sel.visit?sections.find(s=>s.id==='doctor-'+lastDoctorTab.target):null;const nearClicked=clicked&&Math.abs(clicked.getBoundingClientRect().top-offset)<=8;const current=atBottom?(clicked||sections[sections.length-1]):(nearClicked?clicked:(sections.filter(s=>s.getBoundingClientRect().top<=top).pop()||sections[0]));document.querySelectorAll('.doctor-tabs button').forEach(b=>b.setAttribute('aria-current',String(current?.id==='doctor-'+b.dataset.target)));},{passive:true});
+function clearDoctorTabPriority(){if(active==='doctor')lastDoctorTab={visit:null,target:null,at:-Infinity};}
+window.addEventListener('wheel',clearDoctorTabPriority,{passive:true});
+window.addEventListener('touchmove',clearDoctorTabPriority,{passive:true});
+window.addEventListener('keydown',event=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','PageUp','PageDown','Home','End',' ','Spacebar'].includes(event.key))clearDoctorTabPriority();},{passive:true});
+window.addEventListener('scroll',()=>{if(active!=='doctor')return;const sections=[...document.querySelectorAll('.doctor-section')];const offset=stickyOffset();const top=offset+4;const atBottom=scrollY+innerHeight>=document.documentElement.scrollHeight-2;const clicked=lastDoctorTab.visit===sel.visit&&performance.now()-lastDoctorTab.at<1000?sections.find(s=>s.id==='doctor-'+lastDoctorTab.target):null;const nearClicked=clicked&&Math.abs(clicked.getBoundingClientRect().top-offset)<=8;const current=atBottom?(clicked||sections[sections.length-1]):(nearClicked?clicked:(sections.filter(s=>s.getBoundingClientRect().top<=top).pop()||sections[0]));document.querySelectorAll('.doctor-tabs button').forEach(b=>b.setAttribute('aria-current',String(current?.id==='doctor-'+b.dataset.target)));},{passive:true});
 
 // Bounded asynchronous comboboxes: province is mandatory before searching communes.
 document.addEventListener('input',event=>{const input=event.target;if(!input.matches('[data-catalog-search]'))return;const box=input.closest('[data-catalog-combo]'),kind=box.dataset.catalogCombo;box.querySelector(`[name="${kind}"]`).value='';box.querySelector(`[name="${kind}_code"]`).value='';catalogRequests.set(input,(catalogRequests.get(input)||0)+1);clearTimeout(catalogTimers.get(input));catalogTimers.set(input,setTimeout(()=>lookupCatalog(input).catch(e=>notify(e.message,true)),180));});

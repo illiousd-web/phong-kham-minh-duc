@@ -262,5 +262,12 @@ def test_u1b_doctor_sticky_below_shell_after_scroll(https_server,clients,width,h
                 # Force the scroll handler again even when scrollIntoView was clamped.
                 page.evaluate("window.dispatchEvent(new Event('scroll'))")
                 expect(tab).to_have_attribute('aria-current','true')
+            page.locator('.doctor-tabs button[data-target="exam"]').click()
+            expect(page.locator('.doctor-tabs button[data-target="exam"]')).to_have_attribute('aria-current','true')
+            page.wait_for_timeout(1200)  # Explicitly exercise expiry of the one-second click priority.
+            page.mouse.move(width-4,height-10)
+            page.mouse.wheel(0,100000)
+            expect(page.locator('.doctor-tabs button[data-target="payment"]')).to_have_attribute('aria-current','true')
+            assert page.evaluate('scrollY+innerHeight>=document.documentElement.scrollHeight-2')
 
         finally:browser.close()
