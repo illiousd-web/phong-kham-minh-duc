@@ -101,11 +101,25 @@ def fingerprint(url):
                             JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='public' ORDER BY 1""").fetchall()
         idx = c.execute("SELECT indexname FROM pg_indexes WHERE schemaname='public' ORDER BY 1").fetchall()
         trg = c.execute("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal ORDER BY 1").fetchall()
+        # Functions and ACLs can change without a new table/version marker.
+        # A failed definer/permission upgrade must restore the old database too.
+        functions = c.execute("""SELECT p.oid::regprocedure::text,pg_get_functiondef(p.oid),
+                                       pg_get_userbyid(p.proowner),p.proacl::text
+                                FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                                WHERE n.nspname='public' AND p.prokind IN ('f','p') ORDER BY 1""").fetchall()
+        table_acl = c.execute("""SELECT r.relname,pg_get_userbyid(r.relowner),r.relacl::text
+                                FROM pg_class r JOIN pg_namespace n ON n.oid=r.relnamespace
+                                WHERE n.nspname='public' ORDER BY 1""").fetchall()
+        column_acl = c.execute("""SELECT r.relname,a.attname,a.attacl::text
+                                 FROM pg_attribute a JOIN pg_class r ON r.oid=a.attrelid
+                                 JOIN pg_namespace n ON n.oid=r.relnamespace
+                                 WHERE n.nspname='public' AND a.attnum>0 AND NOT a.attisdropped
+                                   AND a.attacl IS NOT NULL ORDER BY 1,2""").fetchall()
         try:
             versions = c.execute('SELECT version FROM schema_migrations ORDER BY 1').fetchall()
         except psycopg.errors.UndefinedTable:
             versions = []
-    digest = hashlib.sha256(json.dumps([cols, cons, idx, trg, versions], default=str).encode()).hexdigest()
+    digest = hashlib.sha256(json.dumps([cols, cons, idx, trg, versions, functions, table_acl, column_acl], default=str).encode()).hexdigest()
     return {'sha256': digest, 'versions': [v[0] for v in versions]}
 
 

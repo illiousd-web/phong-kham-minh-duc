@@ -37,7 +37,18 @@ function authHeader(){
 }
 async function api(path,{method='GET',body=null,isFile=false}={}){
  const options={method,headers:authHeader()};if(body!==null){if(isFile){options.body=body;}else{options.headers['Content-Type']='application/json';options.body=JSON.stringify(body)}}
- const r=await fetch('/api'+path,options);let payload=await r.json().catch(()=>({detail:'Máy chủ không trả được dữ liệu'}));if(!r.ok){if(r.status===401){auth=null;sessionStorage.removeItem('md_token');renderLogin()}throw new Error(typeof payload.detail==='string'?payload.detail:JSON.stringify(payload.detail))}return payload;
+ const canRetry=!isFile&&!['GET','HEAD'].includes(method.toUpperCase())&&typeof body?.idempotency_key==='string'&&body.idempotency_key.length>0;
+ for(let attempt=0;attempt<2;attempt++){
+  const r=await fetch('/api'+path,options);
+  const payload=await r.json().catch(()=>({detail:'Máy chủ không trả được dữ liệu'}));
+  if(r.status===503&&canRetry&&attempt===0){
+   const after=r.headers.get('Retry-After');
+   const seconds=after===null?NaN:(/^\d+(?:\.\d+)?$/.test(after)?Number(after):(Date.parse(after)-Date.now())/1000);
+   if(Number.isFinite(seconds)){await new Promise(resolve=>setTimeout(resolve,Math.max(0,seconds)*1000));continue;}
+  }
+  if(!r.ok){if(r.status===401){auth=null;sessionStorage.removeItem('md_token');renderLogin()}throw new Error(typeof payload.detail==='string'?payload.detail:JSON.stringify(payload.detail))}
+  return payload;
+ }
 }
 function field(name,id,type='text',placeholder='',required=false){return `<div class="field"><label for="${esc(id)}">${esc(name)}</label><input id="${esc(id)}" name="${esc(id)}" type="${esc(type)}" placeholder="${esc(placeholder)}" ${required?'required':''}></div>`}
 function selectField(name,id,options){return `<div class="field"><label for="${esc(id)}">${esc(name)}</label><select id="${esc(id)}" name="${esc(id)}">${options.map(([v,t])=>`<option value="${esc(v)}">${esc(t)}</option>`).join('')}</select></div>`}

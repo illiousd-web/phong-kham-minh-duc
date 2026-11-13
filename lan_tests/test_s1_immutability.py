@@ -11,6 +11,8 @@ def test_runtime_role_cannot_change_locked_evidence(visit):
     with db(True) as c:
         c.execute("INSERT INTO drugs(name,name_key,strength_key) VALUES(?,?,?)", ('Giả lập bất biến', secrets.token_hex(8), ''))
         did = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO drugs(name,name_key,strength_key) VALUES(?,?,?)", ('Đích gộp giả lập', secrets.token_hex(8), ''))
+        other_did = c.execute('SELECT last_insert_rowid()').fetchone()[0]
         c.execute("INSERT INTO clinical_prescriptions(visit_id,doctor_id,status,snapshot,created_at) VALUES(?,?,'draft',NULL,'synthetic')", (visit, IDS['doctor']))
         rid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
         c.execute("INSERT INTO clinical_prescription_items(prescription_id,drug_id,position,content) VALUES(?,?,1,'{}')", (rid,did))
@@ -32,6 +34,19 @@ def test_runtime_role_cannot_change_locked_evidence(visit):
             grants = (root/'deploy/postgresql-roles.sql').read_text().replace('clinic_app',role).replace('DATABASE minhduc','DATABASE '+c.info.dbname)
             c.execute(grants)
             c.execute(sql.SQL('SET ROLE {}').format(sql.Identifier(role)))
+            with pytest.raises(psycopg.Error):
+                c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did, rid))
+            for merge_from, merge_to in ((other_did, other_did), (did, did), (did, other_did)):
+                with pytest.raises(psycopg.Error), c.transaction():
+                    c.execute("SELECT set_config('clinic.merge_from', %s, true), set_config('clinic.merge_to', %s, true)", (str(merge_from), str(merge_to)))
+                    c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did, rid))
+            assert not c.execute("SELECT has_any_column_privilege(current_user, 'clinical_prescription_items', 'UPDATE')").fetchone()[0]
+            # Even a caller-created legacy context gives no exception.
+            c.execute('CREATE TEMP TABLE s1_merge_context(source_id integer,target_id integer)')
+            c.execute('INSERT INTO s1_merge_context VALUES(%s,%s)', (did,other_did))
+            with pytest.raises(psycopg.errors.InsufficientPrivilege), c.transaction():
+                c.execute('UPDATE clinical_prescription_items SET drug_id=%s WHERE prescription_id=%s', (other_did,rid))
+            c.execute('DROP TABLE s1_merge_context')
             for statement in ("UPDATE clinical_prescriptions SET snapshot='tampered' WHERE id=%s", "DELETE FROM clinical_prescription_items WHERE prescription_id=%s", "DELETE FROM clinical_prescriptions WHERE id=%s"):
                 with pytest.raises(psycopg.Error):
                     c.execute(statement,(rid,))
@@ -47,7 +62,7 @@ def test_runtime_role_cannot_change_locked_evidence(visit):
             c.execute(sql.SQL('DROP ROLE {}').format(sql.Identifier(role)))
 
 
-@pytest.mark.parametrize('module,function', [('tests.m6_followup_cases','check_followup'), ('tests.m5_cases','check_m5')])
+@pytest.mark.parametrize('module,function', [('tests.m6_followup_cases','check_followup'), ('tests.m6_cases','check_m6'), ('tests.m5_cases','check_m5')])
 def test_runtime_role_allows_supported_api_lifecycles(clients, monkeypatch, module, function):
     from contextlib import contextmanager
     import importlib
@@ -66,7 +81,12 @@ def test_runtime_role_allows_supported_api_lifecycles(clients, monkeypatch, modu
                 yield c
     try:
         monkeypatch.setattr(database, 'pool', lambda: RuntimePool())
+        with db() as c:
+            before=c.execute("SELECT count(*) FROM audit_log WHERE event='drug_merged'").fetchone()[0]
         getattr(importlib.import_module(module),function)(clients,IDS,db,SERVICE)
+        if function=='check_m6':
+            with db() as c:
+                assert c.execute("SELECT count(*) FROM audit_log WHERE event='drug_merged'").fetchone()[0]==before+1
     finally:
         with psycopg.connect(URL,autocommit=True) as c:
             c.execute(sql.SQL('DROP OWNED BY {}').format(sql.Identifier(role)))
@@ -94,3 +114,55 @@ def test_c5_profile_upgrade_installs_snapshot_guards():
             assert {'s1_prescription_immutable','s1_prescription_items_immutable','s1_lab_immutable','s1_lab_results_immutable','s1_outbox_immutable'}.issubset({r['tgname'] for r in rows})
     finally:
         with psycopg.connect(SOURCE,autocommit=True) as c:c.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name)))
+
+
+def test_installed_s1_upgrade_refreshes_drug_guard():
+    from app.s1_migration import migrate_s1
+    with db(True) as c:
+        assert c.execute('SELECT 1 FROM schema_migrations WHERE version=12').fetchone()
+        # Simulate the older installed function, then run the owner upgrade again.
+        c.connection.execute("CREATE OR REPLACE FUNCTION s1_prescription_item_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$")
+        migrate_s1(c)
+        source = c.execute("SELECT pg_get_functiondef('s1_prescription_item_guard()'::regprocedure)").fetchone()[0]
+        assert 'clinic.merge_from' not in source and 'clinic.merge_to' not in source
+        assert 'current_user' not in source and 's1_merge_context' not in source
+        assert c.execute("SELECT to_regprocedure('public.clinic_merge_drug(integer,integer,integer,text)')").fetchone()[0] is None
+
+
+def test_catalog_merge_rolls_back_audit_and_catalog_together(visit,clients):
+    import json
+    from app.m6 import fold
+    with db(True) as c:
+        drugs=[]
+        for name in ('Nguồn gộp giả lập','Đích gộp giả lập'):
+            c.execute('INSERT INTO drugs(name,name_key,ingredient,ingredient_key,strength,strength_key,dosage_form,route,unit) VALUES(?,?,?,?,?,?,?,?,?)',
+                      (name,fold(name),'Hoạt chất giả lập A',fold('Hoạt chất giả lập A'),'10 mg',fold('10 mg'),'Viên nén','Uống','Viên'))
+            drugs.append(c.execute('SELECT last_insert_rowid()').fetchone()[0])
+        source,target=drugs
+        c.execute("INSERT INTO clinical_prescriptions(visit_id,doctor_id,status,created_at) VALUES(?,?,'draft','synthetic')",(visit,IDS['doctor']))
+        rx=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO clinical_prescription_items(prescription_id,drug_id,position,content) VALUES(?,?,1,'{}')",(rx,source))
+        frozen=json.dumps({'synthetic_only':True})
+        c.execute("UPDATE clinical_prescriptions SET status='locked',snapshot=? WHERE id=?",(frozen,rx))
+    with pytest.raises(psycopg.errors.CheckViolation), db(True) as c:
+        c.execute('UPDATE clinical_prescription_items SET content=content WHERE prescription_id=?',(rx,))
+    # Even the table owner cannot repoint a locked row.
+    with pytest.raises(psycopg.errors.CheckViolation), db(True) as c:
+        c.execute('UPDATE clinical_prescription_items SET drug_id=? WHERE prescription_id=?',(target,rx))
+    # Reject this HTTP action's audit insert: the entire catalog merge must roll back.
+    name='s1_reject_merge_'+secrets.token_hex(5)
+    with psycopg.connect(URL,autocommit=True) as c:
+        c.execute(sql.SQL("CREATE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit giả lập thất bại' USING ERRCODE='23514'; END $$").format(sql.Identifier(name)))
+        c.execute(sql.SQL("CREATE TRIGGER {} BEFORE INSERT ON audit_log FOR EACH ROW WHEN (NEW.event='drug_merged' AND NEW.object_id={}) EXECUTE FUNCTION {}()").format(sql.Identifier(name),sql.Literal(str(source)),sql.Identifier(name)))
+    try:
+        response=clients['admin'].post(f'/api/drugs/{source}/merge',json={'keep_id':target})
+        assert response.status_code==409,response.text
+    finally:
+        with psycopg.connect(URL,autocommit=True) as c:
+            c.execute(sql.SQL('DROP TRIGGER {} ON audit_log').format(sql.Identifier(name)))
+            c.execute(sql.SQL('DROP FUNCTION {}()').format(sql.Identifier(name)))
+    with db() as c:
+        assert c.execute('SELECT drug_id FROM clinical_prescription_items WHERE prescription_id=?',(rx,)).fetchone()[0]==source
+        assert c.execute('SELECT merged_into FROM drugs WHERE id=?',(source,)).fetchone()[0] is None
+        assert c.execute('SELECT snapshot FROM clinical_prescriptions WHERE id=?',(rx,)).fetchone()[0]==frozen
+        assert not c.execute("SELECT 1 FROM audit_log WHERE event='drug_merged' AND object_id=?",(str(source),)).fetchone()

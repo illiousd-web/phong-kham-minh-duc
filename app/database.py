@@ -1,7 +1,7 @@
 """One transaction boundary for demo SQLite and LAN PostgreSQL.
 
 LAN writes take a transaction-scoped advisory lock BEFORE any business reads.
-This deliberately serializes clinic writes across workers (including backup),
+This deliberately serializes clinic writes across workers (excluding catalog imports),
 while readers use MVCC. Never bypass this boundary in application write paths.
 """
 from contextlib import contextmanager
@@ -15,6 +15,8 @@ from .resources import LIMITS
 ROOT = Path(__file__).resolve().parents[1]
 DB = Path(os.getenv('CLINIC_DB_PATH', str(ROOT / 'data' / 'minh_duc_demo.sqlite3'))).resolve()
 LOCK_ID = 764209431
+BACKUP_LOCK_ID = 764209432
+CATALOG_LOCK_ID = 764209433
 ID_TABLES=set(re.findall(r'CREATE TABLE IF NOT EXISTS (\w+)\s*\(\s*id\b',
     (ROOT/'schema.postgresql.sql').read_text(encoding='utf-8')+(ROOT/'migrations/003_v050.sql').read_text(encoding='utf-8')+(ROOT/'migrations/004_manual_prices.sql').read_text(encoding='utf-8'),re.I))
 ID_TABLES.update(('catalog_imports','tech_catalog_pl02','order_result_versions'))
@@ -91,14 +93,22 @@ def db(write=False):
         with pool().connection() as con:
             with con.transaction():
                 con.execute("SET LOCAL statement_timeout = '30s'")
-                con.execute("SET LOCAL lock_timeout = '250ms'")
                 if write and not operational:
-                    import psycopg
-                    try:
-                        con.execute('SELECT pg_advisory_xact_lock(%s)', (LOCK_ID,))
-                    except psycopg.errors.LockNotAvailable:
-                        from fastapi import HTTPException
-                        raise HTTPException(503, 'Đang sao lưu hoặc có thao tác ghi khác, thử lại sau 1 giây', headers={'Retry-After': '1'})
+                    from fastapi import HTTPException
+                    import time
+                    # Hold a shared backup gate throughout the transaction, including
+                    # commit and attachment writes. Backup takes the exclusive gate.
+                    if not con.execute('SELECT pg_try_advisory_xact_lock_shared(%s)', (BACKUP_LOCK_ID,)).fetchone()[0]:
+                        raise HTTPException(503, 'Đang sao lưu, thử lại sau 1 giây', headers={'Retry-After': '1'})
+                    # Catalog changes are atomic under MVCC, independent of clinical
+                    # writes. They still share the backup gate and their own writer lock.
+                    key = CATALOG_LOCK_ID if write == 'catalog' else LOCK_ID
+                    deadline = time.monotonic() + 5
+                    while not con.execute('SELECT pg_try_advisory_xact_lock(%s)', (key,)).fetchone()[0]:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise HTTPException(503, 'Hệ thống đang bận, vui lòng thử lại', headers={'Retry-After': '1'})
+                        time.sleep(min(.025, remaining))
                 elif operational:
                     from .storage import release_access_reserve
                     release_access_reserve(DATA)
@@ -131,6 +141,7 @@ def migrate():
         return
     import psycopg
     with psycopg.connect(DATABASE_URL,row_factory=record_factory) as con:
+        con.execute('SELECT pg_advisory_xact_lock(%s)', (BACKUP_LOCK_ID,))
         con.execute('SELECT pg_advisory_xact_lock(%s)', (LOCK_ID,))
         con.execute((ROOT / 'schema.postgresql.sql').read_text(encoding='utf-8'))
         from .migrations import migrate_v050

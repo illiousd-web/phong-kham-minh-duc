@@ -405,17 +405,8 @@ function Step-SaoLuu {
         Write-Luu 'Chỉ sao lưu trên máy chủ (giữ 14 bản), không dùng ổ ngoài. Máy chủ hỏng hoặc bị mất thì mất toàn bộ dữ liệu.'
     }
     $alert = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) $Names.AlertFile
-    $jobArgs = @('-m', 'scripts.with_env', ('"' + $P.ClinicEnv + '"'), 'scripts.backup_job', '--scheduled', '--key', ('"' + $P.BackupKey + '"'),
-        '--directory', ('"' + $P.Backups + '"'), '--state', ('"' + $P.BackupState + '"'),
-        '--external-config', ('"' + $P.ExternalCfg + '"'), '--alert-file', ('"' + $alert + '"')) -join ' '
-    $action = New-ScheduledTaskAction -Execute $P.VenvPython -Argument $jobArgs -WorkingDirectory $P.Code
-    $trigger = New-ScheduledTaskTrigger -Daily -At '20:00'
-    $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 3) `
-        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $Names.BackupTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings `
-        -Description 'Sao luu ma hoa; kiem tra ban moi truoc khi xoa ban cu; giu 14 ban tren may chu (toi thieu 3 ban da kiem); canh bao chung chi duoi 60 ngay.' -Force | Out-Null
-    Write-Dat 'Đã đặt lịch sao lưu 20:00 hằng ngày (chạy bù nếu máy tắt lúc 20:00).'
+    Set-MinhDucBackupTasks -Paths $P
+    Write-Dat 'Đã đặt lịch 20:00 luôn chạy và tác vụ chạy bù riêng sau khi khởi động.'
     Write-Thongtin 'Chạy sao lưu thử ngay bây giờ...'
     $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 3) -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_job', '--key', $P.BackupKey,
         '--directory', $P.Backups, '--state', $P.BackupState, '--external-config', $P.ExternalCfg, '--alert-file', $alert)

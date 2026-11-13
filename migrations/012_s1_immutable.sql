@@ -1,4 +1,6 @@
--- Owner-only upgrade. Do not grant ownership or trigger/function DDL to runtime.
+-- Owner-only upgrade. No privileged merge function or locked-item exception remains.
+DROP FUNCTION IF EXISTS public.clinic_merge_drug(integer,integer,integer,text);
+DROP TABLE IF EXISTS pg_temp.s1_merge_context;
 CREATE OR REPLACE FUNCTION s1_prescription_guard() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $$
 BEGIN
   IF OLD.snapshot IS NOT NULL OR OLD.status IN ('locked','cancelled') THEN
@@ -29,13 +31,7 @@ BEGIN
   END IF;
   SELECT status <> 'draft' OR snapshot IS NOT NULL INTO frozen FROM clinical_prescriptions WHERE id=OLD.prescription_id FOR SHARE;
   IF frozen THEN
-    -- Drug merges may repoint the catalog FK; printed content stays frozen.
-    IF TG_OP='DELETE' THEN
-      RAISE EXCEPTION 'Dòng đơn đã khóa không được xóa' USING ERRCODE='23514';
-    END IF;
-    IF (to_jsonb(NEW)-'drug_id') IS DISTINCT FROM (to_jsonb(OLD)-'drug_id') THEN
-      RAISE EXCEPTION 'Nội dung dòng đơn đã khóa bất biến' USING ERRCODE='23514';
-    END IF;
+    RAISE EXCEPTION 'Dòng đơn không còn nháp: cấm mọi cập nhật hoặc xóa' USING ERRCODE='23514';
   END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;

@@ -187,7 +187,7 @@ def install_d0(app,db,principal,require,audit,visit_access,now):
         except ValueError as exc:raise HTTPException(422,str(exc)) from None
         mark=fingerprint(raw,kind,meta,mp,header_row)
         if errors:raise HTTPException(422,{'errors':errors})
-        with db(True) as c:
+        with db('access' if preview else 'catalog') as c:
             if preview:
                 audit(c,u,'standard_catalog_previewed','catalog',None,mark)
                 from .d0_sources import KEYS,HEADERS

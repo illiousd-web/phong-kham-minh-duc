@@ -23,6 +23,7 @@ if errorlevel 1 (
   call set "RC=%%errorlevel%%"
   call echo Ma ket qua: %%RC%% ^(0 = thanh cong^).
   echo %* | findstr /i /c:"-KhongHoi" >nul || pause
-  call cmd /c exit %%RC%%
-  exit /b
+  rem Expand the saved result at execution time; CALL may reset errorlevel.
+  setlocal EnableDelayedExpansion
+  exit /b !RC!
 )

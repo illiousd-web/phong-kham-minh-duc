@@ -1,8 +1,8 @@
 """S1 regressions: MVCC reads remain available under storage/backup pressure."""
 import time
-import psycopg
 from app import storage
-from app.database import LOCK_ID, db
+from app.database import db
+from scripts.backup_lan import maintenance_lock
 from lan_tests.conftest import URL, client_for
 
 
@@ -22,8 +22,7 @@ def test_full_disk_reads_login_and_writes(clients, visit, monkeypatch):
 
 
 def test_backup_lock_does_not_block_reads(clients):
-    with psycopg.connect(URL) as holder:
-        holder.execute('SELECT pg_advisory_xact_lock(%s)', (LOCK_ID,))
+    with maintenance_lock(URL):
         start = time.monotonic()
         response = clients['reception'].get('/api/patients')
         assert response.status_code == 200, response.text

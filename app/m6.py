@@ -22,6 +22,21 @@ def fold(value):
     return ' '.join(''.join(c for c in unicodedata.normalize('NFD', value.lower().replace('đ', 'd')) if not unicodedata.combining(c)).split())
 
 
+def norm_strength(value):
+    return ''.join(fold(value).split()).replace(',', '.')
+
+
+def drug_equivalence_error(a, b):
+    for field, label in [('ingredient', 'hoạt chất'), ('strength', 'hàm lượng'),
+                         ('dosage_form', 'dạng bào chế'), ('route', 'đường dùng'), ('unit', 'đơn vị tính')]:
+        left, right = (norm_strength(a[field]), norm_strength(b[field])) if field == 'strength' else (fold(a[field]), fold(b[field]))
+        if field != 'strength':
+            if not left: return f'Không thể gộp: thuốc nguồn chưa có {label}, cần rà soát trước'
+            if not right: return f'Không thể gộp: thuốc đích chưa có {label}, cần rà soát trước'
+        if left != right: return f'Không thể gộp: khác {label}'
+    return None
+
+
 def components(value):
     return [v.strip() for v in value.split('+') if v.strip()]
 
@@ -121,6 +136,7 @@ class Cancel(Version):
 
 class Merge(BaseModel):
     keep_id: int = Field(gt=0)
+    reason: str = Field(default='Gộp danh mục thuốc trùng', min_length=8, max_length=500)
 
 
 class ClinicSettings(BaseModel):
@@ -178,6 +194,32 @@ def replacement_parent(c, rx, exclude_id=0):
     return old
 
 
+def current_drug(c, drug_id):
+    """Resolve catalog aliases only; never rewrite historical prescription rows."""
+    seen = set()
+    while drug_id is not None:
+        if drug_id in seen:
+            raise HTTPException(422, 'Danh mục thuốc có vòng lặp gộp; cần quản trị rà soát')
+        seen.add(drug_id)
+        row = c.execute('SELECT * FROM drugs WHERE id=?', (drug_id,)).fetchone()
+        if not row:
+            raise HTTPException(422, 'Không tìm thấy thuốc trong chuỗi gộp')
+        row = dict(row)
+        if row['merged_into'] is None:
+            return row
+        drug_id = row['merged_into']
+    raise HTTPException(422, 'Chuỗi gộp thuốc không hợp lệ')
+
+
+def merged_line_error(line, drug, pos):
+    if (fold(line['ingredient']) != fold(drug['ingredient']) or
+            norm_strength(line['strength']) != norm_strength(drug['strength']) or
+            (line.get('route') and fold(line['route']) != fold(drug['route']))):
+        label = ' '.join(v for v in (drug['name'], drug['strength']) if v)
+        return f'Dòng {pos}: thuốc đã gộp sang {label}, chọn lại từ danh mục'
+    return None
+
+
 def save_lines(c, rid, items, u, audit):
     c.execute('DELETE FROM clinical_prescription_items WHERE prescription_id=?', (rid,))
     warnings = []; seen = set(); allergy_warnings = []
@@ -194,7 +236,15 @@ def save_lines(c, rid, items, u, audit):
             warnings.append(f'Dòng {pos}: số lượng lệch trên 20% so với cách dùng')
         key, strength = fold(item.name), fold(item.strength)
         drug = c.execute('SELECT * FROM drugs WHERE name_key=? AND strength_key=?', (key, strength)).fetchone()
-        if drug and (drug['review_status'] == 'inactive' or drug['merged_into']):
+        was_merged = False
+        if drug:
+            original_id = drug['id']
+            drug = current_drug(c, original_id)
+            was_merged = drug['id'] != original_id
+            if was_merged:
+                message = merged_line_error(value, drug, pos)
+                if message: raise HTTPException(422, message)
+        if drug and drug['review_status'] == 'inactive':
             raise HTTPException(422, f'Dòng {pos}: thuốc đã ngừng dùng, chọn lại từ danh mục')
         if not drug:
             c.execute('INSERT INTO drugs(name,name_key,strength,strength_key,ingredient,ingredient_key,brand_name,brand_key,unit,route) VALUES(?,?,?,?,?,?,?,?,?,?)',
@@ -204,7 +254,7 @@ def save_lines(c, rid, items, u, audit):
             did = drug['id']
             # Suggestions are applied in the UI. Explicit row values, including
             # cleared use fields, are never silently filled back by the API.
-            if drug['review_status'] == 'unreviewed' and item.ingredient:
+            if not was_merged and drug['review_status'] == 'unreviewed' and item.ingredient:
                 c.execute('UPDATE drugs SET ingredient=?,ingredient_key=?,brand_name=?,brand_key=? WHERE id=?', (item.ingredient, fold(item.ingredient), item.brand_name or drug['brand_name'], fold(item.brand_name or drug['brand_name']), did))
                 if item.ingredient != drug['ingredient']:
                     audit(c, u, 'drug_updated', 'drug', did, dump({'fields': ['ingredient']}))
@@ -254,7 +304,10 @@ def lock_errors(c, rx, items, patient, visit, practitioner, clinic):
         if not line['quantity']: error('Cần nhập số lượng hoặc đủ số để tự tính', pos, 'quantity')
         if quantity_mismatch(line) and not flexible_unit(line) and not (line.get('quantity_acknowledged') is True and len(line.get('quantity_reason','').strip())>=8):
             error('Số lượng lệch trên 20% cách dùng; xác nhận Số lượng khác cách dùng và nhập lý do ít nhất 8 ký tự',pos,'quantity_reason')
-        drug = c.execute('SELECT * FROM drugs WHERE id=?', (line['drug_id'],)).fetchone()
+        drug = current_drug(c, line['drug_id'])
+        if drug['id'] != line['drug_id']:
+            message = merged_line_error(line, drug, pos)
+            if message: error(message, pos, 'name')
         from .controlled_substances import assess
         assessed=assess(c,line)
         for message in assessed['errors']: error(message,pos,'ingredient')
@@ -291,7 +344,7 @@ def payload(c, rx, code=None, locked_at=None):
     items = lines(c, rx['id']); clinic = settings(c)
     errors = lock_errors(c, rx, items, p, visit, practitioner, clinic)
     for item in items:
-        drug = c.execute('SELECT toxic FROM drugs WHERE id=?', (item['drug_id'],)).fetchone()
+        drug = current_drug(c, item['drug_id'])
         item['toxic'] = bool(drug['toxic'])
         from .controlled_substances import assess
         item['controlled_label']=assess(c,item)['label']
@@ -363,6 +416,7 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         require(u, 'doctor', 'admin')
         with db() as c:
             where = 'review_status=?' if status else "review_status<>'inactive'"
+            if status != 'inactive': where += ' AND merged_into IS NULL'
             args = [status] if status else []
             needle = '%'+fold(q[:180])+'%'
             if q:
@@ -390,13 +444,16 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         require(u, 'admin')
         with db(True) as c:
             source = c.execute('SELECT * FROM drugs WHERE id=?', (did,)).fetchone()
-            target = c.execute("SELECT * FROM drugs WHERE id=? AND review_status<>'inactive' AND merged_into IS NULL", (data.keep_id,)).fetchone()
-            if not source or not target or did == data.keep_id or source['merged_into']: raise HTTPException(422, 'Chọn hai mục đang dùng khác nhau')
-            # Content JSON and locked snapshots deliberately remain untouched.
-            c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?', (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], data.keep_id))
-            c.execute('UPDATE clinical_prescription_items SET drug_id=? WHERE drug_id=?', (data.keep_id, did))
-            c.execute("UPDATE drugs SET review_status='inactive',merged_into=? WHERE id=?", (data.keep_id, did))
-            audit(c, u, 'drug_merged', 'drug', did, dump({'keep_id': data.keep_id}))
+            target = current_drug(c, data.keep_id)
+            if not source or source['merged_into'] is not None or did == target['id'] or target['review_status'] == 'inactive':
+                raise HTTPException(422, 'Chọn hai mục đang dùng khác nhau; không tạo vòng gộp')
+            equivalence_error = drug_equivalence_error(source, target)
+            if equivalence_error: raise HTTPException(422, equivalence_error)
+            # Only the catalog changes. Every locked row keeps its original FK forever.
+            c.execute('UPDATE drugs SET toxic=?,controlled_type=? WHERE id=?',
+                      (int(bool(source['toxic'] or target['toxic'])), target['controlled_type'] or source['controlled_type'], target['id']))
+            c.execute("UPDATE drugs SET review_status='inactive',merged_into=? WHERE id=?", (target['id'], did))
+            audit(c, u, 'drug_merged', 'drug', did, dump({'keep_id': target['id'], 'reason': safe_reason(data.reason, {'document_number':'','citizen_id':''})}))
         return {'ok': True}
 
     @app.post('/api/clinical-prescriptions', status_code=201)
@@ -484,7 +541,12 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
                 if allergy_matches(patient['allergies'], item):
                     item['allergy_confirmed_by'] = u['id']; item['allergy_confirmed_at'] = stamp
                     content = {k: v for k, v in item.items() if k not in ('id','drug_id','toxic','display_name')}
-                    c.execute('UPDATE clinical_prescription_items SET content=? WHERE id=?', (dump(content), item['id']))
+                    # Still a draft: replace the row, preserving identity. Runtime
+                    # deliberately has no UPDATE privilege on any item column.
+                    row = c.execute('SELECT * FROM clinical_prescription_items WHERE id=?', (item['id'],)).fetchone()
+                    c.execute('DELETE FROM clinical_prescription_items WHERE id=?', (item['id'],))
+                    c.execute('INSERT INTO clinical_prescription_items(id,prescription_id,drug_id,position,content) VALUES(?,?,?,?,?)',
+                              (row['id'], row['prescription_id'], row['drug_id'], row['position'], dump(content)))
                     audit(c, u, 'clinical_rx_allergy_acknowledged', 'clinical_prescription', rid,
                           dump({'row': c.execute('SELECT position FROM clinical_prescription_items WHERE id=?', (item['id'],)).fetchone()[0], 'reason': safe_reason(item['allergy_reason'], patient)}), details_limit=3000)
             if parent:

@@ -77,7 +77,7 @@ def check_m6(clients, ids, db, service):
             editable.update(controlled_type=controlled_type)
             assert a.put('/api/drugs/'+str(did),json=editable).status_code==200
             blocked=d.post(url+'/lock',json={'version':version});assert blocked.status_code==422 and 'Đơn N/H chưa hỗ trợ' in blocked.text
-        editable.update(controlled_type='',toxic=True)
+        editable.update(controlled_type='',toxic=True,dosage_form='Viên nén',route='Uống',unit='viên')
         assert a.put('/api/drugs/'+str(did),json=editable).status_code==200
         # Add an ordinary line first; toxic item must be printed first.
         body['items']=[{**line,'name':'Thuốc giả lập thường '+suffix,'ingredient':'Hoạt chất giả lập B','quantity':'3','quantity_acknowledged':True,'quantity_reason':'Số lượng nhập tay giả lập'},line]
@@ -103,9 +103,13 @@ def check_m6(clients, ids, db, service):
             text=' '.join(text.split())
             for word in expected:assert word in text,(fmt,word,text)
             assert text.index(code)<text.index('Cơ sở giả lập')<text.index('Người giả lập M6')
-        # Merge changes only references; snapshot/JSON remains exactly identical.
-        with db() as c:
-            target=c.execute('SELECT drug_id FROM clinical_prescription_items WHERE prescription_id=? AND drug_id<>?',(rid,did)).fetchone()[0]
+        # Merge equivalent catalog entries only; snapshot/JSON stays identical.
+        with db(True) as c:
+            original=c.execute('SELECT * FROM drugs WHERE id=?',(did,)).fetchone()
+            target_name='Thuốc đích tương đương giả lập '+suffix
+            c.execute('INSERT INTO drugs(name,name_key,strength,strength_key,ingredient,ingredient_key,dosage_form,route,unit) VALUES(?,?,?,?,?,?,?,?,?)',
+                      (target_name,fold(target_name),original['strength'],original['strength_key'],original['ingredient'],original['ingredient_key'],original['dosage_form'],original['route'],original['unit']))
+            target=c.execute('SELECT last_insert_rowid()').fetchone()[0]
         assert a.post('/api/drugs/'+str(did)+'/merge',json={'keep_id':target}).status_code==200
         assert d.get(url+'/json').json()==value
         assert a.put('/api/prescription-settings',json={'clinic_facility_code':'ZZ002'}).status_code==200
