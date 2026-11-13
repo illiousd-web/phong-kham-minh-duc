@@ -251,7 +251,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
     @app.get('/api/visits/{vid}/care')
     def care(vid:int,u=Depends(principal)):
         require(u,'doctor','nurse')
-        with db(True) as c:
+        with db('access') as c:
             nurse_scope(c,u,vid);audit(c,u,'care_viewed','visit',vid)
             return {'notes':[dict(x) for x in c.execute('SELECT n.*,u.full_name AS nurse_name FROM nursing_notes n JOIN users u ON u.id=n.nurse_id WHERE n.visit_id=? ORDER BY n.id',(vid,))],
                     'tasks':[dict(x) for x in c.execute('SELECT t.*,e.content AS execution_content,e.created_at AS executed_at FROM nursing_tasks t LEFT JOIN nursing_executions e ON e.task_id=t.id WHERE t.visit_id=? ORDER BY t.id',(vid,))]}
@@ -308,7 +308,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
     @app.get('/api/visits/{vid}/revisions')
     def revisions(vid:int,u=Depends(principal)):
         require(u,'doctor')
-        with db(True) as c:
+        with db('access') as c:
             visit_access(c,u,vid,clinical=True);audit(c,u,'clinical_revisions_viewed','visit',vid)
             return [dict(x) for x in c.execute('SELECT * FROM clinical_revisions WHERE visit_id=? ORDER BY version',(vid,))]
 
@@ -346,7 +346,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
     @app.get('/api/controlled-review-queue')
     def controlled_queue(u=Depends(principal)):
         require(u,'doctor');require(u,'controlled_reviewer')
-        with db(True) as c:
+        with db('access') as c:
             rows=[dict(x) for x in c.execute("SELECT rx.id,rx.visit_id,rx.doctor_id,rx.drug_lines,rx.instructions,v.diagnosis,p.code AS patient_code FROM prescriptions rx JOIN visits v ON v.id=rx.visit_id JOIN patients p ON p.id=v.patient_id WHERE rx.status='draft' AND v.status NOT IN ('completed','cancelled') AND EXISTS(SELECT 1 FROM prescription_items i JOIN medicines m ON m.id=i.medicine_id WHERE i.prescription_id=rx.id AND m.controlled=1) AND NOT EXISTS(SELECT 1 FROM controlled_approvals a WHERE a.prescription_id=rx.id) ORDER BY rx.id DESC")]
             audit(c,u,'controlled_queue_viewed','prescription',None)
             return rows

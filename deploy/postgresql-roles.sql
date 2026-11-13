@@ -20,3 +20,21 @@ REVOKE UPDATE, DELETE, TRUNCATE ON order_authorizations, charge_sources,
  dispensation_items, dispensations, payments, charges, stock_movements,
  charge_voids, visit_closures, medicine_units FROM clinic_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON manual_charge_prices FROM clinic_app;
+
+-- S1a: only after owner migration 12 (legacy upgrade checks may apply v4).
+DO $$ BEGIN
+ IF to_regclass('public.prescription_outbox') IS NOT NULL THEN
+  REVOKE TRUNCATE ON clinical_prescriptions, clinical_prescription_items,
+   lab_reports, lab_results, prescription_outbox FROM clinic_app;
+  REVOKE DELETE, UPDATE ON prescription_outbox FROM clinic_app;
+  GRANT UPDATE(status) ON prescription_outbox TO clinic_app;
+  REVOKE UPDATE ON clinical_prescription_items FROM clinic_app;
+  -- Also remove pre-existing column-level grants (table REVOKE alone is insufficient).
+  EXECUTE (SELECT 'REVOKE UPDATE ('||string_agg(quote_ident(attname),',')||') ON clinical_prescription_items FROM clinic_app'
+           FROM pg_attribute WHERE attrelid='clinical_prescription_items'::regclass AND attnum>0 AND NOT attisdropped);
+  -- Restore uses pg_restore --no-acl: re-establish private trigger ACLs.
+  REVOKE ALL ON FUNCTION
+    s1_prescription_guard(), s1_prescription_item_guard(), s1_lab_guard(),
+    s1_lab_result_guard(), s1_outbox_guard() FROM PUBLIC;
+ END IF;
+END $$;

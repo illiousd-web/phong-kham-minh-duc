@@ -344,7 +344,7 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
     @app.get('/api/lab/reports/{rid}/review')
     def review(rid:int,u=Depends(principal)):
         require(u,'doctor')
-        with db(True) as c:
+        with db('access') as c:
             r,o=report_access(c,u,rid,require)
             if o['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ phụ trách duyệt')
             if r['status']!='pending_review':raise HTTPException(409,'Phiếu chưa gửi chờ duyệt')
@@ -437,7 +437,7 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
     @app.get('/api/lab/visits/{vid}/history/{tid}')
     def history(vid:int,tid:int,u=Depends(principal)):
         require(u,'doctor')
-        with db(True) as c:
+        with db('access') as c:
             v=visit_access(c,u,vid,clinical=True)
             rows=c.execute("""SELECT r.snapshot FROM lab_reports r JOIN orders o ON o.id=r.order_id JOIN visits v ON v.id=o.visit_id
                 JOIN lab_results x ON x.report_id=r.id WHERE v.patient_id=? AND v.doctor_id=? AND x.test_id=? AND r.status='approved'
@@ -453,7 +453,7 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
     @export_slot
     def form(rid:int,group:Literal['hematology','biochemistry','urine','other'],fmt:Literal['docx','pdf']='pdf',u=Depends(principal)):
         from .m5_forms import render
-        with db(True) as c:
+        with db('access') as c:
             r,o=report_access(c,u,rid,require)
             if r['status']!='approved' and 'technician' not in u['roles']:raise HTTPException(403,'Chỉ in phiếu đã duyệt')
             payload=report_data(c,r,o)

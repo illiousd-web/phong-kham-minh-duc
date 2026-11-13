@@ -113,7 +113,7 @@ Windows 7 đã hết hỗ trợ từ 01/2020; bản Chrome cuối cho Windows 7 
 
 ## 5. Việc hằng ngày, hằng tuần
 
-- **Hằng ngày:** để máy chủ bật qua **20:00** để sao lưu tự chạy. Nếu máy tắt lúc 20:00, lần bật sau máy tự sao lưu bù.
+- **Hằng ngày:** để máy chủ bật qua **20:00** để sao lưu tự chạy (`--daily`), kể cả khi phòng khám còn làm đến 21:00. Nếu máy tắt lúc 20:00, lần bật sau tác vụ riêng tự xét sao lưu bù (`--catchup`, sau khởi động hai phút); trong giờ 07:00–17:30 thì hoãn tới lịch 20:00, trừ khi chưa có bản thành công hoặc đã quá 48 giờ. Khi cập nhật, phần mềm tự chuyển tác vụ cũ sang hai tác vụ mới và kiểm lại; lỗi thì quay về lịch cũ. Cờ cũ `--scheduled` luôn tương đương lịch chính `--daily`. Xem [vận hành S1](S1_AN_TOAN_VAN_HANH.md).
 - **Nếu trên Desktop máy chủ có tệp "CANH BAO SAO LUU…"**: mở đọc, làm theo, rồi bấm `KIEM_TRA.bat` (mục 7).
 - **Số bản sao lưu:** máy chủ giữ **14 bản** gần nhất (khoảng 2 tuần), **không dùng ổ ngoài** theo quyết định của phòng khám. Mỗi bản mới được **giải mã thử và kiểm SHA-256 từng tệp trước** khi xóa bất kỳ bản cũ nào; bản mới lỗi thì bị xóa, bản cũ giữ nguyên và có cảnh báo.
   - *Bản đã kiểm* là bản có SHA-256 thực tế **trùng** SHA-256 ghi lúc kiểm (tệp `.verified`); mỗi lần sao lưu máy tính lại. Bản bị thay đổi nội dung (kể cả cùng dung lượng) là **bản HỎNG**: không tính là đã kiểm, luôn bị xóa trước mọi bản tốt, có cảnh báo trên Desktop và nhật ký sự kiện Windows.

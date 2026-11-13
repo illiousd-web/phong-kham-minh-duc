@@ -56,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=11").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=12").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -103,6 +103,9 @@ def init_db():
 async def lifespan(app):
     import anyio.to_thread
     anyio.to_thread.current_default_thread_limiter().total_tokens=LIMITS.threads
+    if LAN:
+        from .storage import prepare_access_reserve
+        await run_in_threadpool(prepare_access_reserve, DATA)
     try:yield
     finally:
         from . import database
@@ -145,7 +148,7 @@ async def security_headers(request:Request,call_next):
             if token:
                 try:
                     def log_access():
-                        with db(True) as c:
+                        with db('access') as c:
                             actor = c.execute('SELECT user_id FROM sessions WHERE token_hash=?', (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
                             if actor:
                                 c.execute('INSERT INTO audit_log(user_id,event,object_type,details,created_at) VALUES(?,?,?,?,?)',
@@ -280,7 +283,7 @@ def patients(q:str='',u=Depends(principal)):
 @app.get('/api/patients/{patient_id}')
 def patient_detail(patient_id:int,u=Depends(principal)):
     require(u,'reception','doctor','nurse','admin')
-    with db(True) as c:
+    with db('access') as c:
         p=c.execute('SELECT * FROM patients WHERE id=?',(patient_id,)).fetchone()
         if not p:raise HTTPException(404,'Không có bệnh nhân')
         if not {'reception','admin'}.intersection(u['roles']):
@@ -384,7 +387,7 @@ def list_visits(u=Depends(principal),history:bool=False):
 @app.get('/api/visits/{visit_id}')
 def visit_detail(visit_id:int,u=Depends(principal)):
     require(u,'doctor','nurse','reception','cashier','admin')
-    with db(True) as c:
+    with db('access') as c:
         v=visit_access(c,u,visit_id,clinical=True) if 'doctor' in u['roles'] else visit_access(c,u,visit_id)
         if 'doctor' in u['roles']:
             audit(c,u,'clinical_viewed','visit',visit_id)
@@ -581,7 +584,7 @@ def add_attachment(order_id:int,file:UploadFile=File(...),u=Depends(principal)):
 @app.get('/api/orders/{order_id}/attachment')
 def get_attachment(order_id:int,u=Depends(principal)):
     require(u,'doctor','technician')
-    with db(True) as c:
+    with db('access') as c:
         o=c.execute('SELECT o.*,v.doctor_id FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(order_id,)).fetchone()
         if not o or not o['file_key']:raise HTTPException(404,'Không có tệp')
         if 'doctor' in u['roles'] and o['doctor_id']!=u['id'] and 'technician' not in u['roles']:raise HTTPException(403,'Không có quyền')
@@ -942,7 +945,7 @@ def stock_issue(data:StockIssue,u=Depends(principal)):
 def print_form(kind:str,item_id:int,u=Depends(principal)):
     if kind not in ('intake','clinical','order','result','rx','follow_up','receipt'):
         raise HTTPException(404,'Biểu mẫu không tồn tại')
-    with db(True) as c:
+    with db('access') as c:
         if kind in ('intake','clinical','follow_up'):
             v=c.execute('''SELECT v.*,p.full_name AS patient_name,p.code AS patient_code,
                      p.date_of_birth,p.sex,p.phone,p.address,users.full_name AS doctor_name
@@ -1046,7 +1049,7 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
     elif kind in ('visit','order','followup'):require(u,'doctor')
     elif kind=='rx':require(u,'doctor','pharmacy')
     else:require(u,'doctor','technician')
-    with db(True) as c:
+    with db('access') as c:
         context=form_context(c,kind,object_id)
         v=context['visit'];o=context.get('order')
         if kind in ('visit','order','followup') or (kind=='rx' and 'doctor' in u['roles']):

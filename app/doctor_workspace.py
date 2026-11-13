@@ -90,7 +90,7 @@ def install_doctor_workspace(app, db, principal, require, audit, visit_access, n
     @app.get('/api/visits/{vid}/patient-history')
     def patient_history(vid: int, u=Depends(principal)):
         require(u, 'doctor')
-        with db(True) as c:
+        with db('access') as c:
             v = visit_access(c, u, vid, clinical=True)
             rows = c.execute('''SELECT id,created_at,diagnosis FROM visits
                 WHERE patient_id=? AND doctor_id=? AND (created_at<? OR (created_at=? AND id<?))

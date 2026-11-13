@@ -44,6 +44,17 @@ def parse(value):
     return datetime.fromisoformat(value) if value else None
 
 
+def should_defer_catchup(state, now):
+    from datetime import time
+    local = now.astimezone(timezone(timedelta(hours=7)))
+    start = time.fromisoformat(os.getenv('CLINIC_WORK_START', '07:00'))
+    end = time.fromisoformat(os.getenv('CLINIC_WORK_END', '17:30'))
+    current = local.time().replace(tzinfo=None)
+    working = start <= current < end if start <= end else current >= start or current < end
+    last = parse(state.get('last_success_utc'))
+    return bool(working and last and now - last <= timedelta(hours=48))
+
+
 def candidate_roots():
     if os.name == 'nt':
         return [Path(f'{letter}:\\') for letter in string.ascii_uppercase if letter not in 'AB']
@@ -281,6 +292,9 @@ def run(args, now=None):
         state = json.loads(state_path.read_text(encoding='utf-8'))
     except (OSError, ValueError):
         state = {}
+    if getattr(args, 'catchup', False) and should_defer_catchup(state, now):
+        print('Sao lưu bù tạm hoãn trong giờ làm việc; lịch 20:00 tiếp tục chạy.')
+        return 0
     external = None
     if args.external_config and Path(args.external_config).exists():
         external = json.loads(Path(args.external_config).read_text(encoding='utf-8'))
@@ -388,6 +402,9 @@ def main(argv=None):
     parser.add_argument('--state', required=True)
     parser.add_argument('--external-config')
     parser.add_argument('--alert-file')
+    schedule = parser.add_mutually_exclusive_group()
+    schedule.add_argument('--daily', '--scheduled', dest='daily', action='store_true', help='Lịch 20:00, luôn chạy kể cả trong giờ làm việc')
+    schedule.add_argument('--catchup', action='store_true', help='Chạy bù; hoãn trong giờ làm nếu bản tốt chưa quá 48 giờ')
     return run(parser.parse_args(argv))
 
 

@@ -147,9 +147,11 @@ def migrate_profile_schema(c):
     from app.m5_migration import migrate_m5
     from app.d0_migration import migrate_d0
     from app.d0_source_migration import migrate_source_catalogs
+    from app.s1_migration import migrate_s1
     for _ in range(2):
         migrate_m0(c);migrate_administrative(c);migrate_public_catalog(c)
         migrate_m6(c,postgres=True);migrate_m5(c,postgres=True);migrate_d0(c,postgres=True);migrate_source_catalogs(c,postgres=True)
+        migrate_s1(c)
 
 
 def database_state(url):
@@ -411,7 +413,7 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 7
+                expected_state['tables']['schema_migrations'] += 8  # versions 5–12, including immutable guards
                 expected_state['tables'].update({name: 0 for name in TABLES+M5_TABLES+D0_TABLES+SOURCE_TABLES})
                 expected_state['tables']['lab_tests'] = sum(len(v) for v in FRAMEWORK.values())
                 expected_state['tables']['audit_log'] += 6
