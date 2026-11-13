@@ -15,6 +15,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from .conftest import ROOT,PASSWORDS,IDS,SERVICE,db
 from .browser_helpers import settle,go,pick,send,submit,no_horizontal_scroll
+from .test_tls_chrome_compat import https_server
 
 
 def test_real_https_three_browser_roles_and_pdf():
@@ -162,3 +163,41 @@ def test_real_https_three_browser_roles_and_pdf():
             server.terminate()
             try:server.wait(timeout=10)
             except subprocess.TimeoutExpired:server.kill();server.wait()
+
+
+@pytest.mark.parametrize('width,height',[(1366,768),(390,844)])
+def test_u1b_glass_login_and_shell(https_server,width,height):
+    import re
+    origin,certdir=https_server
+    cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as p:
+        browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
+        try:
+            page=browser.new_page(viewport={'width':width,'height':height});errors=[]
+            page.on('pageerror',lambda e:errors.append(str(e)))
+            page.goto(origin)
+            expect(page.locator('[data-form="login"]')).to_be_visible()
+            expect(page.locator('html')).not_to_have_class(re.compile('fonts-pending'))
+            expect(page.locator('.login-logo')).to_be_visible()
+            assert page.locator('.login-logo').bounding_box()['height']==96
+            assert page.locator('[name="username"]').bounding_box()['height']>=48
+            no_horizontal_scroll(page)
+            evidence=Path('test_evidence/u1b');evidence.mkdir(parents=True,exist_ok=True)
+            page.screenshot(path=str(evidence/f'login-{width}.png'),full_page=True)
+            page.locator('[name="username"]').fill('test_reception')
+            page.locator('[name="password"]').fill(PASSWORDS['reception'])
+            page.locator('[data-form="login"] button').click()
+            expect(page.locator('#logout')).to_be_visible();settle(page)
+            expect(page.locator('.shell-header')).to_be_visible()
+            assert page.locator('.shell-header').evaluate('e=>getComputedStyle(e).position')=='sticky'
+            active=page.locator('.navbutton[aria-current="page"]')
+            assert active.evaluate('e=>getComputedStyle(e).backgroundColor')=='rgb(11, 31, 23)'
+            no_horizontal_scroll(page)
+            if width<=900:
+                assert page.locator('#navigation').evaluate('e=>getComputedStyle(e).flexWrap')=='nowrap'
+                assert page.locator('#navigation').evaluate('e=>e.scrollWidth>e.clientWidth')
+            expect(page.locator('#toast')).to_be_hidden()
+            page.screenshot(path=str(evidence/f'shell-{width}.png'),full_page=True)
+            assert not errors,errors
+        finally: browser.close()
