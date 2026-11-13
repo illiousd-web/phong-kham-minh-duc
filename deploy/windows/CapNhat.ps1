@@ -73,13 +73,16 @@ function Invoke-QuayVe {
             $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
             $service.Refresh()
             if ($service.Status -ne 'Stopped') { throw 'Dịch vụ chưa dừng; không thay mã hoặc dữ liệu đang chạy.' }
+            Wait-MinhDucVenvPythonExit -Venv $P.Venv
         }
     }
     $recovery.Code = Invoke-RecoveryStep 'Trả mã nguồn cũ' {
         if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả mã.' }
         if ($State.code_replaced) {
             if (-not (Test-Path -LiteralPath $OldCode -PathType Container)) { throw 'Thiếu thư mục mã nguồn cũ.' }
-            $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+            $r = Invoke-MinhDucAccessRetry -Action {
+            Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+            } -RetryResult { param($result) $result.Code -ge 8 }
             if (-not $r.Ok) { throw ('Chép trả mã nguồn thất bại, mã ' + $r.Code) }
             foreach ($file in Get-ChildItem -LiteralPath $OldCode -Recurse -File -Force -ErrorAction Stop) {
                 $relative = $file.FullName.Substring($OldCode.Length).TrimStart('\')
@@ -97,8 +100,10 @@ function Invoke-QuayVe {
         if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả môi trường Python.' }
         if ($State.venv_moved) {
             if (-not (Test-Path -LiteralPath $OldVenv -PathType Container)) { throw 'Thiếu môi trường Python cũ.' }
-            if (Test-Path -LiteralPath $P.Venv) { Remove-Item -LiteralPath $P.Venv -Recurse -Force -ErrorAction Stop }
-            Rename-Item -LiteralPath $OldVenv -NewName '.venv' -ErrorAction Stop
+            Invoke-MinhDucAccessRetry {
+                if (Test-Path -LiteralPath $P.Venv) { Remove-Item -LiteralPath $P.Venv -Recurse -Force -ErrorAction Stop }
+                Rename-Item -LiteralPath $OldVenv -NewName '.venv' -ErrorAction Stop
+            }
             if (Test-Path -LiteralPath $OldVenv) { throw 'Chưa chuyển xong môi trường Python cũ.' }
         }
         if (-not (Test-Path -LiteralPath $P.VenvPython -PathType Leaf)) { throw 'Không có trình Python của bản cũ.' }

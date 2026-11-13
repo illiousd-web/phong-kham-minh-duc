@@ -650,4 +650,55 @@ function Set-MinhDucBackupTasks {
     }
 }
 
+function Test-MinhDucVenvPythonPath {
+    param([string]$ExecutablePath, [string]$Venv)
+    if (-not $ExecutablePath) { return $false }
+    $root = [IO.Path]::GetFullPath($Venv).TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar
+    $path = [IO.Path]::GetFullPath($ExecutablePath)
+    return $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($path).Equals('python.exe', [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Wait-MinhDucVenvPythonExit {
+    param([Parameter(Mandatory=$true)][string]$Venv, [ValidateRange(0,30)][int]$Seconds=30)
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $remaining = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction Stop | Where-Object { Test-MinhDucVenvPythonPath -ExecutablePath $_.ExecutablePath -Venv $Venv })
+        if (-not $remaining.Count) { return }
+        if ($watch.Elapsed.TotalSeconds -ge $Seconds) { break }
+        Start-Sleep -Milliseconds 200
+    } while ($true)
+    foreach ($candidate in $remaining) {
+        try { $process = Get-Process -Id $candidate.ProcessId -ErrorAction Stop }
+        catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
+            if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { continue }
+            throw
+        }
+        # Recheck the current process object before stopping it (PID reuse).
+        if (-not (Test-MinhDucVenvPythonPath -ExecutablePath $process.Path -Venv $Venv)) { continue }
+        Stop-Process -InputObject $process -Force -ErrorAction Stop
+        if (-not $process.WaitForExit(5000)) { throw 'Python trong môi trường phòng khám chưa thoát; dừng phục hồi.' }
+    }
+    $left = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction Stop | Where-Object { Test-MinhDucVenvPythonPath -ExecutablePath $_.ExecutablePath -Venv $Venv })
+    if ($left.Count) { throw 'Còn Python đang giữ môi trường phòng khám; dừng phục hồi.' }
+}
+
+function Invoke-MinhDucAccessRetry {
+    param([Parameter(Mandatory=$true)][scriptblock]$Action, [scriptblock]$RetryResult)
+    for ($attempt=1; $attempt -le 5; $attempt++) {
+        try {
+            $result = & $Action
+            if ($RetryResult -and (& $RetryResult $result) -and $attempt -lt 5) {
+                Start-Sleep -Seconds 2
+                continue
+            }
+            return $result
+        }
+        catch {
+            $denied = $_.Exception -is [UnauthorizedAccessException] -or ($_.Exception.HResult -band 65535) -eq 5 -or $_.CategoryInfo.Category -eq 'PermissionDenied'
+            if (-not $denied -or $attempt -eq 5) { throw }
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
 Export-ModuleMember -Function * -Variable @()
