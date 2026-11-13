@@ -247,4 +247,20 @@ def test_u1b_doctor_sticky_below_shell_after_scroll(https_server,clients,width,h
             no_horizontal_scroll(page)
             evidence=Path('test_evidence/u1b');evidence.mkdir(parents=True,exist_ok=True)
             page.screenshot(path=str(evidence/f'doctor-sticky-{width}.png'))
+            for target in page.locator('.doctor-tabs button').evaluate_all('es=>es.map(e=>e.dataset.target)'):
+                tab=page.locator('.doctor-tabs button[data-target="'+target+'"]')
+                tab.click()
+                if target=='history': expect(page.locator('#patient-history h2')).to_be_visible()
+                if target=='payment': expect(page.locator('#doctor-payment-status')).not_to_contain_text('Chọn Thanh toán')
+                expect(tab).to_have_attribute('aria-current','true')
+                heading=page.locator('#doctor-'+target+' h2, #doctor-'+target+' h3').first
+                expect(heading).to_be_visible()
+                geometry=heading.evaluate("e=>{const r=e.getBoundingClientRect(),sticky=document.querySelector('.doctor-sticky').getBoundingClientRect();return {top:r.top,bottom:r.bottom,stickyBottom:sticky.bottom,height:innerHeight};}")
+                assert geometry['top']>=geometry['stickyBottom'] and geometry['bottom']<=geometry['height'],(target,geometry)
+                if target in ('history','payment'):
+                    assert page.evaluate('scrollY+innerHeight>=document.documentElement.scrollHeight-2'),target
+                # Force the scroll handler again even when scrollIntoView was clamped.
+                page.evaluate("window.dispatchEvent(new Event('scroll'))")
+                expect(tab).to_have_attribute('aria-current','true')
+
         finally:browser.close()

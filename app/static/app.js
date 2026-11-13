@@ -127,6 +127,8 @@ function labelTables(root){root.querySelectorAll('table.table').forEach(table=>{
 
 // ---------- Khung trang, menu, số đếm hàng chờ ----------
 const shellHeader=document.querySelector('.shell-header');
+function stickyOffset(){return (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shell-h'))||0)+(document.querySelector('.doctor-sticky')?.getBoundingClientRect().height||0)+12;}
+let lastDoctorTab={visit:null,target:null};
 function measureShellHeader(){
  const height=shellHeader&&!window.matchMedia('(max-width:900px)').matches?shellHeader.getBoundingClientRect().height:0;
  document.documentElement.style.setProperty('--shell-h',height+'px');
@@ -267,9 +269,9 @@ async function doctorScreen(){
  const parts=[['exam','Khám',stepCard(1,'Phiếu khám',exam+(!done?childDetails(v):''))+details('Điều dưỡng',nursing,true)+card(finish,done?'Hồ sơ đã khóa':'Hoàn tất khám')+(!done?btn('Đóng lượt bỏ dở','close-abandoned',`data-id="${vid}"`):'')+hist],
  ['orders','Chỉ định',stepCard(2,`Chỉ định cận lâm sàng (${mine.length})`,orders)],
  ['rx','Đơn thuốc',`<div class="allergy-warning notice" role="note"><b>DỊ ỨNG THUỐC:</b> ${esc(v.patient_allergies||'Chưa khai thác')}<br>Cảnh báo để bác sĩ kiểm tra trước khi kê đơn.</div>`+stepCard(3,'Đơn thuốc',rxHtml)],
- ['results','Kết quả cận lâm sàng',(await M5.visit(vid))+card(t(mine.filter(o=>o.result_text).map(o=>`<tr><td>${esc(o.name)}</td><td>${esc(o.result_text)}</td><td>${pill(o.status)}</td></tr>`),['Dịch vụ','Kết quả / kết luận','Trạng thái']),'Kết quả cận lâm sàng')],
+ ['results','Kết quả cận lâm sàng','<h2>Kết quả cận lâm sàng</h2>'+(await M5.visit(vid))+card(t(mine.filter(o=>o.result_text).map(o=>`<tr><td>${esc(o.name)}</td><td>${esc(o.result_text)}</td><td>${pill(o.status)}</td></tr>`),['Dịch vụ','Kết quả / kết luận','Trạng thái']),'Kết quả cận lâm sàng')],
  ['history','Lịch sử khám','<div id="patient-history">Chọn Lịch sử khám để tải các lượt trước trong phạm vi được phân quyền.</div>'],
- ['payment','Thanh toán','<div id="doctor-payment-status">Chọn Thanh toán để xem trạng thái.</div>']];
+ ['payment','Thanh toán','<h2>Thanh toán</h2><div id="doctor-payment-status">Chọn Thanh toán để xem trạng thái.</div>']];
  const navigation=`<nav class="doctor-tabs" aria-label="Các phần hồ sơ">${parts.map(([id,label])=>btn(label,'doctor-tab',`data-target="${id}"`)).join('')}</nav>`;
  return {html:review+`<div class="doctor-layout"><aside class="doctor-waiting">${head}</aside><div class="doctor-record"><div class="doctor-sticky">${banner}${navigation}</div>${parts.map(([id,label,body])=>`<section id="doctor-${id}" class="doctor-section" aria-label="${label}">${body}</section>`).join('')}</div></div>`,
   after(){setClinicalForm(v);if($('doctor_query'))$('doctor_query').value=sel.doctorQuery||'';if(done)document.querySelectorAll('[data-form="clinical"] input,[data-form="clinical"] textarea,[data-form="clinical"] button.btn').forEach(e=>e.disabled=true)}}}
@@ -609,6 +611,7 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
  if(action==='close-abandoned'){showM0Dialog(`<h2>Đóng lượt bỏ dở #${id}</h2><p>Lượt có tiền thu, khoản phí hoặc thuốc đã cấp phải qua quy trình hủy/hoàn hiện có.</p><form class="fields" data-form="close-abandoned">${hidden('visit_id',id)}${selectField('Lý do bắt buộc','close_reason',[['Người bệnh bỏ về','Người bệnh bỏ về'],['Tạo nhầm','Tạo nhầm'],['Khác','Khác (phải ghi chú)']])}${textarea('Ghi chú','close_note')}<div class="wide"><button class="btn-danger">Xác nhận đóng lượt</button></div></form>`);return;}
  if(action==='doctor-tab'){
   const target=element.dataset.target,vid=sel.visit;
+  lastDoctorTab={visit:vid,target};
   document.querySelectorAll('.doctor-tabs button').forEach(b=>b.setAttribute('aria-current',String(b===element)));
   if(target==='history'){
    const rows=await api('/visits/'+vid+'/patient-history');
@@ -621,7 +624,7 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
    $('doctor-payment-status').textContent=payment.status+' · Phải thu: '+money(payment.charged)+' · Đã thu: '+money(payment.paid)+' · Còn lại: '+money(payment.due)+(payment.refund_due>0?' · Cần hoàn: '+Number(payment.refund_due).toLocaleString('vi-VN')+' đồng':'');
   }
   const section=document.getElementById('doctor-'+target);
-  section.style.scrollMarginTop=(document.querySelector('.doctor-sticky').getBoundingClientRect().height+12)+'px';
+  section.style.scrollMarginTop=stickyOffset()+'px';
   section.scrollIntoView({block:'start'});return;
  }
  if(action==='price-template'){
@@ -708,7 +711,7 @@ document.addEventListener('keydown',event=>{
  if(event.key==='F8'){const finish=document.querySelector('[data-action="complete-visit"]');if(finish&&!finish.disabled){event.preventDefault();finish.click()}}
 });
 
-window.addEventListener('scroll',()=>{if(active!=='doctor')return;const sections=[...document.querySelectorAll('.doctor-section')];const top=(document.querySelector('.doctor-sticky')?.getBoundingClientRect().height||0)+20;const current=sections.filter(s=>s.getBoundingClientRect().top<=top).pop()||sections[0];document.querySelectorAll('.doctor-tabs button').forEach(b=>b.setAttribute('aria-current',String(current?.id==='doctor-'+b.dataset.target)));},{passive:true});
+window.addEventListener('scroll',()=>{if(active!=='doctor')return;const sections=[...document.querySelectorAll('.doctor-section')];const top=stickyOffset();const atBottom=scrollY+innerHeight>=document.documentElement.scrollHeight-2;const clicked=lastDoctorTab.visit===sel.visit?sections.find(s=>s.id==='doctor-'+lastDoctorTab.target):null;const current=atBottom?(clicked||sections[sections.length-1]):(sections.filter(s=>s.getBoundingClientRect().top<=top).pop()||sections[0]);document.querySelectorAll('.doctor-tabs button').forEach(b=>b.setAttribute('aria-current',String(current?.id==='doctor-'+b.dataset.target)));},{passive:true});
 
 // Bounded asynchronous comboboxes: province is mandatory before searching communes.
 document.addEventListener('input',event=>{const input=event.target;if(!input.matches('[data-catalog-search]'))return;const box=input.closest('[data-catalog-combo]'),kind=box.dataset.catalogCombo;box.querySelector(`[name="${kind}"]`).value='';box.querySelector(`[name="${kind}_code"]`).value='';catalogRequests.set(input,(catalogRequests.get(input)||0)+1);clearTimeout(catalogTimers.get(input));catalogTimers.set(input,setTimeout(()=>lookupCatalog(input).catch(e=>notify(e.message,true)),180));});
