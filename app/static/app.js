@@ -126,6 +126,13 @@ function patientHead(v){return `<div class="patient-head"><div><b>${esc(v.patien
 function labelTables(root){root.querySelectorAll('table.table').forEach(table=>{const heads=[...table.querySelectorAll('thead th')].map(th=>th.textContent);table.querySelectorAll('tbody tr').forEach(tr=>[...tr.children].forEach((td,i)=>{if(heads[i]&&td.colSpan<2)td.setAttribute('data-label',heads[i])}))})}
 
 // ---------- Khung trang, menu, số đếm hàng chờ ----------
+const shellHeader=document.querySelector('.shell-header');
+function measureShellHeader(){
+ const height=shellHeader&&!window.matchMedia('(max-width:900px)').matches?shellHeader.getBoundingClientRect().height:0;
+ document.documentElement.style.setProperty('--shell-h',height+'px');
+}
+if(shellHeader){new ResizeObserver(measureShellHeader).observe(shellHeader);window.addEventListener('resize',measureShellHeader);measureShellHeader();}
+
 function pagesFor(r){return [...(menus[r]||menus.reception),['password','Đổi mật khẩu']]}
 function viewInit(){if(!auth){renderLogin();return}document.body.classList.remove('login-view');const r=role();const m=pagesFor(r);
  if(!m.some(x=>x[0]===active))active=m[0][0];$('page-title').textContent=m.find(x=>x[0]===active)[1];$('user-label').textContent=auth.user.name+' · '+roles[r];$('logout').classList.remove('hidden');$('change-password').classList.remove('hidden');

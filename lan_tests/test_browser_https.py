@@ -190,7 +190,7 @@ def test_u1b_glass_login_and_shell(https_server,width,height):
             page.locator('[data-form="login"] button').click()
             expect(page.locator('#logout')).to_be_visible();settle(page)
             expect(page.locator('.shell-header')).to_be_visible()
-            assert page.locator('.shell-header').evaluate('e=>getComputedStyle(e).position')=='sticky'
+            assert page.locator('.shell-header').evaluate('e=>getComputedStyle(e).position')==('static' if width<=900 else 'sticky')
             active=page.locator('.navbutton[aria-current="page"]')
             assert active.evaluate('e=>getComputedStyle(e).backgroundColor')=='rgb(11, 31, 23)'
             no_horizontal_scroll(page)
@@ -201,3 +201,50 @@ def test_u1b_glass_login_and_shell(https_server,width,height):
             page.screenshot(path=str(evidence/f'shell-{width}.png'),full_page=True)
             assert not errors,errors
         finally: browser.close()
+
+
+@pytest.mark.parametrize('width,height',[(1366,768),(390,844)])
+def test_u1b_doctor_sticky_below_shell_after_scroll(https_server,clients,width,height):
+    import secrets
+    reception=clients['reception']
+    patient=reception.post('/api/patients',json={'full_name':'Người bệnh sticky giả lập '+secrets.token_hex(4),'sex':'Nữ','date_of_birth':'1990-01-01','phone':'0900000000'})
+    assert patient.status_code==201,patient.text
+    pid=patient.json()['id']
+    with db(True) as c:c.execute('UPDATE patients SET allergies=? WHERE id=?',('Dị ứng giả lập sticky',pid))
+    visit=reception.post('/api/visits',json={'patient_id':pid,'doctor_id':IDS['doctor'],'service_id':SERVICE})
+    assert visit.status_code==201,visit.text
+    origin,certdir=https_server
+    cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as p:
+        browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
+        try:
+            page=browser.new_page(viewport={'width':width,'height':height})
+            page.goto(origin)
+            page.locator('[name="username"]').fill('test_doctor');page.locator('[name="password"]').fill(PASSWORDS['doctor'])
+            page.locator('[data-form="login"] button').click();expect(page.locator('#logout')).to_be_visible();settle(page)
+            page.set_viewport_size({'width':390,'height':844})
+            expect(page.locator('html')).to_have_css('--shell-h','0px')
+            page.set_viewport_size({'width':1366,'height':768})
+            page.set_viewport_size({'width':width,'height':height})
+            pick(page,'visit',visit.json()['id'])
+            expect(page.locator('.doctor-sticky .allergy-warning')).to_contain_text('Dị ứng giả lập sticky')
+            page.locator('.doctor-sticky').scroll_into_view_if_needed()
+            start_scroll=page.evaluate('scrollY')
+            page.evaluate('window.scrollBy(0,600)')
+            expect(page.locator('#toast')).to_be_hidden()
+            rectangles=page.evaluate('''()=>{
+                const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right};};
+                return {header:rect('.shell-header'),warning:rect('.doctor-sticky .allergy-warning'),tabs:rect('.doctor-tabs'),offset:parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--shell-h')),scroll:scrollY};
+            }''')
+            assert rectangles['scroll']-start_scroll==600,rectangles
+            for key in ('warning','tabs'):
+                r=rectangles[key]
+                assert 0<=r['top']<r['bottom']<=height,rectangles
+                assert r['top']>=rectangles['header']['bottom'],rectangles
+            if width<=900:assert rectangles['offset']==0
+            else:assert rectangles['offset']>0
+            no_horizontal_scroll(page)
+            evidence=Path('test_evidence/u1b');evidence.mkdir(parents=True,exist_ok=True)
+            page.screenshot(path=str(evidence/f'doctor-sticky-{width}.png'))
+        finally:browser.close()

@@ -159,7 +159,7 @@ fieldset.roles.field{flex-direction:row;align-items:center}
 /* M0: scoped to doctor workspace; Chrome 109 supports grid, sticky and dialog. */
 .doctor-layout{display:grid;grid-template-columns:minmax(230px,29%) minmax(0,1fr);gap:16px;align-items:start}
 .doctor-waiting,.doctor-record{min-width:0}.doctor-waiting .queue{grid-template-columns:1fr}
-.doctor-sticky{position:sticky;top:0;z-index:5;background:var(--canvas);padding-bottom:1px}.doctor-patient{background:#fff;display:block;border:2px solid var(--primary);overflow-wrap:anywhere}
+.doctor-sticky{position:sticky;top:var(--shell-h,0px);z-index:5;background:var(--canvas);padding-bottom:1px}.doctor-patient{background:#fff;display:block;border:2px solid var(--primary);overflow-wrap:anywhere}
 .doctor-patient button{margin-top:6px}.allergy-warning{color:#b42318!important;overflow-wrap:anywhere}
 .doctor-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}.doctor-tabs button[aria-current=true]{background:var(--primary);color:white}
 .doctor-section{scroll-margin-top:160px}.doctor-section:empty{display:none}
@@ -240,3 +240,5 @@ body{background:var(--canvas);background:linear-gradient(125deg,var(--primary-so
 @media print{.shell-header{display:none!important}.app{display:block}body{background:#fff}}
 
 @media(min-width:901px){.sidebar nav{display:block}.navbutton{width:100%}.sidebar .brand-sub,.sidebar .sidebottom{display:block}}
+
+@media(max-width:900px){.shell-header{position:static}}
