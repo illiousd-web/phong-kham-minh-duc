@@ -42,6 +42,8 @@ END $$;
 -- S1b text-result content is append-only; approval may only fill its snapshot.
 DO $$ BEGIN
  IF to_regclass('public.order_result_versions') IS NOT NULL THEN
+  -- Restore omits ACLs: match migration 14's private trigger function ACL.
+  REVOKE ALL ON FUNCTION s1_text_result_guard() FROM PUBLIC;
   REVOKE UPDATE, DELETE, TRUNCATE ON order_result_versions FROM clinic_app;
   GRANT UPDATE(approved_by,approved_at,snapshot) ON order_result_versions TO clinic_app;
  END IF;
