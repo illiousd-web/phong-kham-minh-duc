@@ -683,9 +683,16 @@ function Wait-MinhDucVenvPythonExit {
 }
 
 function Invoke-MinhDucAccessRetry {
-    param([Parameter(Mandatory=$true)][scriptblock]$Action)
+    param([Parameter(Mandatory=$true)][scriptblock]$Action, [scriptblock]$RetryResult)
     for ($attempt=1; $attempt -le 5; $attempt++) {
-        try { & $Action; return }
+        try {
+            $result = & $Action
+            if ($RetryResult -and (& $RetryResult $result) -and $attempt -lt 5) {
+                Start-Sleep -Seconds 2
+                continue
+            }
+            return $result
+        }
         catch {
             $denied = $_.Exception -is [UnauthorizedAccessException] -or ($_.Exception.HResult -band 65535) -eq 5 -or $_.CategoryInfo.Category -eq 'PermissionDenied'
             if (-not $denied -or $attempt -eq 5) { throw }

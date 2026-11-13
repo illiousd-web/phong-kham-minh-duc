@@ -80,7 +80,9 @@ function Invoke-QuayVe {
         if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả mã.' }
         if ($State.code_replaced) {
             if (-not (Test-Path -LiteralPath $OldCode -PathType Container)) { throw 'Thiếu thư mục mã nguồn cũ.' }
-            $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+            $r = Invoke-MinhDucAccessRetry -Action {
+            Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+            } -RetryResult { param($result) $result.Code -ge 8 }
             if (-not $r.Ok) { throw ('Chép trả mã nguồn thất bại, mã ' + $r.Code) }
             foreach ($file in Get-ChildItem -LiteralPath $OldCode -Recurse -File -Force -ErrorAction Stop) {
                 $relative = $file.FullName.Substring($OldCode.Length).TrimStart('\')
