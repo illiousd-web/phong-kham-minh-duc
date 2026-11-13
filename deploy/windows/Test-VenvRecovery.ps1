@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'MinhDuc.Install.psm1') -Force -DisableNameChecking
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'MinhDuc.Install.psm1'),[ref]$tokens,[ref]$errors)
-foreach ($name in @('Test-MinhDucVenvPythonPath','Wait-MinhDucVenvPythonExit','Invoke-MinhDucAccessRetry')) {
+foreach ($name in @('Test-MinhDucVenvPythonPath','Wait-MinhDucVenvPythonExit','Invoke-MinhDucAccessRetry','Suspend-MinhDucBackupTasks')) {
     $definition=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -14,18 +14,19 @@ function Start-Sleep { param($Seconds,$Milliseconds) $script:delays.Add(@{Second
 function Get-CimInstance {
     param($ClassName,$Filter,$ErrorAction)
     $script:queries++
-    if ($script:alive -and ($script:case -ne 'Natural' -or $script:queries -eq 1)) { [pscustomobject]@{ProcessId=101;ExecutablePath=$exe} }
+    if ($script:alive -and ($script:case -ne 'Natural' -or $script:queries -eq 1)) { [pscustomobject]@{ProcessId=101;ExecutablePath=$exe;CommandLine='python.exe -m scripts.backup_job --daily'} }
     [pscustomobject]@{ProcessId=202;ExecutablePath=$other}
     [pscustomobject]@{ProcessId=303;ExecutablePath=$null}
 }
 function Get-Process {
     param($Id,$ErrorAction)
     if ($Id -ne 101) { throw 'Touched unrelated PID' }
-    $p=[pscustomobject]@{Id=101;Path=$(if($script:case -eq 'Reused'){$other}else{$exe})}
+    $p=[pscustomobject]@{Id=101;ProcessName='python';Path=$(if($script:case -eq 'Reused'){$other}else{$exe})}
     $p | Add-Member ScriptMethod WaitForExit {param($ms) return $true}
     if ($script:case -eq 'Reused') { $script:alive=$false }
     return $p
 }
+function Write-Luu {param($Message) $script:killLog=$Message}
 function Stop-Process { param($InputObject,[switch]$Force,$ErrorAction)
     if ($InputObject.Id -ne 101 -or $InputObject.Path -ne $exe) { throw 'Killed unrelated process' }
     $script:stopped++;$script:alive=$false
@@ -35,9 +36,11 @@ if (Test-MinhDucVenvPythonPath -ExecutablePath (Join-Path $venv 'tool.exe') -Ven
 foreach ($script:case in @('Natural','Timeout','Reused')) {
     $script:alive=$true;$script:queries=0;$script:stopped=0
     $script:delays=New-Object 'System.Collections.Generic.List[object]'
+    $script:killLog=''
     $seconds=0;if($script:case -eq 'Natural'){$seconds=30}
     Wait-MinhDucVenvPythonExit -Venv $venv -Seconds $seconds
     if (($script:case -eq 'Timeout' -and $script:stopped -ne 1) -or ($script:case -ne 'Timeout' -and $script:stopped -ne 0)) { throw ('Wrong process action: '+$script:case) }
+    if($script:case -eq 'Timeout' -and ($script:killLog -notmatch 'PID=101' -or $script:killLog -notmatch 'scripts.backup_job')){throw 'Missing killed backup PID/command line log'}
 }
 foreach ($mode in @('Transient','Denied','Other')) {
     $script:attempts=0;$script:delays=New-Object 'System.Collections.Generic.List[object]';$threw=$false
@@ -68,8 +71,12 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     }
     function Stop-Service {param($Name,[switch]$Force,$ErrorAction) $script:serviceStatus='Stopped'}
     function Start-Service {param($Name,$ErrorAction) $script:serviceStatus='Running'}
+    function Get-MinhDucBackupTaskSnapshot { return @([pscustomobject]@{Name='fake-daily';Xml='original-daily'},[pscustomobject]@{Name='fake-catchup';Xml='original-catchup'}) }
+    function Disable-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:disabled++ }
+    function Restore-MinhDucBackupTasks {param($Snapshot) if($Snapshot.Count -ne 2){throw 'Lost original task snapshot'} }
     function Wait-MinhDucVenvPythonExit {param($Venv)
         if($script:serviceStatus -ne 'Stopped'){throw 'Process wait before service stopped'}
+        if($script:disabled -ne 2){throw 'Python wait before backup schedules disabled'}
         $script:pythonWaited=$true
     }
     function Invoke-Native {param($FilePath,$Arguments,[switch]$Quiet,$OkCodes)
@@ -94,7 +101,7 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
             Set-Content $P.VenvPython 'never executed'
             $Names=@{Service='fake';ServiceAcct='fake'}
             $State=@{stopped=$true;code_replaced=$true;venv_moved=$false;migrated=$false;backup_tasks_changed=$false;rollback_errors=@()}
-            $script:copies=0;$script:pythonWaited=$false;$script:serviceStatus='Running'
+            $script:disabled=0;$script:copies=0;$script:pythonWaited=$false;$script:serviceStatus='Running'
             $script:delays=New-Object 'System.Collections.Generic.List[object]'
             $thrown=$false
             try {Invoke-QuayVe} catch {$thrown=$true}
@@ -109,3 +116,21 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     } finally {Remove-Item -LiteralPath $root -Recurse -Force}
 }
 Write-Output 'PASS: real recovery waits for service/Python before copy; robocopy 16,16,1 succeeds; five 16 failures remain failures'
+
+# Inspect argument ASTs, not flags in comments.
+$copyCount=0
+foreach($file in @('CaiDat.ps1','CapNhat.ps1')) {
+    $tokens=$null;$errors=$null
+    $tree=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $file),[ref]$tokens,[ref]$errors)
+    if($errors.Count){throw ('Parse error: '+$file)}
+    $commands=$tree.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-Native' -and ($n.CommandElements | Where-Object {$_.Value -eq 'robocopy.exe'})},$true)
+    foreach($command in $commands){
+        $copyCount++
+        $args=@($command.FindAll({param($n) $n -is [Management.Automation.Language.StringConstantExpressionAst]},$true) | ForEach-Object {$_.Value})
+        $retry='/R:2';$wait='/W:2'
+        if($command.Extent.Text.Contains('$OldCode, $P.Code')){$retry='/R:0';$wait='/W:0'}
+        if(@($args | Where-Object {$_ -like '/R:*'}).Count -ne 1 -or @($args | Where-Object {$_ -like '/W:*'}).Count -ne 1 -or $args -notcontains $retry -or $args -notcontains $wait){throw ('Invalid robocopy bounds: '+$command.Extent.Text)}
+    }
+}
+if($copyCount -ne 4){throw ('Expected four robocopy calls, got '+$copyCount)}
+Write-Output 'PASS: four robocopy AST argument bounds; backup schedules disabled before Python wait; killed backup PID/command line logged'

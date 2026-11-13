@@ -73,6 +73,11 @@ function Invoke-QuayVe {
             $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
             $service.Refresh()
             if ($service.Status -ne 'Stopped') { throw 'Dịch vụ chưa dừng; không thay mã hoặc dữ liệu đang chạy.' }
+            if (-not $State.backup_tasks_changed) {
+                $State.backup_task_snapshot = @(Get-MinhDucBackupTaskSnapshot)
+                $State.backup_tasks_changed = $true
+            }
+            Suspend-MinhDucBackupTasks
             Wait-MinhDucVenvPythonExit -Venv $P.Venv
         }
     }
@@ -81,7 +86,7 @@ function Invoke-QuayVe {
         if ($State.code_replaced) {
             if (-not (Test-Path -LiteralPath $OldCode -PathType Container)) { throw 'Thiếu thư mục mã nguồn cũ.' }
             $r = Invoke-MinhDucAccessRetry -Action {
-            Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+                Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/R:0', '/W:0', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
             } -RetryResult { param($result) $result.Code -ge 8 }
             if (-not $r.Ok) { throw ('Chép trả mã nguồn thất bại, mã ' + $r.Code) }
             foreach ($file in Get-ChildItem -LiteralPath $OldCode -Recurse -File -Force -ErrorAction Stop) {
@@ -204,13 +209,13 @@ try {
     Write-Dat 'Đã dừng dịch vụ (máy trạm tạm thời không vào được).'
 
     Write-Buoc 'Bước 5/8: Thay mã nguồn'
-    $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($P.Code, $OldCode, '/MIR', '/XD', '.venv', '.venv-cu', '__pycache__', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+    $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($P.Code, $OldCode, '/MIR', '/R:2', '/W:2', '/XD', '.venv', '.venv-cu', '__pycache__', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
     if (-not $r.Ok) { throw 'Không sao chép được mã cũ để dự phòng.' }
     if (Test-Path -LiteralPath $OldVenv) { Remove-Item -LiteralPath $OldVenv -Recurse -Force }
     Rename-Item -LiteralPath $P.Venv -NewName '.venv-cu'
     $State.venv_moved = $true
     $State.code_replaced = $true
-    $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($newRoot, $P.Code, '/MIR', '/XD', '.venv', '.venv-cu', '.git', '__pycache__', 'test_evidence', 'data', 'backups', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+    $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($newRoot, $P.Code, '/MIR', '/R:2', '/W:2', '/XD', '.venv', '.venv-cu', '.git', '__pycache__', 'test_evidence', 'data', 'backups', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
     if (-not $r.Ok) { throw 'Không chép được mã mới.' }
     Copy-D0PublicCatalogs -SourceRoot $newRoot -DestinationRoot $P.Code
     Write-Dat 'Đã thay mã nguồn (bản cũ được giữ để quay về).'

@@ -650,6 +650,13 @@ function Set-MinhDucBackupTasks {
     }
 }
 
+function Suspend-MinhDucBackupTasks {
+    foreach ($task in @(Get-MinhDucBackupTaskSnapshot)) {
+        Disable-ScheduledTask -TaskName $task.Name -TaskPath '\' -ErrorAction Stop | Out-Null
+        Write-Thongtin ('Tạm dừng lịch sao lưu: ' + $task.Name)
+    }
+}
+
 function Test-MinhDucVenvPythonPath {
     param([string]$ExecutablePath, [string]$Venv)
     if (-not $ExecutablePath) { return $false }
@@ -675,6 +682,7 @@ function Wait-MinhDucVenvPythonExit {
         }
         # Recheck the current process object before stopping it (PID reuse).
         if (-not (Test-MinhDucVenvPythonPath -ExecutablePath $process.Path -Venv $Venv)) { continue }
+        Write-Luu ('Quá hạn chờ Python 30 giây; dừng tiến trình ' + $process.ProcessName + '; PID=' + $process.Id + '; dòng lệnh=' + $candidate.CommandLine)
         Stop-Process -InputObject $process -Force -ErrorAction Stop
         if (-not $process.WaitForExit(5000)) { throw 'Python trong môi trường phòng khám chưa thoát; dừng phục hồi.' }
     }
