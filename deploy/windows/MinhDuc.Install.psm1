@@ -582,8 +582,22 @@ function Get-MinhDucBackupTaskSignature([string]$Xml) {
 
 function Restore-MinhDucBackupTasks {
     param([AllowEmptyCollection()][object[]]$Snapshot = @())
-    foreach ($old in $Snapshot) {
-        Register-ScheduledTask -TaskName $old.Name -TaskPath '\' -Xml $old.Xml -Force -ErrorAction Stop | Out-Null
+    try {
+        foreach ($old in $Snapshot) {
+            Register-ScheduledTask -TaskName $old.Name -TaskPath '\' -Xml $old.Xml -Force -ErrorAction Stop | Out-Null
+        }
+    } catch {
+        $originalFailure = $_
+        foreach ($old in $Snapshot) {
+            try {
+                if (Get-MinhDucScheduledTask -Name $old.Name) {
+                    Enable-ScheduledTask -TaskName $old.Name -TaskPath '\' -ErrorAction Stop | Out-Null
+                }
+            } catch {
+                Write-Loi ('Không bật lại được lịch sao lưu ' + $old.Name + ': ' + $_.Exception.Message)
+            }
+        }
+        throw $originalFailure
     }
     # Never remove a working task before every saved task has registered.
     foreach ($current in @(Get-MinhDucBackupTaskSnapshot)) {

@@ -87,9 +87,10 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     }
     function Export-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:snapshotReads++;return $script:tasks[$TaskName].Xml}
     function Disable-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:disabled++;$script:tasks[$TaskName].Settings.Enabled=$false }
+    function Enable-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:enabled.Add($TaskName);$script:tasks[$TaskName].Settings.Enabled=$true }
     function Register-ScheduledTask {param($TaskName,$TaskPath,$Xml,[switch]$Force,$ErrorAction)
         $script:registrations++
-        if($script:taskCase -eq 'RegisterSecond' -and $script:registrations -eq 2){throw 'register second failed'}
+        if(($script:taskCase -eq 'RegisterSecond' -and $script:registrations -eq 2) -or ($script:taskCase -eq 'RegisterFirst' -and $script:registrations -eq 1)){throw 'register second failed'}
         $script:tasks[$TaskName]=[pscustomobject]@{State='Ready';Settings=[pscustomobject]@{Enabled=$true};Xml=$Xml}
     }
     function Unregister-ScheduledTask {param($TaskName,$TaskPath,$Confirm,$ErrorAction) $script:removals++;$script:tasks.Remove($TaskName)}
@@ -110,7 +111,7 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     function Wait-Https {param($Origin,$Seconds) return $true}
     $root=Join-Path ([IO.Path]::GetTempPath()) ('robocopy-fake-'+[guid]::NewGuid().ToString('N'))
     try {
-        foreach($script:taskCase in @('Normal','CopyFailure','RegisterSecond','Scheduler','NoDaily','Legacy')) {
+        foreach($script:taskCase in @('Normal','CopyFailure','RegisterSecond','RegisterFirst','Scheduler','NoDaily','Legacy')) {
             $script:alwaysFail=$script:taskCase -eq 'CopyFailure'
             $caseRoot=Join-Path $root $script:taskCase
             $OldCode=Join-Path $caseRoot 'old'
@@ -127,6 +128,7 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
             }
             if($script:taskCase -eq 'NoDaily'){$script:tasks.Remove('fake-daily')}
             if($script:taskCase -eq 'Legacy'){$script:tasks.Remove('fake-daily - Chay bu')}
+            $script:enabled=New-Object 'System.Collections.Generic.List[string]'
             $script:registrations=0;$script:removals=0
             $script:disabled=0;$script:copies=0;$script:pythonWaited=$false;$script:serviceStatus='Running'
             $script:delays=New-Object 'System.Collections.Generic.List[object]'
@@ -149,8 +151,11 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
                 if(-not $thrown -or $script:copies -ne 0){throw 'Scheduler error incorrectly accepted'}
                 continue
             }
-            if($script:taskCase -eq 'RegisterSecond'){
-                if(-not $thrown -or -not $script:tasks.ContainsKey('fake-daily') -or $script:removals -ne 0){throw 'Second registration failure removed working task or reported recovery success'}
+            if($script:taskCase -in @('RegisterSecond','RegisterFirst')){
+                if(-not $thrown -or -not $script:tasks.ContainsKey('fake-daily') -or $script:removals -ne 0){throw 'Registration failure removed working task or reported recovery success'}
+                if($script:enabled.Count -ne 2 -or -not $script:enabled.Contains('fake-daily') -or -not $script:enabled.Contains('fake-daily - Chay bu')){throw 'Not every surviving task was enabled'}
+                if(($State.rollback_errors -join ' ') -notmatch 'register second failed'){throw 'Original registration error was lost'}
+                if($script:serviceStatus -ne 'Running'){throw 'Scheduler failure blocked web service'}
                 continue
             }
             if($script:copies -ne $expected -or $thrown -ne $script:alwaysFail){throw 'Wrong robocopy recovery outcome'}
