@@ -271,3 +271,61 @@ def test_u1b_doctor_sticky_below_shell_after_scroll(https_server,clients,width,h
             assert page.evaluate('scrollY+innerHeight>=document.documentElement.scrollHeight-2')
 
         finally:browser.close()
+
+
+@pytest.mark.parametrize('width,height',[(1366,768),(390,844)])
+def test_u1c_doctor_queue_and_prescription(https_server,clients,width,height):
+    import secrets
+    reception=clients['reception']
+    patient=reception.post('/api/patients',json={'full_name':'Người bệnh U1c giả lập tên rất dài để kiểm dấu chấm lửng '+secrets.token_hex(4),'sex':'Nữ','date_of_birth':'1990-01-01','phone':'0900000000'})
+    assert patient.status_code==201,patient.text
+    pid=patient.json()['id']
+    with db(True) as c:c.execute('UPDATE patients SET allergies=? WHERE id=?',('Dị ứng giả lập sticky: '+('Chất giả lập gây dị ứng; '*12),pid))
+    visit=reception.post('/api/visits',json={'patient_id':pid,'doctor_id':IDS['doctor'],'service_id':SERVICE})
+    assert visit.status_code==201,visit.text
+    origin,certdir=https_server
+    cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as p:
+        browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
+        try:
+            page=browser.new_page(viewport={'width':width,'height':height})
+            errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+            page.goto(origin)
+            page.locator('[name="username"]').fill('test_doctor');page.locator('[name="password"]').fill(PASSWORDS['doctor'])
+            page.locator('[data-form="login"] button').click();expect(page.locator('#logout')).to_be_visible();settle(page)
+            page.set_viewport_size({'width':390,'height':844})
+            expect(page.locator('html')).to_have_css('--shell-h','0px')
+            page.set_viewport_size({'width':1366,'height':768})
+            page.set_viewport_size({'width':width,'height':height})
+            pick(page,'visit',visit.json()['id'])
+            expect(page.locator('.doctor-sticky .allergy-warning')).to_contain_text('Dị ứng giả lập sticky')
+            expect(page.locator('#toast')).to_be_hidden()
+            evidence=Path('test_evidence/u1c');evidence.mkdir(parents=True,exist_ok=True)
+            if width>900:
+                page.evaluate('window.scrollTo(0,1500)')
+                waiting=page.locator('.doctor-waiting').bounding_box()
+                assert waiting['y']>=0 and waiting['y']+waiting['height']<=height,waiting
+            else:
+                page.locator('.doctor-sticky').scroll_into_view_if_needed()
+                assert page.locator('.doctor-sticky').bounding_box()['height']<=253
+                expect(page.locator('.doctor-sticky .allergy-warning')).to_contain_text('DỊ ỨNG')
+                assert page.locator('[data-action="patient-details"]').evaluate("e=>!e.closest('.doctor-sticky')")
+            expect(page.locator('.queue-item.current .waiting-allergy')).to_contain_text('Dị ứng')
+            assert page.locator('.queue-item.current .queue-ticket').bounding_box()['width']==44
+            assert page.locator('.queue-item.current .waiting-name').evaluate("e=>e.scrollWidth>e.clientWidth && getComputedStyle(e).textOverflow==='ellipsis'")
+            no_horizontal_scroll(page)
+            page.screenshot(path=str(evidence/f'doctor-{width}.png'))
+            page.locator('.doctor-tabs [data-target="rx"]').click()
+            expect(page.locator('[data-m6-form="rx"]')).to_be_visible()
+            row=page.locator('.m6-row').first
+            row.locator('[name="name"]').fill('Thuốc giả lập U1c')
+            row.locator('[name="strength"]').fill('10 mg')
+            if width>900:
+                positions=[row.locator('[name="'+key+'"]').bounding_box()['y'] for key in ('dose','frequency','days','quantity')]
+                assert max(positions)-min(positions)<1,positions
+            assert row.locator('[name="name"]').evaluate('e=>getComputedStyle(e).fontSize')=='16px'
+            no_horizontal_scroll(page)
+            page.screenshot(path=str(evidence/f'prescription-{width}.png'))
+            assert not errors,errors
+        finally:browser.close()
