@@ -291,9 +291,18 @@ def test_u1c_doctor_queue_and_prescription(https_server,clients,width,height):
         try:
             page=browser.new_page(viewport={'width':width,'height':height})
             errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+            # Allergy badges must load in the background, never hold the workspace busy.
+            held=[];page.route('**/api/visits/*',lambda route:held.append(route))
             page.goto(origin)
             page.locator('[name="username"]').fill('test_doctor');page.locator('[name="password"]').fill(PASSWORDS['doctor'])
             page.locator('[data-form="login"] button').click();expect(page.locator('#logout')).to_be_visible();settle(page)
+            expect(page.locator('.doctor-waiting .queue-item').first).to_be_visible()
+            assert len(held)<=4
+            page.unroute('**/api/visits/*')
+            for route in held:route.continue_()
+            queued=page.locator(f'.queue-item[data-kind="visit"][data-id="{visit.json()["id"]}"]')
+            queued.scroll_into_view_if_needed()
+            expect(queued.locator('.waiting-allergy')).to_contain_text('Dị ứng')
             page.set_viewport_size({'width':390,'height':844})
             expect(page.locator('html')).to_have_css('--shell-h','0px')
             page.set_viewport_size({'width':1366,'height':768})

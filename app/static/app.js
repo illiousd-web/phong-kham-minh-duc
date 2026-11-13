@@ -237,23 +237,32 @@ async function controlledReviewCard(){
   `<form data-form="controlled-approve" class="fields">${selectField('Đơn chờ duyệt','prescription_id',list.map(q=>[q.id,'#'+q.id]))}${field('Lý do duyệt','reason','text','',true)}${field('Tham chiếu sổ kiểm soát','register_ref','text','',true)}<div class="wide"><button class="btn" ${list.length?'':'disabled'}>Duyệt đơn kiểm soát</button></div></form>`,`Đơn thuốc kiểm soát chờ bác sĩ thứ hai duyệt (${list.length})`)}
 async function doctorScreen(){
  const [open,visitHistory,daily]=await Promise.all([api('/visits'),api('/visits?history=true'),api('/doctor/queue?'+new URLSearchParams({day:sel.doctorDay||'',q:sel.doctorQuery||''}))]);
- // The queue endpoint intentionally returns a summary; read allergy information
- // through the existing, doctor-authorized visit endpoint, four requests at a time.
- const queuePatients=new Map();
- for(let start=0;start<daily.visits.length;start+=4){
-  const details=await Promise.all(daily.visits.slice(start,start+4).map(v=>api('/visits/'+v.id)));
-  details.forEach(v=>queuePatients.set(v.id,v));
- }
+ // Read badges only for visible cards; slow clinical reads must not block the workspace.
+ doctorScreen.queueObserver?.disconnect();
+ const hydrateQueueAllergies=(selected=null)=>{
+  const root=document.querySelector('.doctor-waiting');if(!root)return;
+  const paint=(node,v)=>{const label=node.querySelector('.waiting-allergy');const allergy=v.patient_allergies;label.hidden=!allergy||allergy==='Không dị ứng';label.textContent=label.hidden?'':'Dị ứng';label.title=allergy||''};
+  let running=0;const pending=[];
+  const pump=()=>{
+   if(!root.isConnected){observer.disconnect();return}
+   while(running<4&&pending.length){const node=pending.shift();running++;
+    api('/visits/'+node.dataset.id).then(v=>{if(node.isConnected)paint(node,v)}).catch(()=>{if(node.isConnected){const label=node.querySelector('.waiting-allergy');label.hidden=false;label.textContent='Chưa tải được dị ứng'}}).finally(()=>{running--;pump()});
+   }
+  };
+  const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){observer.unobserve(entry.target);pending.push(entry.target)}pump()});
+  doctorScreen.queueObserver=observer;
+  root.querySelectorAll('.queue-item[data-kind="visit"]').forEach(node=>{if(Number(node.dataset.id)===selected?.id)paint(node,selected);else observer.observe(node)});
+ };
  const visits=[...open,...visitHistory,...daily.visits];
  if(!daily.visits.some(v=>v.id===sel.visit))sel.visit=null;
  const review=(await M5.reviewQueue())+await controlledReviewCard();
  const filter=`<form data-form="doctor-filter" class="fields">${dateField('Ngày tiếp đón (bỏ trống: mọi lượt chờ)','doctor_day',false,daily.day)}${field('Tìm tên không dấu','doctor_query')}<div class="wide"><button class="btn">Tìm người bệnh (F4)</button></div></form>`;
  const doctorStatus=s=>`<span class="status ${({waiting_results:'results-pending',results_ready:'ready',in_progress:'progress',completed:'complete'})[s]||TONE[s]||''}">${esc(s==='waiting_results'?'Chờ kết quả cận lâm sàng':vi(s))}</span>`;
- const head=card(filter+queue(daily.visits.map(v=>({id:v.id,main:`<span class="queue-ticket">${v.daily_number}</span><span class="waiting-name" title="${esc(v.patient_name)}">${esc(v.patient_name)}</span>${queuePatients.get(v.id)?.patient_allergies&&queuePatients.get(v.id).patient_allergies!=='Không dị ứng'?'<span class="waiting-allergy">Dị ứng</span>':''}`,sub:`${esc(patientAge(v.date_of_birth,v.age_months))} · ${esc(v.sex||'')} · ${doctorStatus(v.queue_status)} · ${showDay(v.created_at)}`})),{kind:'visit',current:sel.visit,emptyText:'Không có lượt trong ngày đã chọn.'}),`Danh sách khám · ${open.length} lượt chưa hoàn tất`)+
+ const head=card(filter+queue(daily.visits.map(v=>({id:v.id,main:`<span class="queue-ticket">${v.daily_number}</span><span class="waiting-name" title="${esc(v.patient_name)}">${esc(v.patient_name)}</span><span class="waiting-allergy" hidden></span>`,sub:`${esc(patientAge(v.date_of_birth,v.age_months))} · ${esc(v.sex||'')} · ${doctorStatus(v.queue_status)} · ${showDay(v.created_at)}`})),{kind:'visit',current:sel.visit,emptyText:'Không có lượt trong ngày đã chọn.'}),`Danh sách khám · ${open.length} lượt chưa hoàn tất`)+
   details('Lượt đã kết thúc (100 gần nhất)',(visitHistory.length?`<div class="toolbar-actions">${selectField('Mở lượt khác (đã xong)','visit_choose',[['','— Chọn —'],...visitHistory.map(v=>[v.id,`#${v.id} – ${v.patient_name} (${vi(v.status)})`])])}</div>`:empty('Chưa có lượt đã kết thúc.')));
- if(!sel.visit)return {html:review+`<div class="doctor-layout"><aside class="doctor-waiting">${head}</aside><section class="card">Chọn một lượt khám</section></div>`,after(){if($('doctor_query'))$('doctor_query').value=sel.doctorQuery||''}};
+ if(!sel.visit)return {html:review+`<div class="doctor-layout"><aside class="doctor-waiting">${head}</aside><section class="card">Chọn một lượt khám</section></div>`,after(){hydrateQueueAllergies();if($('doctor_query'))$('doctor_query').value=sel.doctorQuery||''}};
  const vid=sel.visit;
- const [v,ords,rxs,cls,meds,care]=await Promise.all([queuePatients.get(vid)||api('/visits/'+vid),api('/orders?visit_id='+vid),api('/prescriptions?visit_id='+vid),api('/cls-services'),api('/dispensable-medicines'),api('/visits/'+vid+'/care')]);
+ const [v,ords,rxs,cls,meds,care]=await Promise.all([api('/visits/'+vid),api('/orders?visit_id='+vid),api('/prescriptions?visit_id='+vid),api('/cls-services'),api('/dispensable-medicines'),api('/visits/'+vid+'/care')]);
  const done=!OPEN(v);
  const [nurses,assigned,history,addenda]=await Promise.all([done?[]:api('/nurses'),done?[]:api('/visits/'+vid+'/nurses'),api('/visits/'+vid+'/revisions'),done&&ui.addendum?api('/visits/'+vid+'/addenda'):[]]);
  const mine=ords.filter(o=>o.visit_id===vid),rx=rxs.find(x=>x.visit_id===vid&&x.status!=='cancelled')||rxs.find(x=>x.visit_id===vid);
@@ -282,7 +291,7 @@ async function doctorScreen(){
  ['payment','Thanh toán','<div id="doctor-payment-status">Chọn Thanh toán để xem trạng thái.</div>']];
  const navigation=`<nav class="doctor-tabs" aria-label="Các phần hồ sơ">${parts.map(([id,label])=>btn(label,'doctor-tab',`data-target="${id}"`)).join('')}</nav>`;
  return {html:review+`<div class="doctor-layout"><aside class="doctor-waiting">${head}</aside><div class="doctor-record"><div class="doctor-sticky">${banner}${navigation}</div>${patientActions}${parts.map(([id,label,body],index)=>`<section id="doctor-${id}" class="doctor-section" aria-label="${label}"><h2 class="section-heading"><span class="stepno">${index+1}</span>${esc(label)}</h2>${body}</section>`).join('')}</div></div>`,
-  after(){setClinicalForm(v);if($('doctor_query'))$('doctor_query').value=sel.doctorQuery||'';if(done)document.querySelectorAll('[data-form="clinical"] input,[data-form="clinical"] textarea,[data-form="clinical"] button.btn').forEach(e=>e.disabled=true)}}}
+  after(){setClinicalForm(v);hydrateQueueAllergies(v);if($('doctor_query'))$('doctor_query').value=sel.doctorQuery||'';if(done)document.querySelectorAll('[data-form="clinical"] input,[data-form="clinical"] textarea,[data-form="clinical"] button.btn').forEach(e=>e.disabled=true)}}}
 
 
 // ---------- Kỹ thuật viên: chỉ định chờ làm → nhập kết quả ----------
