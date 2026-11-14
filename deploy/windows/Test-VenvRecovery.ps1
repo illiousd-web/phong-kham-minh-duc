@@ -12,14 +12,18 @@ if ($RealVenvLock) {
     $ready=Join-Path $env:TEMP ('minhduc-rust-'+[guid]::NewGuid().ToString('N')+'.txt')
     $child=$null
     try {
-        $code="import cryptography.hazmat.bindings._rust as rust, pathlib, time; pathlib.Path(r'$ready').write_text(str(rust.__file__)); time.sleep(600)"
-        $child=Start-Process -FilePath (Join-Path $live 'Scripts\python.exe') -ArgumentList @('-c',('"'+$code+'"'),'-m','scripts.with_env','"C:\ProgramData\MinhDuc\clinic.env"') -PassThru -ErrorAction Stop
+        $code="import cryptography.hazmat.bindings._rust as rust, pathlib, time, os, json; pathlib.Path(r'$ready').write_text(json.dumps(dict(pid=os.getpid(),path=str(rust.__file__)))); time.sleep(600)"
+        $child=Start-Process -FilePath (Join-Path $live 'Scripts\python.exe') -ArgumentList @('-c',('"'+$code+'"')) -PassThru -ErrorAction Stop
         $timer=[Diagnostics.Stopwatch]::StartNew()
         while(-not (Test-Path -LiteralPath $ready)){
             if($timer.Elapsed.TotalSeconds -gt 20){throw 'Python không nạp được _rust.pyd trong thời hạn kiểm thử.'}
             Start-Sleep -Milliseconds 100
         }
-        $loaded=(Get-Content -LiteralPath $ready -Raw).Trim()
+        $proof=Get-Content -LiteralPath $ready -Raw | ConvertFrom-Json
+        $loaded=$proof.path
+        $selected=@(Get-MinhDucVenvProcessTree -Venv $live -Known @{})
+        $outside=@($selected | Where-Object {$_.ProcessId -eq $proof.pid -and $_.ExecutablePath -and -not $_.ExecutablePath.StartsWith(($live+'\'),[StringComparison]::OrdinalIgnoreCase)})
+        if($outside.Count -ne 1 -or $outside[0].ParentProcessId -ne $child.Id){throw 'Không chọn được Python con ngoài venv đã nạp rust.'}
         if(-not $loaded.StartsWith(($live+'\'),[StringComparison]::OrdinalIgnoreCase) -or $loaded -notmatch '_rust.*\.pyd$'){throw 'Không chứng minh được _rust.pyd đã nạp từ venv đang kiểm.'}
         Write-Output ('Đã nạp: '+$loaded)
         Get-CimInstance Win32_Process | Where-Object {$_.ProcessId -eq $child.Id -or $_.ParentProcessId -eq $child.Id} | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | Format-Table | Out-Host
@@ -309,3 +313,11 @@ Write-Output 'PASS: command-line pythonw root, sibling path excluded, changed co
     if($script:emptyScans -ne 2 -or $script:emptySleeps -ne 1){throw 'Must confirm two empty scans two seconds apart'}
 }
 Write-Output 'PASS: unknown CreationDate logs/fails without stop; two empty scans separated by two seconds'
+
+& {
+    foreach($cmd in @('python.exe -c "print(1)" -m scripts.with_env C:\ProgramData\MinhDuc\clinic.env','python.exe tool.py -m scripts.with_env C:\ProgramData\MinhDuc\clinic.env')){
+        function Get-CimInstance {param($ClassName,$Filter,$ErrorAction) [pscustomobject]@{Name='python.exe';ProcessId=700;ParentProcessId=1;ExecutablePath=$other;CommandLine=$cmd;CreationDate=1}}
+        if(@(Get-MinhDucVenvProcessTree -Venv $venv -Known @{}).Count){throw 'Accepted fake module argument after -c or script'}
+    }
+}
+Write-Output 'PASS: fake -m after -c and script excluded'

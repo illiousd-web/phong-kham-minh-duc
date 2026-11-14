@@ -236,6 +236,17 @@ jobs:
           if %errorlevel% equ 0 exit /b 0
           if %errorlevel% neq 40 exit /b %errorlevel%
           C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py fresh-install-report
+      - name: Real venv Python child releases cryptography rust lock
+        run: |
+          Stop-Service MinhDuc -ErrorAction Stop
+          (Get-Service MinhDuc).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+          try {
+            & powershell.exe -NoProfile -File deploy/windows/Test-VenvRecovery.ps1 -RealVenvLock
+            if ($LASTEXITCODE) { throw 'Real venv rust lock test failed' }
+          } finally {
+            Start-Service MinhDuc -ErrorAction Stop
+            (Get-Service MinhDuc).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+          }
       - name: Service, HTTPS login page, administrator login, synthetic write
         run: |
           $svc = Get-Service MinhDuc

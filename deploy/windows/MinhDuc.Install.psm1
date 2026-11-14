@@ -721,7 +721,9 @@ function Get-MinhDucVenvProcessTree {
         $parts = @([regex]::Matches([string]$item.CommandLine, '"[^"\r\n]*"|[^\s]+') | ForEach-Object { $_.Value.Trim('"') })
         $withEnv = $false
         for ($i=1; $i -lt $parts.Count-2; $i++) {
+            if ($parts[$i] -ceq '-c' -or -not $parts[$i].StartsWith('-')) { break }
             if ($parts[$i] -ceq '-m' -and $parts[$i+1] -ceq 'scripts.with_env' -and $parts[$i+2].Replace('/','\') -ieq $envPath) { $withEnv = $true }
+            if ($parts[$i] -ceq '-m') { break }
         }
         $root = $item.Name -in @('python.exe','pythonw.exe') -and ((Test-MinhDucVenvPythonPath -ExecutablePath $item.ExecutablePath -Venv $Venv) -or $withEnv)
         if ($root -or ($Known.ContainsKey($key) -and (Test-MinhDucProcessIdentity $Known[$key] $item))) { $selected[$key] = $item }
