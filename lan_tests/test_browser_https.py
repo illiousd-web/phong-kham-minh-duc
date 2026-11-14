@@ -192,7 +192,7 @@ def test_u1b_glass_login_and_shell(https_server,width,height):
             expect(page.locator('.shell-header')).to_be_visible()
             assert page.locator('.shell-header').evaluate('e=>getComputedStyle(e).position')==('static' if width<=900 else 'sticky')
             active=page.locator('.navbutton[aria-current="page"]')
-            assert active.evaluate('e=>getComputedStyle(e).backgroundColor')=='rgb(255, 255, 255)'
+            assert active.evaluate('e=>getComputedStyle(e).backgroundColor')=='rgba(255, 255, 255, 0.9)'
             no_horizontal_scroll(page)
             if width<=900:
                 assert page.locator('#navigation').evaluate('e=>getComputedStyle(e).flexWrap')=='nowrap'
@@ -242,7 +242,11 @@ def test_u1b_doctor_sticky_below_shell_after_scroll(https_server,clients,width,h
                 r=rectangles[key]
                 assert 0<=r['top']<r['bottom']<=height,rectangles
                 assert r['top']>=rectangles['header']['bottom'],rectangles
-            if width<=900:assert rectangles['offset']==0
+            if width<=900:
+                assert rectangles['offset']==0
+                expect(page.locator('.queue-item.current')).to_have_css('background-color','rgba(255, 255, 255, 0.72)')
+                expect(page.locator('.queue-item.current')).to_have_css('border-radius','28px')
+                expect(page.locator('.queue-item.current')).to_have_css('border-top-width','1px')
             else:assert rectangles['offset']>0
             no_horizontal_scroll(page)
             evidence=Path('test_evidence/u1b');evidence.mkdir(parents=True,exist_ok=True)
@@ -423,6 +427,14 @@ def test_u1r1_shared_shell(https_server,clients,width,height,role_name):
             errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
             page.goto(origin)
             expect(page.locator('[data-form=login]')).to_be_visible()
+            expect(page.locator('.login-card .hint')).to_have_css('background-color','rgba(255, 255, 255, 0.75)')
+            expect(page.locator('.trial-strip')).to_be_visible()
+            expect(page.locator('.trial-strip')).to_contain_text('Chưa được thẩm định')
+            if width<=900:
+                assert page.locator('.trial-strip').evaluate("e=>{const s=getComputedStyle(e);return e.scrollWidth<=e.clientWidth && e.clientHeight-parseFloat(s.paddingTop)-parseFloat(s.paddingBottom)<=36}")
+            page.evaluate("document.fonts.load('900 40px \"Be Vietnam Pro\"','Phòng khám')")
+            assert page.evaluate("document.fonts.check('900 40px \"Be Vietnam Pro\"','Phòng khám')")
+            assert page.evaluate("performance.getEntriesByType('resource').some(r=>r.name.includes('/assets/fonts/')&&r.name.includes('900-normal.woff2'))")
             evidence=Path('test_evidence/u1r1');evidence.mkdir(parents=True,exist_ok=True)
             no_horizontal_scroll(page)
             page.screenshot(path=str(evidence/f'login-{role_name}-{width}.png'))
@@ -433,9 +445,15 @@ def test_u1r1_shared_shell(https_server,clients,width,height,role_name):
             expect(page.locator('.sidebar, aside.sidebar')).to_have_count(0)
             expect(page.locator('.eyebrow')).to_have_count(0)
             expect(page.locator('.trial-strip')).to_contain_text('Bản thử nghiệm')
+            expect(page.locator('.trial-strip')).to_contain_text('Chưa được thẩm định')
+            if width<=900:
+                nav=page.locator('#navigation')
+                expect(nav).to_have_css('position','fixed')
+                box=nav.bounding_box();assert abs(box['x']-16)<1 and abs(box['y']+box['height']-(height-22))<1
+                assert page.locator('.trial-strip').evaluate("e=>e.scrollWidth<=e.clientWidth && e.clientHeight-10<=36")
             expect(page.locator('.shell-header img')).to_have_attribute('src','/assets/MinhDuc_logo_mau.svg')
             active=page.locator('#navigation [aria-current=page]')
-            expect(active).to_have_css('background-color','rgb(255, 255, 255)')
+            expect(active).to_have_css('background-color','rgba(255, 255, 255, 0.9)')
             assert page.locator('#navigation').evaluate("e=>getComputedStyle(e).flexWrap==='nowrap'")
             assert page.locator('#navigation [data-action=navigate]').evaluate_all('es=>es.map(e=>e.dataset.page)')==page.evaluate('menus[role()].map(p=>p[0])')
             assert page.locator('#navigation [data-count]').count()==page.locator('#navigation [data-action=navigate]').count()
@@ -449,6 +467,10 @@ def test_u1r1_shared_shell(https_server,clients,width,height,role_name):
             expect(page.locator('#toast')).to_be_hidden()
             no_horizontal_scroll(page)
             page.screenshot(path=str(evidence/f'{role_name}-{width}.png'))
+            if width<=900:
+                page.evaluate('window.scrollTo(0,document.documentElement.scrollHeight)')
+                footer=page.locator('footer').bounding_box();nav=page.locator('#navigation').bounding_box()
+                assert footer['y']+footer['height']<=nav['y'],(footer,nav)
             page.locator('.account-trigger').click();page.locator('#logout').click()
             expect(page.locator('[data-form=login]')).to_be_visible()
             assert not errors,errors

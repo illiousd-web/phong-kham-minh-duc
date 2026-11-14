@@ -123,6 +123,14 @@ function stats(list){return `<div class="cards">${list.map(([name,value])=>`<div
 function tabs(current,list,kind){return `<div class="tabs" role="tablist">${list.map(([id,label])=>`<button type="button" role="tab" class="tab" data-action="tab" data-kind="${esc(kind)}" data-tab="${esc(id)}" aria-selected="${current===id}">${esc(label)}</button>`).join('')}</div>`}
 function patientHead(v){return `<div class="patient-head"><div><b>${esc(v.patient_name)}</b> <span class="muted">${esc(v.patient_code||'')}</span></div><div class="muted">${esc(v.patient_sex||'—')} · ${v.patient_dob?ageOf(v.patient_dob)+' tuổi · sinh '+showDay(v.patient_dob):'chưa có ngày sinh'} · lượt #${v.id} ngày ${showDay(v.created_at)}</div><div>${pill(v.status)}</div></div>`}
 // Bảng tự chuyển thành thẻ trên màn hình hẹp: gắn nhãn cột cho từng ô.
+function styleSmallGlassCopy(root){
+ root.querySelectorAll('.card *, .doctor-section *, .stat *').forEach(el=>{
+  if(![...el.childNodes].some(n=>n.nodeType===3&&n.textContent.trim()))return;
+  const st=getComputedStyle(el),color=st.backgroundColor.match(/[\d.]+/g)||[];
+  const alpha=color.length===4?Number(color[3]):1;
+  if(parseFloat(st.fontSize)<14&&alpha<0.75)el.classList.add('glass-small-copy');
+ });
+}
 function labelTables(root){root.querySelectorAll('table.table').forEach(table=>{const heads=[...table.querySelectorAll('thead th')].map(th=>th.textContent);table.querySelectorAll('tbody tr').forEach(tr=>[...tr.children].forEach((td,i)=>{if(heads[i]&&td.colSpan<2)td.setAttribute('data-label',heads[i])}))})}
 
 // ---------- Khung trang, menu, số đếm hàng chờ ----------
@@ -163,11 +171,11 @@ const SCREENS={reception:receptionScreen,prices:pricesScreen,doctor:doctorScreen
 async function render(){if(!auth){renderLogin();return}viewInit();const page=active,epoch=++renderEpoch;$('workspace').setAttribute('aria-busy','true');$('workspace').dataset.page=page;$('workspace').innerHTML=card('Đang tải dữ liệu ...');try{
  if(!uiLoaded)await loadUi();
  const out=await SCREENS[page]();if(epoch!==renderEpoch)return;
- const html=typeof out==='string'?out:out.html;$('workspace').innerHTML=html;labelTables($('workspace'));if(out&&out.after)out.after();
+ const html=typeof out==='string'?out:out.html;$('workspace').innerHTML=html;labelTables($('workspace'));if(out&&out.after)out.after();styleSmallGlassCopy($('workspace'));
  }catch(e){if(epoch!==renderEpoch)return;$('workspace').innerHTML=card(`<div class="empty">Không thể tải trang: ${esc(e.message)}</div>`)}finally{if(epoch===renderEpoch){await refreshCounts();if(epoch===renderEpoch)$('workspace').setAttribute('aria-busy','false')}}}
 function renderLogin(){document.body.classList.add('login-view');scopeWarnings.clear();priceFile=null;pricePreview=null;priceResult=null;auth=null;uiLoaded=false;for(const k in lastCounts)delete lastCounts[k];$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');$('change-password').classList.add('hidden');$('workspace').setAttribute('aria-busy','false');
  const users=[['letan','Lễ tân'],['bs_noi','Bác sĩ Nội'],['bs_san','Bác sĩ Sản'],['kythuat','Kỹ thuật viên'],['duoc','Nhân viên dược'],['thungan','Thu ngân'],['quanly','Quản lý'],['quantri','Quản trị viên'],['dieuduong','Điều dưỡng']];
- $('workspace').innerHTML=`<section class="card login-card"><img class="login-logo" src="/assets/MinhDuc_logo_mau.svg" alt="Phòng khám đa khoa Minh Đức"><h1>Phòng khám đa khoa Minh Đức</h1><p class="login-subtitle">Đăng nhập bằng tài khoản của bạn</p><form data-form="login" class="fields">${serverMode==='lan'?field('Tài khoản nhân viên','username','text','',true):selectField('Tài khoản mô phỏng','username',users)}${field('Mật khẩu','password','password','',true)}<div class="field full"><button class="btn" type="submit">Đăng nhập</button><p class="hint">${serverMode==='lan'?'Dùng tài khoản riêng do quản trị cấp. Phiên kết thúc sau 20 phút không hoạt động hoặc tối đa 8 giờ.':'Nhập mật khẩu đã chọn khi khởi động bản demo cục bộ.'}</p></div></form></section>`;}
+ $('workspace').innerHTML=`<section class="card login-card"><img class="login-logo" src="/assets/MinhDuc_logo_mau.svg" alt="Phòng khám đa khoa Minh Đức"><h1>Phòng khám đa khoa Minh Đức</h1><p class="login-subtitle">Đăng nhập bằng tài khoản của bạn</p><form data-form="login" class="fields">${serverMode==='lan'?field('Tài khoản nhân viên','username','text','',true):selectField('Tài khoản mô phỏng','username',users)}${field('Mật khẩu','password','password','',true)}<div class="field full"><button class="btn" type="submit">Đăng nhập</button><p class="hint">${serverMode==='lan'?'Dùng tài khoản riêng do quản trị cấp. Phiên kết thúc sau 20 phút không hoạt động hoặc tối đa 8 giờ.':'Nhập mật khẩu đã chọn khi khởi động bản demo cục bộ.'}</p></div></form></section>`;styleSmallGlassCopy($('workspace'));}
 
 let patientCatalog=[];
 const ADMIN_FIELDS=[['ethnicity','Dân tộc'],['occupation','Nghề nghiệp'],['workplace','Nơi làm việc / học tập'],['province','Tỉnh / thành'],['commune','Xã / phường / đặc khu'],['address_detail','Địa chỉ chi tiết']];
