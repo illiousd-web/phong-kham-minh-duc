@@ -68,7 +68,7 @@ def test_c3c_browser_find_and_open_old_visit(https_server, api, width):
         page.goto(origin, wait_until='networkidle')
         page.locator('[name="username"]').fill('test_manager')
         page.locator('[name="password"]').fill(PASSWORDS['manager'])
-        page.locator('[data-form="login"] button').click(); page.locator('#logout').wait_for(); settle(page)
+        page.locator('[data-form="login"] button').click(); page.locator('.account-trigger').wait_for(); settle(page)
         go(page, 'manager')
         page.get_by_role('tab', name='Lượt khám', exact=True).click(); settle(page)
         # Mặc định 7 ngày gần nhất, ngày hiện dd/mm/yyyy theo giờ Việt Nam.
@@ -144,7 +144,7 @@ def _login_manager(p, origin, certdir, width, errors):
     page.goto(origin, wait_until='networkidle')
     page.locator('[name="username"]').fill('test_manager')
     page.locator('[name="password"]').fill(PASSWORDS['manager'])
-    page.locator('[data-form="login"] button').click(); page.locator('#logout').wait_for(); settle(page)
+    page.locator('[data-form="login"] button').click(); page.locator('.account-trigger').wait_for(); settle(page)
     go(page, 'manager')
     page.get_by_role('tab', name='Lượt khám', exact=True).click(); settle(page)
     return browser, context, page

@@ -10,7 +10,7 @@ def test_be_vietnam_pro_fonts_are_self_hosted_and_load_offline():
     css=client.get('/assets/styles.css')
     assert css.status_code==200
     urls=re.findall(r"url\(['\"]?([^)'\"]+)",css.text)
-    assert len(urls)==10
+    assert len(urls)==12
     for path in urls:
         assert path.startswith('/assets/fonts/') and path.endswith('.woff2')
         response=client.get(path)
@@ -29,12 +29,13 @@ def test_be_vietnam_pro_fonts_are_self_hosted_and_load_offline():
             route.fulfill(status=result.status_code,body=result.content,headers={'content-type':result.headers['content-type']})
         page.route('**/*',local)
         page.set_content('<link rel="stylesheet" href="http://clinic.test/assets/styles.css"><p>Phòng khám Minh Đức</p><button class="btn">Tiếp tục</button><button class="btn-danger smallbtn">Hủy</button><button class="allergy-edit smallbtn">Sửa dị ứng</button><div class="field"><input><select><option>Chọn</option></select><textarea></textarea></div><div class="card">Thông tin</div>')
-        page.evaluate('''async()=>{for(const weight of [400,500,600,700,800]){await document.fonts.load(weight+' 15px "Be Vietnam Pro"','Phòng khám Việt Nam');}}''')
+        page.evaluate('''async()=>{for(const weight of [400,500,600,700,800,900]){await document.fonts.load(weight+' 15px "Be Vietnam Pro"','Phòng khám Việt Nam');}}''')
         assert page.evaluate('document.fonts.check(\'800 15px "Be Vietnam Pro"\',"Việt Nam")')
         assert page.locator('body').evaluate('e=>getComputedStyle(e).fontSize')=='15px'
         for width in (1366,390):
             page.set_viewport_size({'width':width,'height':900})
             assert all(height>=44 for height in page.locator('button').evaluate_all('es=>es.map(e=>e.getBoundingClientRect().height)'))
+        assert page.locator('.btn').evaluate('e=>getComputedStyle(e).backgroundColor')=='rgb(0, 130, 73)'
         assert page.locator('.btn-danger').evaluate('e=>getComputedStyle(e).backgroundColor')=='rgb(180, 35, 24)'
         allergy=page.locator('.allergy-edit').evaluate('e=>{const s=getComputedStyle(e);return [s.borderTopColor,s.borderTopWidth,s.color,s.backgroundColor]}')
         assert allergy==['rgb(180, 35, 24)','2px','rgb(180, 35, 24)','rgb(255, 255, 255)']
@@ -56,5 +57,8 @@ def test_favicon_returns_200_and_is_linked():
     assert response.status_code==200 and response.content[:4]==b'\x00\x00\x01\x00'
     html=client.get('/').text
     assert '<link rel="icon" href="/assets/favicon.ico">' in html
-    assert '/assets/MinhDuc_bieutuong_vuong.svg' in html
+    # Keep the installed HTTPS probe's brand identification without the old eyebrow.
+    assert '<meta name="application-name" content="PHÒNG KHÁM ĐA KHOA MINH ĐỨC">' in html
+    assert 'HỆ THỐNG QUẢN LÝ PHÒNG KHÁM' not in html
+    assert '/assets/MinhDuc_logo_mau.svg' in html
     assert 'logo_minh_duc.png' not in html

@@ -504,7 +504,7 @@ def day(https_server):
             page.locator('[name="username"]').fill('test_' + role)
             page.locator('[name="password"]').fill(PASSWORDS[role])
             page.locator('[data-form="login"] button').click()
-            page.locator('#logout').wait_for(); settle(page)
+            page.locator('.account-trigger').wait_for(); settle(page)
         scenario = Day(clients, pages, ledger)
         scenario.browser_version, scenario.errors = browser.version, errors
         scenario.setup_catalog_and_stock()

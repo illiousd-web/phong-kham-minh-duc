@@ -2,6 +2,7 @@
 <html lang="vi" class="fonts-pending">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="application-name" content="PHÒNG KHÁM ĐA KHOA MINH ĐỨC">
 <title>Phòng khám đa khoa Minh Đức | Bản thử nghiệm</title>
 <link rel="icon" href="/assets/favicon.ico">
 <link rel="stylesheet" href="/assets/styles.css">
@@ -9,17 +10,17 @@
 <body class="login-view">
 <div class="app" id="app">
  <header class="shell-header">
-  <div class="brand"><div class="logo actual-logo"><img src="/assets/MinhDuc_bieutuong_vuong.svg" alt="Phòng khám đa khoa Minh Đức"></div><div><strong>Phòng khám đa khoa Minh Đức</strong><span>Chăm sóc sức khỏe · Nội bộ phòng khám</span></div></div>
-  <div class="user-actions"><span id="user-label">Chưa đăng nhập</span><button id="change-password" class="ghost hidden" type="button">Đổi mật khẩu</button><button id="logout" class="ghost hidden" type="button">Đăng xuất</button></div>
- </header>
- <aside class="sidebar">
-  <div class="brand-sub">ĐIỀU HƯỚNG THEO VAI TRÒ</div>
+  <div class="brand"><img src="/assets/MinhDuc_logo_mau.svg" alt="Phòng khám đa khoa Minh Đức"></div>
   <nav id="navigation" aria-label="Chức năng theo vai trò"></nav>
-  <div class="sidebottom">Chạy thử nội bộ · Chỉ sử dụng dữ liệu giả lập</div>
- </aside>
+  <details class="account-menu">
+   <summary class="account-trigger" aria-label="Menu tài khoản"><span id="user-label">Chưa đăng nhập</span><span class="account-initial" aria-hidden="true"></span></summary>
+   <div class="account-options"><button id="change-password" class="ghost hidden" type="button">Đổi mật khẩu</button><button id="logout" class="ghost hidden" type="button">Đăng xuất</button></div>
+  </details>
+ </header>
+ <div class="trial-strip" role="note"><strong>Bản thử nghiệm – không nhập dữ liệu thật.</strong> Chưa được thẩm định để sử dụng thực tế.</div>
  <main class="main">
-  <header class="toolbar"><div><div class="eyebrow">HỆ THỐNG QUẢN LÝ PHÒNG KHÁM</div><h1 id="page-title">Tổng quan</h1></div></header>
-  <div class="notice"><strong>Bản thử nghiệm – không nhập dữ liệu bệnh nhân thật.</strong> Chưa được thẩm định nghiệp vụ hoặc pháp lý để sử dụng khám, kê đơn, ký xác nhận hay thu tiền thực tế.</div>
+  <header class="toolbar"><div><h1 id="page-title">Tổng quan</h1></div></header>
+
   <section id="workspace"></section>
   <footer>Phòng khám đa khoa Minh Đức · Thử nghiệm cục bộ / LAN nội bộ · Chưa kết nối máy xét nghiệm / X-quang / siêu âm · Biểu mẫu chỉ in thử</footer>
  </main>

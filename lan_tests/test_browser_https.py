@@ -61,7 +61,7 @@ def test_real_https_three_browser_roles_and_pdf():
                     page.locator('input[name="username"]').fill('test_'+role)
                     page.locator('input[name="password"]').fill(PASSWORDS[role])
                     page.locator('[data-form="login"] button').click()
-                    page.locator('#logout').wait_for(state='visible')
+                    page.locator('.account-trigger').wait_for(state='visible')
                     assert page.evaluate("sessionStorage.getItem('md_token')") is None
                     assert '__Host-clinic=' not in page.evaluate('document.cookie')
                 # Mỗi vai trò vào thẳng màn hình công việc, chỉ thấy menu của mình, không còn menu mang số phiên bản.
@@ -188,11 +188,11 @@ def test_u1b_glass_login_and_shell(https_server,width,height):
             page.locator('[name="username"]').fill('test_reception')
             page.locator('[name="password"]').fill(PASSWORDS['reception'])
             page.locator('[data-form="login"] button').click()
-            expect(page.locator('#logout')).to_be_visible();settle(page)
+            expect(page.locator('.account-trigger')).to_be_visible();settle(page)
             expect(page.locator('.shell-header')).to_be_visible()
             assert page.locator('.shell-header').evaluate('e=>getComputedStyle(e).position')==('static' if width<=900 else 'sticky')
             active=page.locator('.navbutton[aria-current="page"]')
-            assert active.evaluate('e=>getComputedStyle(e).backgroundColor')=='rgb(11, 31, 23)'
+            assert active.evaluate('e=>getComputedStyle(e).backgroundColor')=='rgba(255, 255, 255, 0.9)'
             no_horizontal_scroll(page)
             if width<=900:
                 assert page.locator('#navigation').evaluate('e=>getComputedStyle(e).flexWrap')=='nowrap'
@@ -222,7 +222,7 @@ def test_u1b_doctor_sticky_below_shell_after_scroll(https_server,clients,width,h
             page=browser.new_page(viewport={'width':width,'height':height})
             page.goto(origin)
             page.locator('[name="username"]').fill('test_doctor');page.locator('[name="password"]').fill(PASSWORDS['doctor'])
-            page.locator('[data-form="login"] button').click();expect(page.locator('#logout')).to_be_visible();settle(page)
+            page.locator('[data-form="login"] button').click();expect(page.locator('.account-trigger')).to_be_visible();settle(page)
             page.set_viewport_size({'width':390,'height':844})
             expect(page.locator('html')).to_have_css('--shell-h','0px')
             page.set_viewport_size({'width':1366,'height':768})
@@ -242,7 +242,11 @@ def test_u1b_doctor_sticky_below_shell_after_scroll(https_server,clients,width,h
                 r=rectangles[key]
                 assert 0<=r['top']<r['bottom']<=height,rectangles
                 assert r['top']>=rectangles['header']['bottom'],rectangles
-            if width<=900:assert rectangles['offset']==0
+            if width<=900:
+                assert rectangles['offset']==0
+                expect(page.locator('.queue-item.current')).to_have_css('background-color','rgba(255, 255, 255, 0.72)')
+                expect(page.locator('.queue-item.current')).to_have_css('border-radius','28px')
+                expect(page.locator('.queue-item.current')).to_have_css('border-top-width','1px')
             else:assert rectangles['offset']>0
             no_horizontal_scroll(page)
             evidence=Path('test_evidence/u1b');evidence.mkdir(parents=True,exist_ok=True)
@@ -257,7 +261,9 @@ def test_u1b_doctor_sticky_below_shell_after_scroll(https_server,clients,width,h
                 expect(heading).to_be_visible()
                 geometry=heading.evaluate("e=>{const r=e.getBoundingClientRect(),sticky=document.querySelector('.doctor-sticky').getBoundingClientRect();return {top:r.top,bottom:r.bottom,stickyBottom:sticky.bottom,height:innerHeight};}")
                 assert geometry['top']>=geometry['stickyBottom'] and geometry['bottom']<=geometry['height'],(target,geometry)
-                if target in ('history','payment'):
+                # The new card padding lets History align without reaching the page end.
+                # Payment is still the final, clamped section; retain the bottom regression.
+                if target=='payment':
                     assert page.evaluate('scrollY+innerHeight>=document.documentElement.scrollHeight-2'),target
                 # Force the scroll handler again even when scrollIntoView was clamped.
                 page.evaluate("window.dispatchEvent(new Event('scroll'))")
@@ -295,7 +301,7 @@ def test_u1c_doctor_queue_and_prescription(https_server,clients,width,height):
             held=[];page.route('**/api/visits/*',lambda route:held.append(route))
             page.goto(origin)
             page.locator('[name="username"]').fill('test_doctor');page.locator('[name="password"]').fill(PASSWORDS['doctor'])
-            page.locator('[data-form="login"] button').click();expect(page.locator('#logout')).to_be_visible();settle(page)
+            page.locator('[data-form="login"] button').click();expect(page.locator('.account-trigger')).to_be_visible();settle(page)
             expect(page.locator('.doctor-waiting .queue-item').first).to_be_visible()
             assert held==[]
             page.unroute('**/api/visits/*')
@@ -375,7 +381,7 @@ def test_u1c_queue_allergy_flags_do_not_view_records(https_server,clients,width,
             page.on('request',lambda request:details.append(request.url) if re.fullmatch(r'/api/visits/\d+',urlsplit(request.url).path) else None)
             page.goto(origin)
             page.locator('[name="username"]').fill('test_doctor');page.locator('[name="password"]').fill(PASSWORDS['doctor'])
-            page.locator('[data-form="login"] button').click();expect(page.locator('#logout')).to_be_visible();settle(page)
+            page.locator('[data-form="login"] button').click();expect(page.locator('.account-trigger')).to_be_visible();settle(page)
             page.locator('[name="doctor_query"]').fill(tag)
             page.locator('[data-form="doctor-filter"] button').click();settle(page)
             cards=page.locator('.doctor-waiting .queue-item')
@@ -406,3 +412,85 @@ def test_u1c_queue_allergy_flags_do_not_view_records(https_server,clients,width,
     selected=[r for r in rows if r['id'] in ids]
     assert len(selected)==6
     assert all('has_allergy' not in r and 'allergies' not in r and 'patient_allergies' not in r for r in selected)
+
+
+@pytest.mark.parametrize('width,height',[(1366,768),(390,844)])
+@pytest.mark.parametrize('role_name',['reception','doctor','cashier'])
+def test_u1r1_shared_shell(https_server,clients,width,height,role_name):
+    origin,certdir=https_server
+    cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as p:
+        browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
+        try:
+            page=browser.new_page(viewport={'width':width,'height':height})
+            errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+            # Synthetic nonzero counts exercise the visible badge even on an empty database.
+            def badge_counts(route):
+                route.fulfill(json={key:1 for key in ('reception','doctor','cashier','prices','m6-list','m5-queue')})
+            page.route('**/api/queue-counts',badge_counts)
+            page.goto(origin)
+            expect(page.locator('[data-form=login]')).to_be_visible()
+            expect(page.locator('.glass-small-copy')).to_have_count(0)
+            expect(page.locator('.trial-strip')).to_be_visible()
+            expect(page.locator('.trial-strip')).to_have_css('font-size','13px')
+            expect(page.locator('.trial-strip')).to_contain_text('Chưa được thẩm định')
+            if width<=900:
+                assert page.locator('.trial-strip').evaluate("e=>{const s=getComputedStyle(e);return e.scrollWidth<=e.clientWidth && e.clientHeight-parseFloat(s.paddingTop)-parseFloat(s.paddingBottom)<=36}")
+            page.evaluate("document.fonts.load('900 40px \"Be Vietnam Pro\"','Phòng khám')")
+            assert page.evaluate("document.fonts.check('900 40px \"Be Vietnam Pro\"','Phòng khám')")
+            assert page.evaluate("performance.getEntriesByType('resource').some(r=>r.name.includes('/assets/fonts/')&&r.name.includes('900-normal.woff2'))")
+            evidence=Path('test_evidence/u1r1');evidence.mkdir(parents=True,exist_ok=True)
+            no_horizontal_scroll(page)
+            page.screenshot(path=str(evidence/f'login-{role_name}-{width}.png'))
+            page.locator('[name=username]').fill('test_'+role_name)
+            page.locator('[name=password]').fill(PASSWORDS[role_name])
+            page.locator('[data-form=login] button').click()
+            expect(page.locator('.account-trigger')).to_be_visible();settle(page)
+            expect(page.locator('#navigation .badge').first).to_be_visible()
+            for badge in page.locator('#navigation .badge:visible').all():
+                expect(badge).to_have_css('background-color','rgb(180, 35, 24)')
+                assert badge.evaluate('e=>e.getBoundingClientRect().height>=24')
+            expect(page.locator('.trial-strip')).to_have_css('font-size','13px')
+            expect(page.locator('.glass-small-copy')).to_have_count(0)
+            if width<=900:
+                toast=page.locator('#toast').bounding_box();nav=page.locator('#navigation').bounding_box()
+                assert toast and toast['y']>=0 and toast['y']+toast['height']<=nav['y'],(toast,nav)
+            page.emulate_media(media='print')
+            expect(page.locator('.card').first).to_have_css('background-color','rgb(255, 255, 255)')
+            expect(page.locator('.card').first).to_have_css('box-shadow','none')
+            expect(page.locator('.card').first).to_have_css('backdrop-filter','none')
+            page.emulate_media(media='screen')
+            expect(page.locator('.sidebar, aside.sidebar')).to_have_count(0)
+            expect(page.locator('.eyebrow')).to_have_count(0)
+            expect(page.locator('.trial-strip')).to_contain_text('Bản thử nghiệm')
+            expect(page.locator('.trial-strip')).to_contain_text('Chưa được thẩm định')
+            if width<=900:
+                nav=page.locator('#navigation')
+                expect(nav).to_have_css('position','fixed')
+                box=nav.bounding_box();assert abs(box['x']-16)<1 and abs(box['y']+box['height']-(height-22))<1
+                assert page.locator('.trial-strip').evaluate("e=>{const s=getComputedStyle(e);return e.scrollWidth<=e.clientWidth && e.clientHeight-parseFloat(s.paddingTop)-parseFloat(s.paddingBottom)<=36}")
+            expect(page.locator('.shell-header img')).to_have_attribute('src','/assets/MinhDuc_logo_mau.svg')
+            active=page.locator('#navigation [aria-current=page]')
+            expect(active).to_have_css('background-color','rgba(255, 255, 255, 0.9)')
+            assert page.locator('#navigation').evaluate("e=>getComputedStyle(e).flexWrap==='nowrap'")
+            assert page.locator('#navigation [data-action=navigate]').evaluate_all('es=>es.map(e=>e.dataset.page)')==page.evaluate('menus[role()].map(p=>p[0])')
+            assert page.locator('#navigation [data-count]').count()==page.locator('#navigation [data-action=navigate]').count()
+            assert page.locator('body').evaluate("e=>getComputedStyle(e).backgroundImage.includes('15% 10%')" if width<=900 else "e=>getComputedStyle(e).backgroundImage.includes('255, 217, 160')")
+            assert page.locator('.card').first.evaluate("e=>getComputedStyle(e).boxShadow.includes('inset')")
+            page.locator('.account-trigger').click()
+            expect(page.locator('#logout')).to_be_visible()
+            page.locator('#change-password').click();settle(page)
+            expect(page.locator('[data-form=password]')).to_be_visible()
+            page.locator('#navigation [data-action=navigate]').first.click();settle(page)
+            expect(page.locator('#toast')).to_be_hidden()
+            no_horizontal_scroll(page)
+            page.screenshot(path=str(evidence/f'{role_name}-{width}.png'))
+            if width<=900:
+                page.evaluate('window.scrollTo(0,document.documentElement.scrollHeight)')
+                footer=page.locator('footer').bounding_box();nav=page.locator('#navigation').bounding_box()
+                assert footer['y']+footer['height']<=nav['y'],(footer,nav)
+            page.locator('.account-trigger').click();page.locator('#logout').click()
+            expect(page.locator('[data-form=login]')).to_be_visible()
+            assert not errors,errors
+        finally:browser.close()

@@ -45,7 +45,7 @@ def test_m0_six_sections_keyboard_allergies_and_responsive_evidence(https_server
         page.on('dialog', lambda dialog: dialog.accept())
         page.goto(origin)
         page.locator('[name="username"]').fill('test_doctor'); page.locator('[name="password"]').fill(PASSWORDS['doctor'])
-        page.locator('[data-form="login"] button').click(); page.locator('#logout').wait_for(); settle(page)
+        page.locator('[data-form="login"] button').click(); page.locator('.account-trigger').wait_for(); settle(page)
         # Date is explicit, independent of the clock on a CI runner.
         page.locator('[name="doctor_day"]').fill('10/11/2026')
         page.locator('[name="doctor_query"]').fill('dang thi m0 giao dien')

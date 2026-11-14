@@ -43,7 +43,7 @@ def test_cashier_pages_keep_all_old_debts_selectable(https_server):
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.goto(origin)
             page.locator('[name="username"]').fill('test_cashier');page.locator('[name="password"]').fill(PASSWORDS['cashier'])
-            page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for();settle(page)
+            page.locator('[data-form="login"] button').click();page.locator('.account-trigger').wait_for();settle(page)
             formats=page.evaluate("""() => [null,0,1,1000,150000,2000000000,-150000].map(n=>
                 [money(n),n===null?'CHƯA CÓ GIÁ':Number(n||0).toLocaleString('vi-VN')+' đ'])""")
             assert all(actual==previous for actual,previous in formats)

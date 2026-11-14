@@ -36,7 +36,7 @@ def test_pending_queues_chromium109_show_all_old_work(https_server):
             context=browser.new_context(viewport={'width':390,'height':844})
             page=context.new_page();page.on('pageerror',lambda error:errors.append(str(error)))
             page.goto(origin);page.locator('[name="username"]').fill('test_'+role);page.locator('[name="password"]').fill(PASSWORDS[role])
-            page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for();settle(page)
+            page.locator('[data-form="login"] button').click();page.locator('.account-trigger').wait_for();settle(page)
             if role=='technician':
                 ids=[int(x) for x in page.locator('[data-action="pick"][data-kind="order"]').evaluate_all('els=>els.map(e=>e.dataset.id)')]
                 assert len(ids)==len(set(ids)) and set(data['ordered'])<=set(ids)

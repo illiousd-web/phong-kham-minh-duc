@@ -26,6 +26,11 @@ import psutil
 import psycopg
 from psycopg import sql
 
+if __package__:
+    from .ui_wait import wait_for_login
+else:
+    from ui_wait import wait_for_login
+
 ROOT=Path(__file__).resolve().parents[1]
 MIB=1024**2
 JOB_HANDLE=None
@@ -270,7 +275,7 @@ def run_profile(source, label, env, data, manifest, pg_pid, output):
                     page=context.new_page();page.set_default_timeout(15000);pages[role]=page
                     page.on('pageerror',lambda error:result['errors'].append(str(error)))
                     page.goto(env['CLINIC_ORIGIN']);page.locator('[name="username"]').fill(value['username']);page.locator('[name="password"]').fill(value['password'])
-                    page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for()
+                    page.locator('[data-form="login"] button').click();wait_for_login(page)
                     where={'technician':'lab'}.get(role,role)
                     result['screens']['hang_cho_'+role]=measure('Hàng chờ '+role,lambda page=page,where=where:go(page,where))
                 # Ngoài khoảng đo: chứng minh tốc độ không đến từ việc cắt mất hàng chờ.

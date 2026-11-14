@@ -50,9 +50,9 @@ with sync_playwright() as p:
    page.locator('[data-form="login"] select[name="username"]').select_option(who)
    page.locator('[data-form="login"] input[name="password"]').fill(env['DEMO_PASSWORD'])
    page.locator('[data-form="login"] button[type="submit"]').click()
-   page.locator('#logout').wait_for(state='visible',timeout=8000)
+   page.locator('.account-trigger').wait_for(state='visible',timeout=8000)
   def logout():
-   page.locator('#logout').click()
+   page.locator('.account-trigger').click();page.locator('#logout').click()
    page.get_by_text('Đăng nhập theo vai trò').wait_for(timeout=8000)
   def settle():
    page.wait_for_function("document.getElementById('workspace').getAttribute('aria-busy')==='false'")

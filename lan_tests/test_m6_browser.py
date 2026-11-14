@@ -34,7 +34,7 @@ def test_m6_missing_ingredient_complete_on_row_and_lock(https_server,clients,req
         browser=pw.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
         if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):assert browser.version.split('.')[0]==os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
         page=browser.new_page(viewport={'width':width,'height':900});page.on('pageerror',lambda e:errors.append(str(e)))
-        page.goto(origin);page.locator('[name=username]').fill('test_doctor');page.locator('[name=password]').fill(PASSWORDS['doctor']);page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page);pick(page,'visit',vid)
+        page.goto(origin);page.locator('[name=username]').fill('test_doctor');page.locator('[name=password]').fill(PASSWORDS['doctor']);page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page);pick(page,'visit',vid)
         row=page.locator('.m6-row').first
         for key,value in {'name':'Tên thuốc mới giả lập '+str(width),'strength':'2 mg','dose':'1','frequency':'2','days':'5','unit':'viên','route':'Uống','timing':'sau ăn'}.items():row.locator('[name='+key+']').fill(value)
         expect(row.locator('[name=quantity]')).to_have_value('10')
@@ -81,7 +81,7 @@ def test_m6_missing_ingredient_complete_on_row_and_lock(https_server,clients,req
         target=Path('test_evidence/m6');target.mkdir(parents=True,exist_ok=True);download.value.save_as(str(target/f'don-gia-lap-{width}.pdf'))
         page.screenshot(path=str(target/f'ke-don-{width}.png'),full_page=True)
         no_horizontal_scroll(page)
-        page.locator('#logout').click();page.locator('[name=username]').fill('test_admin');page.locator('[name=password]').fill(PASSWORDS['admin']);page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+        page.locator('.account-trigger').click();page.locator('#logout').click();page.locator('[name=username]').fill('test_admin');page.locator('[name=password]').fill(PASSWORDS['admin']);page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page)
         from .browser_helpers import go
         go(page,'m6-admin');expect(page.locator('#workspace')).to_contain_text('Thuốc chưa rà soát')
         expect(page.locator('[data-m6-form=settings] [name=clinic_facility_code]')).to_have_value('ZZ001')
@@ -111,8 +111,8 @@ def test_s1_text_result_two_tabs_keep_first_version(https_server,clients,width):
         if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):assert browser.version.split('.')[0]==os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
         context=browser.new_context(viewport={'width':width,'height':900})
         first=context.new_page();first.on('pageerror',lambda e:errors.append(str(e)))
-        first.goto(origin);first.locator('[name=username]').fill('test_technician');first.locator('[name=password]').fill(PASSWORDS['technician']);first.locator('[data-form=login] button').click();first.locator('#logout').wait_for();settle(first);pick(first,'order',oid)
-        second=context.new_page();second.on('pageerror',lambda e:errors.append(str(e)));second.goto(origin);second.locator('#logout').wait_for();settle(second);pick(second,'order',oid)
+        first.goto(origin);first.locator('[name=username]').fill('test_technician');first.locator('[name=password]').fill(PASSWORDS['technician']);first.locator('[data-form=login] button').click();first.locator('.account-trigger').wait_for();settle(first);pick(first,'order',oid)
+        second=context.new_page();second.on('pageerror',lambda e:errors.append(str(e)));second.goto(origin);second.locator('.account-trigger').wait_for();settle(second);pick(second,'order',oid)
         first.locator('[name=result_text]').fill('Phiên bản đầu giả lập S1')
         second.locator('[name=result_text]').fill('Nội dung chưa được phép ghi đè')
         with first.expect_response(lambda response:response.url.endswith(f'/orders/{oid}/result')) as sent:first.locator('[data-form=result] button').click()

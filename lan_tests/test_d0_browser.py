@@ -23,12 +23,12 @@ def test_d0_source_preview_and_diagnosis_search(https_server,clients,width):
         if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):assert browser.version.split('.')[0]==os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
         page=browser.new_page(viewport={'width':width,'height':900});page.on('pageerror',lambda e:errors.append(str(e)))
         def login(role):
-            page.goto(origin);page.locator('[name=username]').fill('test_'+role);page.locator('[name=password]').fill(PASSWORDS[role]);page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+            page.goto(origin);page.locator('[name=username]').fill('test_'+role);page.locator('[name=password]').fill(PASSWORDS[role]);page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page)
         login('doctor');pick(page,'visit',vid);settle(page)
         form=page.locator('[data-d0=diagnosis]');form.locator('[data-d0-search]').fill('benh giao dien gia lap '+suffix)
         form.locator('[data-d0-code]').click();expect(form.locator('[name=primary]')).to_have_value(rows[0]['code'])
         form.locator('button',has_text='Lưu mã chẩn đoán').click();settle(page);expect(page.locator('[data-d0=diagnosis]')).to_contain_text('Đã mã hóa');no_horizontal_scroll(page)
-        page.locator('#logout').click();page.locator('[data-form=login]').wait_for();login('admin')
+        page.locator('.account-trigger').click();page.locator('#logout').click();page.locator('[data-form=login]').wait_for();login('admin')
         page.locator('[data-kind=admin][data-tab=catalog]').click();settle(page)
         imp=page.locator('[data-d0=import]');expect(imp.locator('.d0-confirm')).to_be_hidden()
         for name,value in [('document_number','Văn bản giả lập'),('document_date','01/01/2026'),('source','Nguồn giả lập'),('version','ui-test')]:imp.locator('[name='+name+']').fill(value)
@@ -63,7 +63,7 @@ def test_link_editor_filter_modes_and_single_lab_code(https_server,clients,width
             response=a.get('/api/standards/links/services');assert response.status_code==200
             body=response.json();body['items']=[x for x in body['items'] if x['id'] in (sid_a,sid_new,sid_pack)];body['total']=len(body['items']);route.fulfill(status=200,json=body)
         page.route('**/api/standards/links/services',own_services)
-        page.goto(origin);page.locator('[name=username]').fill('test_admin');page.locator('[name=password]').fill(PASSWORDS['admin']);page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+        page.goto(origin);page.locator('[name=username]').fill('test_admin');page.locator('[name=password]').fill(PASSWORDS['admin']);page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page)
         page.locator('[data-kind=admin][data-tab=catalog]').click();settle(page)
         f=page.locator('[data-d0=link][data-kind=services]');f.locator('[name=id]').select_option(str(sid_a));expect(f.locator('[name=codes]')).to_have_value(code_a)
         # A select value change without its change event must never send stale codes.

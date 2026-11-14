@@ -132,12 +132,14 @@ let lastDoctorTab={visit:null,target:null,at:-Infinity};
 function measureShellHeader(){
  const height=shellHeader&&!window.matchMedia('(max-width:900px)').matches?shellHeader.getBoundingClientRect().height:0;
  document.documentElement.style.setProperty('--shell-h',height+'px');
+ const nav=document.getElementById('navigation');document.documentElement.style.setProperty('--role-nav-h',(nav?nav.getBoundingClientRect().height:0)+'px');
 }
+new ResizeObserver(measureShellHeader).observe(document.getElementById('navigation'));
 if(shellHeader){new ResizeObserver(measureShellHeader).observe(shellHeader);window.addEventListener('resize',measureShellHeader);measureShellHeader();}
 
 function pagesFor(r){return [...(menus[r]||menus.reception),['password','Đổi mật khẩu']]}
 function viewInit(){if(!auth){renderLogin();return}document.body.classList.remove('login-view');const r=role();const m=pagesFor(r);
- if(!m.some(x=>x[0]===active))active=m[0][0];$('page-title').textContent=m.find(x=>x[0]===active)[1];$('user-label').textContent=auth.user.name+' · '+roles[r];$('logout').classList.remove('hidden');$('change-password').classList.remove('hidden');
+ if(!m.some(x=>x[0]===active))active=m[0][0];$('page-title').textContent=m.find(x=>x[0]===active)[1];$('user-label').textContent=auth.user.name;document.querySelector('.account-trigger').setAttribute('aria-label',auth.user.name+' · '+roles[r]);document.querySelector('.account-initial').textContent=auth.user.name.trim().split(/\s+/).pop().charAt(0).toUpperCase();$('logout').classList.remove('hidden');$('change-password').classList.remove('hidden');
  const switcher=auth.user.roles.filter(k=>menus[k]).length>1?selectField('Vai trò đang dùng','role_switch',auth.user.roles.filter(k=>menus[k]).map(k=>[k,roles[k]])):'';
  $('navigation').innerHTML=switcher+(menus[r]||[]).map(([id,label])=>`<button class="navbutton" data-action="navigate" data-page="${esc(id)}" aria-current="${active===id?'page':'false'}"><span>${esc(label)}</span><span class="badge hidden" data-count="${esc(id)}"></span></button>`).join('');
  if($('role_switch'))$('role_switch').value=r;}
@@ -692,8 +694,8 @@ document.addEventListener('input',ev=>{const el=ev.target;
  if(el.id==='price-filter'){const q=el.value.trim().toLowerCase();document.querySelectorAll('tr[data-search]').forEach(tr=>tr.classList.toggle('hidden',!!q&&!tr.dataset.search.includes(q)));return}
  if(el.classList?.contains('date-vn')&&ev.inputType!=='deleteContentBackward'){const d=el.value.replace(/[^\d]/g,'').slice(0,8);if(/^\d+$/.test(el.value.replace(/\//g,''))){el.value=d.length>4?`${d.slice(0,2)}/${d.slice(2,4)}/${d.slice(4)}`:d.length>2?`${d.slice(0,2)}/${d.slice(2)}`:d}}
  if(el.id?.startsWith('v_'))vitalsFlags();});
-$('logout').addEventListener('click',async()=>{try{await api('/logout',{method:'POST'})}catch{}sessionStorage.removeItem('md_token');auth=null;selectedRole=null;renderLogin()});
-$('change-password').addEventListener('click',async()=>{active='password';try{await render()}catch(e){notify(e.message,true)}});
+$('logout').addEventListener('click',async()=>{document.querySelector('.account-menu').open=false;try{await api('/logout',{method:'POST'})}catch{}sessionStorage.removeItem('md_token');auth=null;selectedRole=null;renderLogin()});
+$('change-password').addEventListener('click',async()=>{document.querySelector('.account-menu').open=false;active='password';try{await render()}catch(e){notify(e.message,true)}});
 async function boot(){
  try{const health=await api('/health');serverMode=health.mode||'demo';}catch(e){notify(e.message,true);return;}
  const token=sessionStorage.getItem('md_token');
