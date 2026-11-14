@@ -1,7 +1,6 @@
 """Convert the two project-approved public workbooks, validating their exact counts."""
 import csv
 import hashlib
-from pathlib import Path
 
 from app.patient_catalog import DATA, CSV_GEO_HEADERS, ETHNIC_HEADERS, parse_geography, parse_ethnicities
 

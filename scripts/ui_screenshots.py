@@ -43,14 +43,13 @@ def seed(base, password):
         c.headers['Authorization'] = 'Bearer ' + token
         return c
     manager, reception, doctor = login('quanly'), login('letan'), login('bs_noi')
-    tech, pharmacy, cashier = login('kythuat'), login('duoc'), login('thungan')
+    tech, pharmacy, cashier = login('kythuat'), login('duoc'), login('thungan')  # noqa: F841 - Keep all role logins and their client lifetimes for screenshot setup.
     ok = lambda r: (r.raise_for_status(), r.json())[1]
     ok(manager.post('/api/catalog/services', json={'name': 'Xét nghiệm đường huyết (mẫu)', 'category': 'lab', 'price': 45000}))
     ok(manager.post('/api/catalog/services', json={'name': 'Siêu âm bụng (mẫu)', 'category': 'ultrasound', 'price': 120000}))
     med = next(m for m in ok(manager.get('/api/catalog'))['medicines'] if not m['controlled'])
     ok(manager.put(f"/api/medicines/{med['id']}/price", json={'unit_price': 1500}))
     doctor_id = next(d['id'] for d in ok(reception.get('/api/staff')) if d['full_name'] == 'BS Nội')
-    nurse_id = None
     names = [('Nguyễn Văn Mẫu', 'Nam', '1980-04-12'), ('Trần Thị Thử', 'Nữ', '1992-11-05'), ('Lê Văn Giả', 'Nam', '1975-01-30')]
     visits = []
     for i, (name, sex, dob) in enumerate(names):

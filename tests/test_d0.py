@@ -17,8 +17,8 @@ def test_d0_migration_preserves_main_data_and_is_idempotent(tmp_path):
     for table in TABLES:assert c.execute('SELECT COUNT(*) FROM '+table).fetchone()[0]==0
 
 def test_d0_missing_column_mapping_and_12000_search_p95():
-    from tests.d0_cases import upload,raw
-    import time,statistics,json,math
+    from tests.d0_cases import upload
+    import time,json,math
     clients,_=context();a=clients['admin']
     rows=[{'code':'FAKE'+str(i).zfill(5),'name_vi':'Bệnh mô phỏng tìm kiếm '+str(i)} for i in range(12500)]
     upload(a,'icd10',rows)
@@ -36,7 +36,6 @@ def test_d0_prescription_lock_json_and_approved_lab_snapshot():
     clients,ids=context();check_standard_snapshots(clients,ids,db,1)
 
 def test_d0_excel_mapping_row_errors_and_metadata_proof():
-    from tests.d0_cases import raw
     import io,json
     from openpyxl import Workbook
     clients,_=context();a=clients['admin'];b=Workbook();w=b.active

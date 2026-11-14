@@ -1,5 +1,5 @@
 import pytest
-from tests.test_s1_prescription import prescription, create
+from tests.test_s1_prescription import prescription as prescription, create  # Imported pytest fixture.
 
 @pytest.mark.parametrize('ingredient,strength', [('Morphin','10mg/ml'),('Diazepam','5mg'),('Tramadol','50mg'),('mOrPhIn','10mg/ml')])
 def test_controlled_ingredient_without_manual_flag_is_blocked(prescription,ingredient,strength):

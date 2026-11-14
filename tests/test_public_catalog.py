@@ -5,8 +5,7 @@ import sqlite3
 
 import pytest
 
-from app.patient_catalog import (DATA, parse_geography, parse_ethnicities, bundled_catalog,
-    search_catalog, migrate_public_catalog)
+from app.patient_catalog import (DATA, parse_geography, parse_ethnicities, migrate_public_catalog)
 
 GEO='Danh-muc-Phuong-xa_moi_34-tinh-thanh-sau-sat-nhap.xlsx'
 ETHNIC='Danh_sach_54_dan_toc_Viet_Nam_2026.xlsx'

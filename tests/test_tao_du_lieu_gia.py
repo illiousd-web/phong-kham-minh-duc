@@ -1,5 +1,4 @@
 """Chặn nhầm CSDL/thư mục đang dùng trước khi mở bất kỳ kết nối ghi nào."""
-from pathlib import Path
 import pytest
 from scripts.tao_du_lieu_gia import CONFIRM, validate
 

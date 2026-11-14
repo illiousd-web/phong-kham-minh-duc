@@ -1,8 +1,7 @@
 """v0.5 business acceptance: synthetic data only, real PostgreSQL transactions."""
 from concurrent.futures import ThreadPoolExecutor
-import json,secrets
+import secrets
 from io import BytesIO
-import pytest
 from pypdf import PdfReader
 from docx import Document
 from .conftest import client_for,db,IDS
@@ -140,7 +139,7 @@ def test_c_care_task_ownership_history_and_complete_preconditions(clients,visit)
         assert doc.post(f'/api/visits/{visit}/complete',json={'version':v['version']}).status_code==409
         assert n.post(f'/api/nursing-tasks/{tid}/execute',json={'content':'Đã theo dõi, chỉ dữ liệu giả'}).status_code==200
         assert n.post(f'/api/nursing-tasks/{tid}/execute',json={'content':'Gửi trùng'}).status_code==409
-        assert n.post(f'/api/orders/1/approve').status_code==403
+        assert n.post(f'/api/orders/1/approve').status_code==403  # noqa: F541 - Preserve the existing assertion exactly; no interpolation is needed.
         assert n.put(f'/api/visits/{visit}/clinical',json={'version':v['version'],'diagnosis':'Trái quyền'}).status_code==403
         assert doc.post(f'/api/visits/{visit}/complete',json={'version':v['version']}).status_code==200
         assert n.post(f'/api/visits/{visit}/care-notes',json={**content,'request_key':secrets.token_hex(12)}).status_code==409

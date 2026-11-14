@@ -1,7 +1,7 @@
 """PostgreSQL LAN integration coverage for workflows A/B/C/D; only synthetic data."""
 import secrets
-from .conftest import client_for, IDS, db
-from .flows_v042 import create_order, create_rx
+from .conftest import client_for, IDS
+from .flows_v042 import create_order
 
 
 def test_priced_order_idempotent_and_void_requires_manager(clients, visit):

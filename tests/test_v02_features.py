@@ -1,6 +1,5 @@
 """End-to-end role, finance, stock and print tests. Fake patients only."""
 from io import BytesIO
-from fastapi.testclient import TestClient
 from tests.test_workflows import client, token, prepare_visit
 import fitz
 from docx import Document
@@ -98,7 +97,7 @@ def test_fefo_stock_issue_is_atomic_and_blocks_controlled():
     pharmacy=token('duoc')
     stock=client.get('/api/stock',headers=pharmacy).json()
     med=next(x for x in stock if not x['controlled'] and x['quantity']>=120)
-    first=med['id'];med_id=next(x for x in client.get('/api/medicines',headers=pharmacy).json() if x['name']==med['name'])['id']
+    med_id=next(x for x in client.get('/api/medicines',headers=pharmacy).json() if x['name']==med['name'])['id']
     pre=client.get('/api/stock',headers=pharmacy).json()
     resp=client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':med_id,'quantity':130,'purpose':'Sử dụng mô phỏng không điều trị'})
     assert resp.status_code==201,resp.text
@@ -139,6 +138,6 @@ def test_discount_approval_and_refund_overpayment_path():
 def test_admin_cannot_export_unassigned_clinical():
     _,visit=prepare_visit('bs_noi')
     assert client.get(f'/api/print/clinical/{visit}',headers=token('quantri')).status_code==403
-    assert client.get(f'/api/print/rx/999999',headers=token('quantri')).status_code==404
+    assert client.get(f'/api/print/rx/999999',headers=token('quantri')).status_code==404  # noqa: F541 - Preserve the existing assertion exactly; no interpolation is needed.
     # Denial must not expose a patient note to an unauthorized cashier
     assert client.get(f'/api/visits/{visit}',headers=token('thungan')).json().get('diagnosis') is None

@@ -62,4 +62,4 @@ def test_pending_queues_chromium109_show_all_old_work(https_server):
         browser.close()
 
 
-from .test_tls_chrome_compat import https_server
+from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.

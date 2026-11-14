@@ -18,7 +18,6 @@ served : read the certificate the running HTTPS service presents (verified
 """
 import argparse
 from datetime import datetime, timedelta, timezone
-import hashlib
 import ipaddress
 import json
 import os

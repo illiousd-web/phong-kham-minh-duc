@@ -1,7 +1,6 @@
 """C3 on real PostgreSQL/HTTPS; Chrome 109 CI runs this exact user workflow."""
 import base64
 import hashlib
-import io
 import json
 import os
 from pathlib import Path
@@ -15,7 +14,7 @@ from playwright.sync_api import sync_playwright, expect
 
 from .conftest import PASSWORDS, IDS
 from .test_price_import import excel, headers
-from .test_tls_chrome_compat import https_server
+from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.
 from .browser_helpers import settle, go, pick, submit, send, no_horizontal_scroll, small_targets
 
 

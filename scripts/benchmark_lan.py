@@ -5,13 +5,11 @@ measurement is not a measurement of Windows 11 or the clinic's i3 CPU.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-import hashlib
 import json
 import os
 from pathlib import Path
 import platform
 import secrets
-import shutil
 import socket
 import ssl
 import statistics

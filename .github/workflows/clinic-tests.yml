@@ -152,6 +152,12 @@ jobs:
           python-version: '3.12'
       - run: pip install pip-audit==2.10.1
       - run: pip-audit -r requirements.lock --no-deps --disable-pip
+      - name: Ruff
+        run: |
+          pip install "$(sed -n '/^ruff==/p' requirements-test.lock)"
+          ruff check app scripts tests lan_tests
+      - name: ESLint
+        run: npx --yes eslint@9.39.5 app/static
   windows-preflight:
     runs-on: windows-latest
     steps:

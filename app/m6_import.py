@@ -1,6 +1,6 @@
 """Optional Excel import: parse every row before any write; preview is read-only."""
 from io import BytesIO
-from zipfile import ZipFile, BadZipFile
+from zipfile import ZipFile
 from fastapi import Depends, UploadFile, File, Form, HTTPException
 from openpyxl import load_workbook
 from pydantic import ValidationError

@@ -8,7 +8,6 @@ No automatic upload, remote sync or restoration over an existing database.
 from __future__ import annotations
 import argparse
 import hashlib
-import io
 import json
 import os
 import sqlite3

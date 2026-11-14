@@ -6,7 +6,6 @@ import hmac
 import os
 import secrets
 import uuid
-import json
 from .domain import authorize_order, revision, status_refresh, invoice
 from .charge_queries import DUES_SQL,orders_sql
 from .work_queues import visit_predicate, ACTIVE_ORDERS, approval_predicate, history_limit
@@ -1016,7 +1015,6 @@ def print_form(kind:str,item_id:int,u=Depends(principal)):
             'X-Content-Type-Options':'nosniff'})
 
 # --- v0.2: Xuất biểu mẫu từ chính dữ liệu SQLite; quyền kiểm tra phía API. ---
-from fastapi.responses import Response
 from .forms import generate_docx, generate_pdf, TEMPLATE_BY_TYPE
 
 def form_context(c, kind: str, object_id: int):

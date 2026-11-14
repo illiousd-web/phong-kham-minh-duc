@@ -5,11 +5,10 @@ from io import BytesIO
 import os
 from pathlib import Path
 import secrets
-import subprocess
 import pytest
 from pypdf import PdfReader
 from docx import Document
-from .conftest import client_for, db, IDS, PASSWORDS, SERVICE, ROOT, URL
+from .conftest import client_for, db, IDS, PASSWORDS, URL
 from .flows_v042 import create_order,create_rx
 
 

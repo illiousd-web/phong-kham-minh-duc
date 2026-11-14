@@ -1,5 +1,5 @@
 """Synthetic M5 lifecycle, same assertions on SQLite and PostgreSQL."""
-import io,json,secrets
+import io,secrets
 from docx import Document
 import pymupdf
 

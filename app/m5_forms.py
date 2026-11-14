@@ -6,7 +6,7 @@ from reportlab.platypus import SimpleDocTemplate,Paragraph,Table,TableStyle,Spac
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
-from .forms import TEMPLATE_DIR,doc_text,font_name,pdf_safe,fmt_date
+from .forms import TEMPLATE_DIR,font_name,pdf_safe,fmt_date
 from .m5 import GROUPS
 from .labels import VN_TZ
 from datetime import datetime

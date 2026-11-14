@@ -1,5 +1,5 @@
 """Only synthetic codes and identities. Shared SQLite/PostgreSQL D0 contracts."""
-import csv,io,json,secrets,time,statistics
+import csv,io,json,secrets
 from .m5_revision_cases import document_text
 from app.d0 import COLUMNS,LABELS
 

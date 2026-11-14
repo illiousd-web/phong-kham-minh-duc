@@ -28,7 +28,7 @@ from playwright.sync_api import expect, sync_playwright
 from .conftest import IDS, PASSWORDS, db
 from .browser_helpers import go, pick, send, settle, submit
 from .test_price_import import excel, headers
-from .test_tls_chrome_compat import https_server
+from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.
 
 
 VN = timezone(timedelta(hours=7))
