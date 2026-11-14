@@ -43,7 +43,7 @@ def test_v050_all_workflows_https_browser(clients,visit):
                     page.goto(origin,wait_until='networkidle')
                     assert page.evaluate("showDay('2026-11-08T18:30:01.123456+00:00')")=='09/11/2026 01:30'
                     page.locator('[name="username"]').fill('test_'+role);page.locator('[name="password"]').fill(PASSWORDS[role])
-                    page.locator('[data-form="login"] button').click();page.locator('#logout').wait_for();settle(page)
+                    page.locator('[data-form="login"] button').click();page.locator('.account-trigger').wait_for();settle(page)
                     # Chỉ các menu công việc được phép; M6 thêm đọc đơn đã khóa cho bác sĩ/dược.
                     nav=page.locator('#navigation [data-action="navigate"]')
                     assert [nav.nth(i).get_attribute('data-page') for i in range(nav.count())]==[expected[role]]+(['m6-list'] if role in ('doctor','pharmacy') else ['m5-queue'] if role=='technician' else [])
@@ -135,7 +135,7 @@ def test_v050_all_workflows_https_browser(clients,visit):
                 independent=browser.new_context(viewport={'width':1440,'height':1050});review=independent.new_page()
                 review.on('pageerror',lambda e:errors.append(str(e)))
                 review.goto(origin,wait_until='networkidle');review.locator('[name="username"]').fill(username);review.locator('[name="password"]').fill(password)
-                review.locator('[data-form="login"] button').click();review.locator('#logout').wait_for();settle(review)
+                review.locator('[data-form="login"] button').click();review.locator('.account-trigger').wait_for();settle(review)
                 review.locator('[data-form="controlled-approve"]').wait_for()
                 # Thuốc kiểm soát tắt: biểu mẫu duyệt ẩn khỏi giao diện.
                 assert clients['admin'].put('/api/ui-settings',json={'controlled_drugs':False}).status_code==200
@@ -163,7 +163,7 @@ def test_v050_all_workflows_https_browser(clients,visit):
                 admin_ctx=browser.new_context(viewport={'width':1440,'height':1050});adm=admin_ctx.new_page()
                 adm.on('pageerror',lambda e:errors.append(str(e)))
                 adm.goto(origin,wait_until='networkidle');adm.locator('[name="username"]').fill('test_admin');adm.locator('[name="password"]').fill(PASSWORDS['admin'])
-                adm.locator('[data-form="login"] button').click();adm.locator('#logout').wait_for();settle(adm)
+                adm.locator('[data-form="login"] button').click();adm.locator('.account-trigger').wait_for();settle(adm)
                 account_posts=[]
                 adm.on('request',lambda r:account_posts.append(r.method) if '/api/accounts' in r.url and r.method in ('POST','PUT') else None)
                 create=adm.locator('[data-form="account"]')

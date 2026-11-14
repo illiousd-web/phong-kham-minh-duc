@@ -36,11 +36,11 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
         if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):assert browser.version.split('.')[0]==os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
         page=browser.new_page(viewport={'width':width,'height':900});page.on('pageerror',lambda e:errors.append(str(e)))
         def login(role):
-            page.goto(origin);page.locator('[name=username]').fill('test_'+role);page.locator('[name=password]').fill(PASSWORDS[role]);page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+            page.goto(origin);page.locator('[name=username]').fill('test_'+role);page.locator('[name=password]').fill(PASSWORDS[role]);page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page)
         def logout():
             # Wait for revocation and the completed UI transition before navigating.
             with page.expect_response(lambda x:x.url.endswith('/api/logout') and x.request.method=='POST') as response:
-                page.locator('#logout').click()
+                page.locator('.account-trigger').click();page.locator('#logout').click()
             assert response.value.status==200
             expect(page.locator('[data-form=login]')).to_be_visible()
         login('technician');go(page,'m5-queue')

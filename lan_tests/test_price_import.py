@@ -93,7 +93,7 @@ def test_price_import_browser(https_server, clients, width, role):
         page.goto(origin, wait_until='networkidle')
         page.locator('[name="username"]').fill('test_' + role)
         page.locator('[name="password"]').fill(PASSWORDS[role])
-        page.locator('[data-form="login"] button').click(); page.locator('#logout').wait_for(); settle(page)
+        page.locator('[data-form="login"] button').click(); page.locator('.account-trigger').wait_for(); settle(page)
         if role == 'manager':
             page.get_by_role('tab', name='Nhập bảng giá', exact=True).click(); settle(page)
         else:

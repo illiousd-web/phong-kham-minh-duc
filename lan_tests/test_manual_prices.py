@@ -83,7 +83,7 @@ def test_c3_manual_price_browser(https_server, clients, visit, width, ordering_r
             page.goto(origin, wait_until='networkidle')
             page.locator('[name="username"]').fill('test_' + role)
             page.locator('[name="password"]').fill(PASSWORDS[role])
-            page.locator('[data-form="login"] button').click(); page.locator('#logout').wait_for(); settle(page)
+            page.locator('[data-form="login"] button').click(); page.locator('.account-trigger').wait_for(); settle(page)
         clinician = go(pages[ordering_role], ordering_role)
         pick(clinician, 'visit' if ordering_role == 'doctor' else 'nurse-visit', visit)
         clinician.locator('[data-form="order"] [name="service_id"]').select_option(str(sid))

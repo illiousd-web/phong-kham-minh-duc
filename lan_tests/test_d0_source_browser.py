@@ -25,7 +25,7 @@ def test_source_link_suggestions_require_user_choice(https_server,clients,width)
         browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
         if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):assert browser.version.split('.')[0]==os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
         page=browser.new_page(viewport={'width':width,'height':900});page.on('pageerror',lambda e:errors.append(str(e)))
-        page.goto(origin);page.locator('[name=username]').fill('test_admin');page.locator('[name=password]').fill(PASSWORDS['admin']);page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+        page.goto(origin);page.locator('[name=username]').fill('test_admin');page.locator('[name=password]').fill(PASSWORDS['admin']);page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page)
         page.locator('[data-kind=admin][data-tab=catalog]').click();settle(page)
         f=page.locator('[data-d0=link][data-kind=lab-tests]');f.locator('[name=id]').select_option(str(tid));f.locator('[data-d0-link-search]').fill(shared['name'])
         target=f.locator('[data-d0-link-pick="'+shared['code']+'"]');target.wait_for()

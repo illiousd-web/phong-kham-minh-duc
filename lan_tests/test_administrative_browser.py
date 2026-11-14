@@ -46,8 +46,8 @@ def test_administrative_practitioner_and_refund_ui(https_server, clients, reques
         def login(role):
             page.goto(origin)
             page.locator('[name=username]').fill('test_'+role);page.locator('[name=password]').fill(PASSWORDS[role])
-            page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
-        def logout():page.locator('#logout').click();page.locator('[data-form=login]').wait_for()
+            page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page)
+        def logout():page.locator('.account-trigger').click();page.locator('#logout').click();page.locator('[data-form=login]').wait_for()
         login('reception')
         for width in (1366,390):
             page.set_viewport_size({'width':width,'height':900})
@@ -128,7 +128,7 @@ def test_public_catalog_comboboxes_default_province_and_explicit_ethnicity(https
         if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):assert browser.version.split('.')[0]==os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
         page=browser.new_page(viewport={'width':1366,'height':900});page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(origin);page.locator('[name=username]').fill('test_reception');page.locator('[name=password]').fill(PASSWORDS['reception'])
-        page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+        page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page)
         for width in (1366,390):
             page.set_viewport_size({'width':width,'height':900});go(page,'reception')
             page.locator('summary').filter(has_text='Thêm bệnh nhân mới').click()
@@ -165,8 +165,8 @@ def test_public_catalog_comboboxes_default_province_and_explicit_ethnicity(https
             assert (record['province_code'],record['commune_code'],record['ethnicity_code'])==('06','11301122','02')
             no_horizontal_scroll(page)
             out=Path('test_evidence/l1-catalog');out.mkdir(parents=True,exist_ok=True);page.screenshot(path=str(out/f'catalog-{width}.png'),full_page=True)
-        page.locator('#logout').click();page.locator('[name=username]').fill('test_admin');page.locator('[name=password]').fill(PASSWORDS['admin'])
-        page.locator('[data-form=login] button').click();page.locator('#logout').wait_for();settle(page)
+        page.locator('.account-trigger').click();page.locator('#logout').click();page.locator('[name=username]').fill('test_admin');page.locator('[name=password]').fill(PASSWORDS['admin'])
+        page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page)
         go(page,'settings');expect(page.locator('[name=default_province_code]')).to_have_value('06')
         go(page,'admin');page.locator('[data-action=tab][data-tab=catalog]').click();settle(page)
         with page.expect_response(lambda r:'/patient-catalog/import' in r.url and r.request.method=='POST') as reload:
