@@ -330,7 +330,7 @@ small,sub,sup{font-size:max(13px,.833em)}
 
 .login-card .field:not(.full),.r2-password .field{padding:8px 16px;border-radius:20px;background:rgba(255,255,255,0.8);border:1px solid #6F8F7E;gap:4px}.login-card .field:not(.full) input,.r2-password .field input{min-height:24px;padding:0;border:0;background:transparent;font-size:16px;font-weight:600}.login-card .field label,.r2-password .field label{font-size:13px;font-weight:400}.r2-login-layout{min-height:640px}.r2-login-brand{min-height:640px}.login-view footer{display:none}.r2-password [name=current_password]{width:100%}.r2-password .fields>.field:first-of-type{grid-column:1/-1}
 @media(max-width:900px){.r2-login-layout,.r2-login-brand{min-height:0}.r2-login-brand .r2-description{font-size:16px!important}}
-.r2-reception #visit-step{backdrop-filter:none;-webkit-backdrop-filter:none;position:relative;isolation:isolate;background:transparent}.r2-reception #visit-step::before{content:'';position:absolute;inset:0;border-radius:28px;z-index:-1;background:rgba(255,255,255,0.4);backdrop-filter:blur(28px) saturate(180%);pointer-events:none}
+.r2-reception #visit-step{backdrop-filter:none;-webkit-backdrop-filter:none;position:relative;isolation:isolate;z-index:2;background:transparent}.r2-reception #visit-step::before{content:'';position:absolute;inset:0;border-radius:28px;z-index:-1;background:rgba(255,255,255,0.4);backdrop-filter:blur(28px) saturate(180%);pointer-events:none}
 .main:has(#workspace[data-page=reception])>.toolbar,.main:has(#workspace[data-page=prices])>.toolbar,.main:has(#workspace[data-page=password])>.toolbar{display:none}.r2-mobile-description{display:none}.r2-hero #search-patients,.r2-hero #price-filter{border-radius:999px;padding:0 20px;border:1px solid #6F8F7E;font-size:16px}.r2-reception #visit-step{padding:20px}.r2-login-brand .r2-mobile-description{display:none}
 @media(max-width:900px){.r2-login-brand .r2-description,.login-card .login-subtitle,.login-card .hint{display:none}.r2-login-brand .r2-mobile-description{display:block}.r2-login-layout{gap:14px}.login-view .trial-strip{margin:14px 0 0}.login-card{margin:0}.r2-login-brand{gap:12px}}
 .r2-hero .r2-mark{position:absolute;right:-50px;top:-50px;opacity:.2;pointer-events:none}.r2-hero>:not(.r2-mark){position:relative}
@@ -346,3 +346,5 @@ small,sub,sup{font-size:max(13px,.833em)}
 @media print{.r2-dock{display:none!important}}
 
 @media print{.r2-reception #visit-step::before{display:none!important}}
+
+.r2-field-error{color:#B42318;font-size:13px;font-weight:700}.r2-reception .r2-stats{grid-template-columns:repeat(2,minmax(0,1fr))}

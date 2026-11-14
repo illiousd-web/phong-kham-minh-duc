@@ -92,6 +92,10 @@ def test_real_https_three_browser_roles_and_pdf():
                 # Bệnh nhân vừa tạo được chọn sẵn ở bước 2.
                 expect(r.locator('#visit-step .patient-head')).to_contain_text('Bệnh nhân giả lập HTTPS ba máy')
                 r.locator('[data-form="visit"] select[name="doctor_id"]').select_option(str(IDS['doctor']))
+                r.on('request',lambda req:print('VISIT REQUEST',req.method,req.url))
+                r.on('requestfailed',lambda req:print('VISIT FAILED',req.method,req.url,req.failure))
+                r.on('pageerror',lambda err:print('VISIT PAGEERROR',str(err)))
+                print('VISIT VALIDITY',r.locator('[data-form=visit]').evaluate("f=>({valid:f.checkValidity(),invalid:[...f.querySelectorAll(':invalid')].map(e=>({name:e.name,message:e.validationMessage})),buttons:[...f.querySelectorAll('button.btn')].map(b=>({text:b.textContent,type:b.type,disabled:b.disabled}))})"))
                 vid=str(submit(r,'visit','Đã tiếp nhận lượt khám').json()['id'])
                 expect(r.locator(f'[data-kind="intake"][data-id="{vid}"]').first).to_be_visible()
                 # Số đếm Tiếp đón đúng bằng số dòng của hàng chờ Tiếp đón.
@@ -521,8 +525,21 @@ def test_u1r2_reception_prices_login_password(https_server,clients,width,height)
             page.locator('[name=username]').fill('test_reception');page.locator('[name=password]').fill(PASSWORDS['reception'])
             page.locator('[data-form=login] button').click();expect(page.locator('.account-trigger')).to_be_visible();settle(page)
             rows=clients['reception'].get('/api/visits').json()
-            for status in ['waiting','in_progress','completed']:
+            for status in ['waiting','in_progress']:
                 expect(page.locator(f'[data-r2-stat={status}] strong')).to_have_text(str(sum(v['status']==status for v in rows)))
+            expect(page.locator('[data-r2-stat=completed]')).to_have_count(0)
+            patient_requests=[]
+            def many_patients(route):
+                patient_requests.append(route.request.url)
+                route.fulfill(json=[{'id':900000+i,'code':f'GIA{i}','full_name':f'Người giả lập {i}','sex':'Nữ','date_of_birth':'1990-01-01','phone':'0900000345'} for i in range(65)])
+            page.route('**/api/patients',many_patients)
+            go(page,'prices');expect(page.locator('[data-r2-group]')).to_have_count(0);go(page,'reception')
+            expect(page.locator('[data-r2-patient-card]:visible')).to_have_count(30)
+            calls=len(patient_requests);page.locator('[data-r2-more]').click()
+            expect(page.locator('[data-r2-patient-card]:visible')).to_have_count(60)
+            page.locator('[data-r2-more]').click();expect(page.locator('[data-r2-patient-card]:visible')).to_have_count(65)
+            expect(page.locator('[data-r2-more]')).to_be_hidden();assert len(patient_requests)==calls
+            page.unroute('**/api/patients',many_patients);go(page,'prices');go(page,'reception')
             page.keyboard.press('F2');expect(page.locator('#search-patients')).to_be_focused()
             expect(page.locator('[data-r2-new]')).to_have_css('background-color','rgb(201, 240, 160)')
             page.locator('[data-r2-new]').hover()
@@ -554,5 +571,10 @@ def test_u1r2_reception_prices_login_password(https_server,clients,width,height)
             f=page.locator('[data-form=password]');f.locator('[name=current_password]').fill('mat-khau-cu');f.locator('[name=new_password]').fill('mat-khau-moi-gia-lap');f.locator('[name=confirm_password]').fill('mat-khau-moi-gia-lap')
             expect(f.locator('[data-r2-check][data-passed=true]')).to_have_count(3)
             f.locator('[name=confirm_password]').fill('khac');expect(f.locator('[data-r2-check=match]')).to_have_attribute('data-passed','false')
+            posts=[];page.on('request',lambda req:posts.append(req.url) if req.method=='POST' and req.url.endswith('/api/password') else None)
+            f.locator('button.btn').click()
+            expect(f.locator('[role=alert]')).to_contain_text('Hai ô mật khẩu mới không khớp')
+            assert not posts
+            expect(page.locator('[data-r2-stat=completed]')).to_have_count(0)
             check(page,'password');assert not errors,errors
         finally:browser.close()
