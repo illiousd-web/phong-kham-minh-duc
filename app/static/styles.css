@@ -331,10 +331,128 @@ small,sub,sup{font-size:max(13px,.833em)}
 .login-card .field:not(.full),.r2-password .field{padding:8px 16px;border-radius:20px;background:rgba(255,255,255,0.8);border:1px solid #6F8F7E;gap:4px}.login-card .field:not(.full) input,.r2-password .field input{min-height:24px;padding:0;border:0;background:transparent;font-size:16px;font-weight:600}.login-card .field label,.r2-password .field label{font-size:13px;font-weight:400}.r2-login-layout{min-height:640px}.r2-login-brand{min-height:640px}.login-view footer{display:none}.r2-password [name=current_password]{width:100%}.r2-password .fields>.field:first-of-type{grid-column:1/-1}
 @media(max-width:900px){.r2-login-layout,.r2-login-brand{min-height:0}.r2-login-brand .r2-description{font-size:16px!important}}
 .r2-reception #visit-step{backdrop-filter:none;-webkit-backdrop-filter:none;position:relative;isolation:isolate;z-index:2;background:transparent}.r2-reception #visit-step::before{content:'';position:absolute;inset:0;border-radius:28px;z-index:-1;background:rgba(255,255,255,0.4);backdrop-filter:blur(28px) saturate(180%);pointer-events:none}
-.main:has(#workspace[data-page=reception])>.toolbar,.main:has(#workspace[data-page=prices])>.toolbar,.main:has(#workspace[data-page=password])>.toolbar{display:none}.r2-mobile-description{display:none}.r2-hero #search-patients,.r2-hero #price-filter{border-radius:999px;padding:0 20px;border:1px solid #6F8F7E;font-size:16px}.r2-reception #visit-step{padding:20px}.r2-login-brand .r2-mobile-description{display:none}
+body[data-screen=reception] .toolbar,body[data-screen=prices] .toolbar,body[data-screen=password] .toolbar{display:none}.r2-mobile-description{display:none}.r2-hero #search-patients,.r2-hero #price-filter{border-radius:999px;padding:0 20px;border:1px solid #6F8F7E;font-size:16px}.r2-reception #visit-step{padding:20px}.r2-login-brand .r2-mobile-description{display:none}
 @media(max-width:900px){.r2-login-brand .r2-description,.login-card .login-subtitle,.login-card .hint{display:none}.r2-login-brand .r2-mobile-description{display:block}.r2-login-layout{gap:14px}.login-view .trial-strip{margin:14px 0 0}.login-card{margin:0}.r2-login-brand{gap:12px}}
 .r2-hero .r2-mark{position:absolute;right:-50px;top:-50px;opacity:.2;pointer-events:none}.r2-hero>:not(.r2-mark){position:relative}
 @media(max-width:900px){.login-view .app{justify-content:flex-start}}
+/* R3 — KH_Kham / KH_KeDon / KetHopDT / U_DonThuocKhoa. */
+body[data-screen=doctor] .toolbar,body[data-screen=m6-list] .toolbar{display:none}
+
+.r3-layout{grid-template-columns:minmax(280px,4fr) minmax(0,8fr);gap:16px;padding-bottom:140px}
+
+.r3-profile{background:rgba(0,95,180,0.9);min-height:420px;padding:26px;gap:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.55),0 24px 50px rgba(10,40,90,0.3)}
+.r3-profile h1{font-size:40px;line-height:1.05;font-weight:900;overflow-wrap:anywhere}
+.r3-profile p{font-size:14px}
+.r3-allergy{background:#FFDAD4;color:#8C1D18;padding:10px 16px;border-radius:12px;font-size:15px;font-weight:900;align-self:flex-start}
+
+.r3-queue-hero{padding:20px;border-radius:28px;gap:4px}
+.r3-queue-hero h2{font-size:34px;font-weight:900;letter-spacing:-1px;margin:0}
+.r3-queue-hero span{font-size:14px}
+
+.r3-waiting .card{padding:16px;margin:14px 0}
+.r3-waiting .fields{grid-template-columns:1fr}
+.r3-waiting .queue{grid-template-columns:1fr}
+.r3-waiting .queue-item{border-radius:28px;padding:16px;background:rgba(255,255,255,.45);border:1px solid rgba(255,255,255,.8);box-shadow:inset 0 1px 0 #fff,0 10px 26px rgba(16,40,30,.12)}
+.r3-waiting .queue-item.current{background:rgba(255,255,255,.72)}
+.r3-waiting .waiting-name{font-size:18px;font-weight:800}
+.r3-waiting .queue-ticket{border-radius:20px;width:50px;height:50px;min-width:50px;font-size:22px}
+.r3-waiting .queue-item.current .queue-ticket{background:#008249;color:#fff}
+
+.r3-layout .doctor-record{min-width:0}
+.r3-layout .doctor-tabs{display:flex;gap:4px;padding:4px;border-radius:999px;background:rgba(255,255,255,.45);border:1px solid rgba(255,255,255,.8);overflow-x:auto;flex-wrap:nowrap}
+.r3-layout .doctor-tabs button{height:44px;min-height:44px;flex:none;padding:0 20px;background:transparent;border:0;font-size:14px;font-weight:700}
+.r3-layout .doctor-tabs button[aria-current=true]{background:#0B1F17;color:#fff;font-weight:800}
+
+.r3-section{border-radius:40px;padding:22px;position:relative;isolation:isolate;backdrop-filter:none;-webkit-backdrop-filter:none;background:transparent;box-shadow:inset 0 1px 0 #fff,0 20px 50px rgba(16,40,30,.16)}
+.r3-section::before{content:'';position:absolute;inset:0;border-radius:40px;background:rgba(255,255,255,.42);backdrop-filter:blur(28px) saturate(180%);z-index:-1;pointer-events:none}
+.r3-section .section-heading{font-size:20px;font-weight:800}
+.r3-exam-form>.field{grid-column:1/-1}
+.r3-exam-form .vitals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.r3-exam-form .vitals>.field{padding:12px 14px;border-radius:20px;background:rgba(255,255,255,.7);border:1px solid #6F8F7E}
+.r3-exam-form .vitals input{font-size:24px;font-weight:900;padding:0;background:transparent;border:0}
+.r3-exam-form textarea{padding:14px 18px;border-radius:20px;background:rgba(255,255,255,.7);font-size:16px}
+.r3-exam-form label{font-size:13px;color:#1F3A31}
+
+.r3-exam-dock,.r3-rx-dock{display:none;z-index:30;flex-wrap:wrap;justify-content:center;width:max-content}
+.r3-layout[data-r3-tab=exam] #doctor-exam{z-index:2}
+.r3-layout[data-r3-tab=rx] #doctor-rx{z-index:2}
+.r3-layout[data-r3-tab=exam] .r3-exam-dock,.r3-layout[data-r3-tab=rx] .r3-rx-dock{display:flex}
+.r3-exam-dock button,.r3-rx-dock button{min-height:44px;font-size:14px}
+
+.r3-rx-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.r3-rx-heading h2{font-size:44px;font-weight:900;margin:0}
+.r3-rx-heading span{padding:8px 14px;border-radius:999px;background:rgba(255,255,255,.55);font-size:13px;font-weight:700}
+.r3-rx-form{counter-reset:r3-drug;padding-bottom:120px}
+.r3-drug-row{counter-increment:r3-drug;display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;padding:16px 20px;border-radius:28px;background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.85);box-shadow:inset 0 1px 0 #fff,0 12px 30px rgba(16,40,30,.1);backdrop-filter:blur(24px) saturate(180%);min-width:0}
+.r3-drug-number{font-size:14px;font-weight:800}
+.r3-drug-number::before{content:counter(r3-drug);display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:12px;background:#008249;color:white;margin-right:12px}
+.r3-drug-row>.m6-field{grid-column:span 4;order:3}
+.r3-drug-row>.m6-field-name{grid-column:span 3;order:0}
+.r3-drug-row>.m6-field-strength{grid-column:span 1;order:0}
+.r3-drug-row>.m6-dose-grid{grid-column:span 8;order:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.r3-drug-row .m6-field{padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.75);font-size:13px;min-width:0}
+.r3-drug-row input{width:100%;min-width:0;border:1px solid #6F8F7E;border-radius:12px;font-size:16px;background:transparent}
+.r3-drug-row .m6-field-name input,.r3-drug-row .m6-field-strength input,.r3-drug-row .m6-dose-grid input{font-size:17px;font-weight:800}
+.r3-drug-row>.wide{grid-column:1/-1;order:4}
+.r3-drug-row>.notice,.r3-drug-row>.m6-errors{order:-1;padding:8px 14px;border-radius:12px;background:rgba(255,224,138,.85);color:#3A2A00;font-size:13px;font-weight:700}
+.r3-drug-row.m6-allergy{border:2px solid #B42318}
+.r3-drug-row.m6-allergy>.m6-errors{background:#FFDAD4;color:#8C1D18}
+.r3-drug-row>button{order:5;grid-column:1/-1;justify-self:end;min-height:44px}
+.r3-stock-row{padding:16px 20px;border-radius:28px;background:rgba(255,255,255,.55)}
+
+.r3-locked .r2-stats{grid-template-columns:1fr}
+.r3-locked>.card{padding:20px;border-radius:28px;background:rgba(255,255,255,.42)}
+.r3-locked table{border-collapse:separate;border-spacing:0 6px}
+.r3-locked td{padding:12px 16px;background:rgba(255,255,255,.72);border:1px solid rgba(255,255,255,.9);font-size:14px}
+.r3-locked td:first-child{border-radius:18px 0 0 18px;font-weight:800}
+.r3-locked td:last-child{border-radius:0 18px 18px 0}
+.r3-locked button{min-height:44px;padding:0 18px;border-radius:999px;font-size:14px;font-weight:800}
+.r3-locked .toolbar-actions{margin-bottom:14px}
+
+@media(max-width:900px){.r3-layout{grid-template-columns:minmax(0,1fr)}
+.r3-profile{display:none}
+.r3-queue-hero{margin-bottom:14px}
+.r3-section{padding:16px;border-radius:28px}
+.r3-section::before{border-radius:28px}
+.r3-layout .doctor-sticky{max-width:100%}
+.r3-exam-form .vitals{grid-template-columns:repeat(2,minmax(0,1fr))}
+.r3-drug-row>.m6-field{grid-column:span 6}
+.r3-drug-row>.m6-field-name{grid-column:span 8}
+.r3-drug-row>.m6-field-strength{grid-column:span 4}
+.r3-drug-row>.m6-dose-grid{grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr))}
+.r3-exam-dock,.r3-rx-dock{width:auto;left:16px;right:16px;bottom:calc(var(--role-nav-h,70px) + 34px);transform:none;border-radius:28px;padding:10px;max-width:none;gap:6px}
+.r3-exam-dock button,.r3-rx-dock button{flex:1;white-space:normal;padding:8px}
+.r3-layout{padding-bottom:240px}
+#navigation{scrollbar-width:thin;scrollbar-color:#006438 rgba(255,255,255,.5)}
+#navigation::-webkit-scrollbar{height:5px}
+#navigation::-webkit-scrollbar-thumb{background:#006438;border-radius:999px}
+}
+
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.r3-section::before,.r3-drug-row,.r3-locked>.card{background:#fff}
+}
+
+
+.r3-drug-row>.m6-dose-grid{order:1}
+
+@media(min-width:1200px){.r3-exam-form .vitals{grid-template-columns:repeat(6,minmax(0,1fr))}
+}
+
+.m6-row.r3-drug-row{grid-template-columns:repeat(12,minmax(0,1fr));align-items:start}
+.r3-drug-row input[type=checkbox]{width:auto;min-width:18px}
+.r3-drug-row .check{display:flex;align-items:center;gap:10px;justify-content:flex-start}
+.r3-drug-row>.m6-dose-grid{grid-column:span 8;order:1}
+
+@media(max-width:900px){.r3-drug-row>.m6-dose-grid{grid-column:1/-1}
+.m6-row.r3-drug-row{padding:16px 12px;gap:10px}
+}
+
+.r3-queue-mobile{display:none}
+
+@media(max-width:900px){.r3-queue-mobile{display:flex}
+}
+
+body[data-screen=doctor] #workspace button,body[data-screen=m6-list] #workspace button{min-height:44px}
+
 @media print{@page{size:A4;margin:13mm}.sidebar,.toolbar,.notice,.btn,.ghost,footer,.toolbar-actions,.no-print{display:none!important}.app{display:block}.main{padding:0}.card{box-shadow:none;border:0}.print-sheet{border:0;padding:0}.printwarning{font-size:16px}.print-only{display:block!important}body{background:#fff;color:#000}}
 @media print{body.printing .app{display:none!important}body.printing #print-overlay{display:block!important;padding:0;background:#fff;color:#000}body.printing #print-overlay .printwarning{border:2px solid #a72719;padding:8px;text-align:center;font-weight:800;margin-bottom:22px}}
 @media print{.card,.stat{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}}
@@ -348,3 +466,5 @@ small,sub,sup{font-size:max(13px,.833em)}
 @media print{.r2-reception #visit-step::before{display:none!important}}
 
 .r2-field-error{color:#B42318;font-size:13px;font-weight:700}.r2-reception .r2-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+
+@media print{.r3-exam-dock,.r3-rx-dock,.r3-section::before{display:none!important}.r3-profile,.r3-queue-hero,.r3-locked>.card{background:#fff!important;color:#000!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}}
