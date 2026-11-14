@@ -56,5 +56,8 @@ def test_favicon_returns_200_and_is_linked():
     assert response.status_code==200 and response.content[:4]==b'\x00\x00\x01\x00'
     html=client.get('/').text
     assert '<link rel="icon" href="/assets/favicon.ico">' in html
+    # Keep the installed HTTPS probe's brand identification without the old eyebrow.
+    assert '<meta name="application-name" content="PHÒNG KHÁM ĐA KHOA MINH ĐỨC">' in html
+    assert 'HỆ THỐNG QUẢN LÝ PHÒNG KHÁM' not in html
     assert '/assets/MinhDuc_logo_mau.svg' in html
     assert 'logo_minh_duc.png' not in html
