@@ -939,3 +939,23 @@ def test_collect_reports_ui_settings_state(tmp_path):
     assert install_health.collect(env, timeout=1)['ui_settings'] == 'invalid'
     target.write_text('{"advance_payment": false, "addendum": true, "controlled_drugs": true}', encoding='utf-8')
     assert install_health.collect(env, timeout=1)['ui_settings'] == 'file'
+
+
+def test_workstation_shortcut_overwrites_with_checked_bounded_retries():
+    text = (WIN / 'MayTram.vbs').read_text(encoding='ascii')
+    body = text[text.index('Function MakeShortcut'):]
+    assert 'fso.MoveFile' not in body
+    assert 'fso.DeleteFile finalPath' not in body
+    assert body.index('fso.DeleteFile tmpPath, True') < body.index('shell.CreateShortcut(tmpPath)')
+    lines = [line.strip() for line in body.splitlines()]
+    for i, line in enumerate(lines):
+        if line == 'sc.Save' or line.startswith(('fso.CopyFile ', 'fso.DeleteFile ')):
+            assert lines[i - 1] == 'Err.Clear'
+            assert lines[i + 1].startswith('If Err.Number ')
+    retry = body[body.index('For attempt = 1 To 3'):body.index('    Next')]
+    assert 'fso.CopyFile tmpPath, finalPath, True' in retry
+    assert 'If Err.Number = 0 Then Exit For' in retry
+    assert 'If attempt = 3 Then' in retry
+    assert retry.index('Exit Function') < retry.index('WScript.Sleep 1000')
+    assert 'MakeShortcut = 4' in retry
+    assert '"LOI tao bieu tuong: " & Err.Description' in retry

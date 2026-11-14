@@ -177,6 +177,30 @@ def settings_check():
     print('PASS: CAP_NHAT lỗi trên máy ĐÃ có cài đặt -> quay về đúng cài đặt, dịch vụ vẫn ghi được')
 
 
+def workstation_reinstall():
+    """Real Windows: reinstall twice, including a stale temporary shortcut."""
+    import subprocess
+    desktop_script = (
+        "$s=New-Object -ComObject WScript.Shell; "
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+        "$s.SpecialFolders.Item('AllUsersDesktop')"
+    )
+    desktop = Path(subprocess.check_output(
+        ['powershell.exe', '-NoProfile', '-Command', desktop_script],
+        encoding='utf-8-sig').strip())
+    temp = desktop / 'MinhDuc-tam.lnk'
+    shortcut = desktop / 'Phòng khám Minh Đức.lnk'
+    for attempt in range(2):
+        temp.write_bytes(b'CI stale temporary shortcut')
+        subprocess.run(['cmd.exe', '/d', '/c',
+                        r'C:\MinhDuc-ChiaSe\CAI_MAY_TRAM.bat', '-KhongHoi'],
+                       check=True, timeout=120)
+        assert shortcut.is_file(), f'install {attempt + 1}: missing shortcut'
+        assert len(list(desktop.glob('Ph*ng kh*m Minh *.lnk'))) == 1
+        assert not temp.exists(), f'install {attempt + 1}: leftover temporary shortcut'
+    print('PASS: CAI_MAY_TRAM hai lan -> mot bieu tuong Desktop, khong con tep tam')
+
+
 def fresh_install_report():
     """CI: a FIRST install has only 1 verified backup, so the backup row must be KHÔNG ĐẠT
     (needs 3) with the reason and the action, and it must be the ONLY failing row."""
@@ -204,6 +228,7 @@ if __name__ == '__main__':
         pg_set_password()
     elif command == 'pg-accent-check':
         pg_accent_check()
+        workstation_reinstall()
     elif command == 'settings-set':
         settings_set()
     elif command == 'settings-check':
