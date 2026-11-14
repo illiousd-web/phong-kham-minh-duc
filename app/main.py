@@ -383,6 +383,8 @@ def list_visits(u=Depends(principal),history:bool=False):
         fields='v.id,v.status,v.created_at'
     elif 'doctor' in roles or ('reception' in roles and 'technician' not in roles):
         fields='v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name'
+        if 'doctor' in roles:
+            fields+=','+ALLERGY_FLAG_SQL
     else:
         fields='v.id,v.status,p.code AS patient_code,p.full_name AS patient_name'
     with db() as c:
@@ -1103,7 +1105,7 @@ from .workflows_v050 import install_v050
 install_v050(app,db,principal,require,audit,visit_access,NOW)
 from .manager_visits import install_manager_visits
 install_manager_visits(app,db,principal,require)
-from .doctor_workspace import install_doctor_workspace
+from .doctor_workspace import ALLERGY_FLAG_SQL, install_doctor_workspace
 install_doctor_workspace(app,db,principal,require,audit,visit_access,NOW)
 from .ui_settings import install_ui_settings
 install_ui_settings(app,db,principal,require,audit,FILES)

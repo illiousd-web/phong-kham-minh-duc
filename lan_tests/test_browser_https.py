@@ -291,15 +291,14 @@ def test_u1c_doctor_queue_and_prescription(https_server,clients,width,height):
         try:
             page=browser.new_page(viewport={'width':width,'height':height})
             errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
-            # Allergy badges must load in the background, never hold the workspace busy.
+            # Queue badges come from list flags, without reading clinical records.
             held=[];page.route('**/api/visits/*',lambda route:held.append(route))
             page.goto(origin)
             page.locator('[name="username"]').fill('test_doctor');page.locator('[name="password"]').fill(PASSWORDS['doctor'])
             page.locator('[data-form="login"] button').click();expect(page.locator('#logout')).to_be_visible();settle(page)
             expect(page.locator('.doctor-waiting .queue-item').first).to_be_visible()
-            assert len(held)<=4
+            assert held==[]
             page.unroute('**/api/visits/*')
-            for route in held:route.continue_()
             queued=page.locator(f'.queue-item[data-kind="visit"][data-id="{visit.json()["id"]}"]')
             queued.scroll_into_view_if_needed()
             expect(queued.locator('.waiting-allergy')).to_contain_text('Dị ứng')
@@ -338,3 +337,72 @@ def test_u1c_doctor_queue_and_prescription(https_server,clients,width,height):
             page.screenshot(path=str(evidence/f'prescription-{width}.png'))
             assert not errors,errors
         finally:browser.close()
+
+
+@pytest.mark.parametrize('width,height',[(1366,768),(390,844)])
+def test_u1c_queue_allergy_flags_do_not_view_records(https_server,clients,width,height):
+    import re
+    import secrets
+    from urllib.parse import urlsplit
+    tag='Nhãn dị ứng giả lập '+secrets.token_hex(5)
+    ids=[]
+    allergies=[None,'Không dị ứng','   ','Chất giả lập A','Chất giả lập B','Chất giả lập C']
+    for number,allergy in enumerate(allergies):
+        patient=clients['reception'].post('/api/patients',json={
+            'full_name':f'{tag} {number}','sex':'Nữ','date_of_birth':'1990-01-01','phone':'0900000000'})
+        assert patient.status_code==201,patient.text
+        pid=patient.json()['id']
+        with db(True) as c:c.execute('UPDATE patients SET allergies=? WHERE id=?',(allergy,pid))
+        response=clients['reception'].post('/api/visits',json={
+            'patient_id':pid,'doctor_id':IDS['doctor'],'service_id':SERVICE})
+        assert response.status_code==201,response.text
+        ids.append(response.json()['id'])
+    def viewed():
+        marks=','.join('?' for _ in ids)
+        with db() as c:
+            return [r['object_id'] for r in c.execute(
+                f"SELECT object_id FROM audit_log WHERE event='clinical_viewed' AND user_id=? AND object_type='visit' AND object_id IN ({marks})",
+                (IDS['doctor'],*ids))]
+    assert viewed()==[]
+    origin,certdir=https_server
+    cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as p:
+        browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
+        try:
+            page=browser.new_page(viewport={'width':width,'height':height})
+            details=[]
+            page.on('request',lambda request:details.append(request.url) if re.fullmatch(r'/api/visits/\d+',urlsplit(request.url).path) else None)
+            page.goto(origin)
+            page.locator('[name="username"]').fill('test_doctor');page.locator('[name="password"]').fill(PASSWORDS['doctor'])
+            page.locator('[data-form="login"] button').click();expect(page.locator('#logout')).to_be_visible();settle(page)
+            page.locator('[name="doctor_query"]').fill(tag)
+            page.locator('[data-form="doctor-filter"] button').click();settle(page)
+            cards=page.locator('.doctor-waiting .queue-item')
+            expect(cards).to_have_count(6)
+            for i in range(6):cards.nth(i).scroll_into_view_if_needed()
+            labels=page.locator('.doctor-waiting .waiting-allergy').filter(has_text='Dị ứng')
+            assert viewed()==[]
+            expect(labels).to_have_count(3)
+            assert details==[]
+            assert labels.evaluate_all('es=>es.every(e=>!e.hasAttribute("title"))')
+            pick(page,'visit',ids[3])
+            expect(page.locator('.doctor-sticky .allergy-warning')).to_contain_text('Chất giả lập A')
+            assert viewed()==[ids[3]]
+            assert len(details)==1 and urlsplit(details[0]).path==f'/api/visits/{ids[3]}'
+        finally:browser.close()
+    for path in ('/api/visits','/api/doctor/queue?q='+tag):
+        response=clients['doctor'].get(path)
+        assert response.status_code==200,response.text
+        payload=response.json()
+        rows=payload['visits'] if isinstance(payload,dict) else payload
+        selected={r['id']:r for r in rows if r['id'] in ids}
+        assert set(selected)==set(ids)
+        assert [selected[i]['has_allergy'] for i in ids]==[0,0,0,1,1,1]
+        for row in selected.values():
+            assert 'allergies' not in row and 'patient_allergies' not in row
+            assert not any(value in str(row) for value in allergies[3:])
+    rows=clients['reception'].get('/api/visits').json()
+    selected=[r for r in rows if r['id'] in ids]
+    assert len(selected)==6
+    assert all('has_allergy' not in r and 'allergies' not in r and 'patient_allergies' not in r for r in selected)
