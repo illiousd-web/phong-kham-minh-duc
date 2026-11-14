@@ -78,7 +78,8 @@ def test_real_https_three_browser_roles_and_pdf():
                 # Lễ tân xem bảng giá dịch vụ chỉ đọc để báo giá.
                 r=go(r,'prices')
                 expect(r.locator('#workspace tr[data-search]').filter(has_text='Khám giả lập')).to_contain_text('150.000')
-                assert r.locator('#workspace form').count()==0 and r.locator('#workspace button').count()==0
+                assert r.locator('#workspace form').count()==0
+                assert r.locator('#workspace button:not([data-r2-group])').count()==0
                 r.locator('#price-filter').fill('xét nghiệm https')
                 expect(r.locator('#workspace tr[data-search]:visible')).to_have_count(1)
                 r=go(r,'reception')
@@ -180,8 +181,9 @@ def test_u1b_glass_login_and_shell(https_server,width,height):
             expect(page.locator('[data-form="login"]')).to_be_visible()
             expect(page.locator('html')).not_to_have_class(re.compile('fonts-pending'))
             expect(page.locator('.login-logo')).to_be_visible()
-            assert page.locator('.login-logo').bounding_box()['height']==96
-            assert page.locator('[name="username"]').bounding_box()['height']>=48
+            assert abs(page.locator('.login-logo').bounding_box()['width']-(220 if width<=900 else 340))<1
+            expect(page.locator('.login-logo')).to_have_attribute('src','/assets/MinhDuc_logo_trang.svg')
+            assert page.locator('[name="username"]').locator('..').bounding_box()['height']>=56
             no_horizontal_scroll(page)
             evidence=Path('test_evidence/u1b');evidence.mkdir(parents=True,exist_ok=True)
             page.screenshot(path=str(evidence/f'login-{width}.png'),full_page=True)
@@ -493,4 +495,64 @@ def test_u1r1_shared_shell(https_server,clients,width,height,role_name):
             page.locator('.account-trigger').click();page.locator('#logout').click()
             expect(page.locator('[data-form=login]')).to_be_visible()
             assert not errors,errors
+        finally:browser.close()
+
+
+@pytest.mark.parametrize('width,height',[(1366,768),(390,844)])
+def test_u1r2_reception_prices_login_password(https_server,clients,width,height):
+    import secrets
+    origin,certdir=https_server
+    cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    evidence=Path('test_evidence/u1r2');evidence.mkdir(parents=True,exist_ok=True)
+    def check(page,name):
+        no_horizontal_scroll(page)
+        small=page.locator('#workspace *').evaluate_all("es=>es.filter(e=>e.getClientRects().length&&e.textContent.trim()&&parseFloat(getComputedStyle(e).fontSize)<13).map(e=>[e.tagName,e.className,getComputedStyle(e).fontSize])")
+        assert not small,small
+        page.screenshot(path=str(evidence/f'{name}-{width}.png'),full_page=True)
+    with sync_playwright() as p:
+        browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
+        try:
+            page=browser.new_page(viewport={'width':width,'height':height})
+            errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+            page.goto(origin);expect(page.locator('[data-form=login]')).to_be_visible()
+            expect(page.locator('.r2-login-brand img')).to_have_attribute('src','/assets/MinhDuc_logo_trang.svg')
+            check(page,'login')
+            page.locator('[name=username]').fill('test_reception');page.locator('[name=password]').fill(PASSWORDS['reception'])
+            page.locator('[data-form=login] button').click();expect(page.locator('.account-trigger')).to_be_visible();settle(page)
+            rows=clients['reception'].get('/api/visits').json()
+            for status in ['waiting','in_progress','completed']:
+                expect(page.locator(f'[data-r2-stat={status}] strong')).to_have_text(str(sum(v['status']==status for v in rows)))
+            page.keyboard.press('F2');expect(page.locator('#search-patients')).to_be_focused()
+            expect(page.locator('[data-r2-new]')).to_have_css('background-color','rgb(201, 240, 160)')
+            page.locator('[data-r2-new]').hover()
+            expect(page.locator('[data-r2-new]')).to_have_css('background-color','rgb(201, 240, 160)')
+            page.locator('[data-r2-new]').click()
+            form=page.locator('[data-form=patient]');name='Người bệnh giả lập R2 '+secrets.token_hex(4)
+            form.locator('[name=full_name]').fill(name);form.locator('[name=date_of_birth]').fill('01/01/1990');form.locator('[name=sex]').select_option('Nữ');form.locator('[name=phone]').fill('0900000345')
+            form.locator('button.btn').click();settle(page)
+            expect(page.locator('[data-form=visit]')).to_be_visible()
+            check(page,'reception')
+            dock=page.locator('.r2-dock').bounding_box();assert dock and dock['y']>=0 and dock['y']+dock['height']<=height
+            if width<=900:
+                nav=page.locator('#navigation').bounding_box();assert dock['y']+dock['height']<=nav['y']
+            page.evaluate('window.scrollTo(0,document.documentElement.scrollHeight)')
+            footer=page.locator('footer').bounding_box();assert footer['y']+footer['height']<=dock['y'],(footer,dock)
+            with page.expect_response(lambda r:r.url.endswith('/api/visits') and r.request.method=='POST') as created:
+                page.locator('[data-form=visit] button[type=submit]').click()
+            assert created.value.status==201
+            vid=created.value.json()['id'];settle(page)
+            assert any(v['id']==vid for v in clients['reception'].get('/api/visits').json())
+            go(page,'prices');check(page,'prices')
+            services=clients['reception'].get('/api/services').json()
+            for key,n in [('services',len(services)),('fixed',sum(not x['price_at_collection'] for x in services)),('collection',sum(bool(x['price_at_collection']) for x in services))]:
+                expect(page.locator(f'[data-r2-stat={key}] strong')).to_have_text(str(n))
+            assert page.locator('#workspace [data-form]').count()==0
+            page.locator('#price-filter').fill('không có dịch vụ giả lập này');expect(page.locator('tr[data-search]:visible')).to_have_count(0)
+            page.locator('#price-filter').fill('');expect(page.locator('tr[data-search]:visible').first).to_be_visible()
+            page.locator('.account-trigger').click();page.locator('#change-password').click();settle(page)
+            f=page.locator('[data-form=password]');f.locator('[name=current_password]').fill('mat-khau-cu');f.locator('[name=new_password]').fill('mat-khau-moi-gia-lap');f.locator('[name=confirm_password]').fill('mat-khau-moi-gia-lap')
+            expect(f.locator('[data-r2-check][data-passed=true]')).to_have_count(3)
+            f.locator('[name=confirm_password]').fill('khac');expect(f.locator('[data-r2-check=match]')).to_have_attribute('data-passed','false')
+            check(page,'password');assert not errors,errors
         finally:browser.close()
