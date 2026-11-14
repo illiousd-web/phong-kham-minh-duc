@@ -12,6 +12,8 @@ from .labels import parse_day
 from .manager_visits import fold_name, _utc_start, _day
 
 
+ALLERGY_FLAG_SQL = "CASE WHEN TRIM(COALESCE(p.allergies,'')) NOT IN ('','Không dị ứng') THEN 1 ELSE 0 END AS has_allergy"
+
 class AllergiesInput(BaseModel):
     allergies: str | None = Field(default=None, max_length=2000)
 
@@ -48,7 +50,7 @@ def doctor_queue(c, uid, day='', q=''):
         SELECT v.*,ROW_NUMBER() OVER (PARTITION BY {local_date} ORDER BY v.created_at,v.id) AS daily_number
         FROM visits v WHERE {bounds})
         SELECT v.id,v.patient_id,v.status,v.created_at,v.daily_number,
-        p.full_name AS patient_name,p.date_of_birth,p.sex,
+        p.full_name AS patient_name,p.date_of_birth,p.sex,{ALLERGY_FLAG_SQL},
         CASE WHEN v.status IN ('completed','cancelled') THEN v.status
           WHEN EXISTS(SELECT 1 FROM orders o WHERE o.visit_id=v.id AND o.status='pending_review') THEN 'results_ready'
           WHEN EXISTS(SELECT 1 FROM orders o WHERE o.visit_id=v.id AND o.status IN ('requested','ordered')) THEN 'waiting_results'
