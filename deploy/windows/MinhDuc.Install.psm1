@@ -708,18 +708,22 @@ function Test-MinhDucVenvPythonPath {
 
 function Test-MinhDucProcessIdentity {
     param($Before, $Now)
-    return $Now -and $Before.ExecutablePath -eq $Now.ExecutablePath -and $Before.CommandLine -eq $Now.CommandLine -and $Before.CreationDate -eq $Now.CreationDate
+    return $Now -and $Before.CreationDate -and $Now.CreationDate -and $Before.ExecutablePath -eq $Now.ExecutablePath -and $Before.CommandLine -eq $Now.CommandLine -and $Before.CreationDate -eq $Now.CreationDate
 }
 
 function Get-MinhDucVenvProcessTree {
     param([string]$Venv, [hashtable]$Known)
     $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
     $selected = @{}
-    $code = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Venv).TrimEnd([char[]]'\/'))
-    $pattern = '(?i)' + [regex]::Escape($code) + '(?:[/\\]|["\s]|$)'
+    $envPath = 'C:\ProgramData\MinhDuc\clinic.env'
     foreach ($item in $all) {
         $key = [string]$item.ProcessId
-        $root = $item.Name -in @('python.exe','pythonw.exe') -and ((Test-MinhDucVenvPythonPath -ExecutablePath $item.ExecutablePath -Venv $Venv) -or $item.CommandLine -match $pattern)
+        $parts = @([regex]::Matches([string]$item.CommandLine, '"[^"\r\n]*"|[^\s]+') | ForEach-Object { $_.Value.Trim('"') })
+        $withEnv = $false
+        for ($i=1; $i -lt $parts.Count-2; $i++) {
+            if ($parts[$i] -ceq '-m' -and $parts[$i+1] -ceq 'scripts.with_env' -and $parts[$i+2].Replace('/','\') -ieq $envPath) { $withEnv = $true }
+        }
+        $root = $item.Name -in @('python.exe','pythonw.exe') -and ((Test-MinhDucVenvPythonPath -ExecutablePath $item.ExecutablePath -Venv $Venv) -or $withEnv)
         if ($root -or ($Known.ContainsKey($key) -and (Test-MinhDucProcessIdentity $Known[$key] $item))) { $selected[$key] = $item }
     }
     do {
@@ -742,10 +746,15 @@ function Wait-MinhDucVenvPythonExit {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
         $remaining = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
-        if (-not $remaining.Count) { return }
+        if (-not $remaining.Count) {
+            Start-Sleep -Seconds 2
+            $remaining = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
+            if (-not $remaining.Count) { return }
+        }
         if ($watch.Elapsed.TotalSeconds -ge $Seconds) { break }
         Start-Sleep -Milliseconds 200
     } while ($true)
+    $unverified = $false
     foreach ($candidate in $remaining) {
         try { $process = Get-Process -Id $candidate.ProcessId -ErrorAction Stop }
         catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
@@ -754,13 +763,21 @@ function Wait-MinhDucVenvPythonExit {
         }
         # Refresh CIM identity immediately before stopping: PID alone is never trusted.
         $now = @(Get-CimInstance Win32_Process -Filter ("ProcessId=" + $candidate.ProcessId) -ErrorAction Stop | Where-Object { $_.ProcessId -eq $candidate.ProcessId })
+        if (-not $candidate.CreationDate -or ($now.Count -eq 1 -and -not $now[0].CreationDate)) {
+            Write-Luu ('Không xác minh được CreationDate; không dừng PID=' + $candidate.ProcessId)
+            $unverified = $true
+            continue
+        }
         if ($now.Count -ne 1 -or -not (Test-MinhDucProcessIdentity $candidate $now[0]) -or $process.Path -ne $candidate.ExecutablePath) { continue }
         Write-Luu ('Quá hạn chờ Python 30 giây; dừng tiến trình ' + $process.ProcessName + '; PID=' + $process.Id + '; ExecutablePath=' + $now[0].ExecutablePath + '; ' + (Get-MinhDucPythonScriptLabel -CommandLine $now[0].CommandLine))
         Stop-Process -InputObject $process -Force -ErrorAction Stop
         if (-not $process.WaitForExit(5000)) { throw 'Python trong môi trường phòng khám chưa thoát; dừng phục hồi.' }
     }
     $left = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
-    if ($left.Count) { throw 'Còn tiến trình đang giữ môi trường phòng khám; dừng phục hồi.' }
+    if ($unverified -or $left.Count) { throw 'Còn tiến trình đang giữ môi trường phòng khám; dừng phục hồi.' }
+    Start-Sleep -Seconds 2
+    $left = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
+    if ($left.Count) { throw 'Có tiến trình xuất hiện lại sau lần quét rỗng; dừng phục hồi.' }
 }
 
 function Invoke-MinhDucAccessRetry {

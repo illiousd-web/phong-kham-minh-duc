@@ -1,6 +1,40 @@
-﻿# Test real helper definitions with synthetic process objects; never kill a process.
+﻿param([switch]$RealVenvLock)
+# Test real helper definitions with synthetic process objects; never kill a process.
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'MinhDuc.Install.psm1') -Force -DisableNameChecking
+# Explicit Windows E2E mode: invoke from PowerShell, not from a Python in the venv under test.
+if ($RealVenvLock) {
+    if ($env:OS -ne 'Windows_NT' -or $env:GITHUB_ACTIONS -ne 'true') { throw 'RealVenvLock chỉ chạy trên máy Windows CI dùng dữ liệu giả lập.' }
+    $running=@(Get-Service -ErrorAction Stop | Where-Object {$_.Name -like 'MinhDuc*' -and $_.Status -ne 'Stopped'})
+    if($running.Count){throw 'Dừng dịch vụ MinhDuc trên máy CI trước khi kiểm khóa venv.'}
+    $live='C:\MinhDuc\.venv'
+    $moved='C:\MinhDuc\.venv-lock-proof-'+[guid]::NewGuid().ToString('N')
+    $ready=Join-Path $env:TEMP ('minhduc-rust-'+[guid]::NewGuid().ToString('N')+'.txt')
+    $child=$null
+    try {
+        $code="import cryptography.hazmat.bindings._rust as rust, pathlib, time; pathlib.Path(r'$ready').write_text(str(rust.__file__)); time.sleep(600)"
+        $child=Start-Process -FilePath (Join-Path $live 'Scripts\python.exe') -ArgumentList @('-c',('"'+$code+'"'),'-m','scripts.with_env','"C:\ProgramData\MinhDuc\clinic.env"') -PassThru -ErrorAction Stop
+        $timer=[Diagnostics.Stopwatch]::StartNew()
+        while(-not (Test-Path -LiteralPath $ready)){
+            if($timer.Elapsed.TotalSeconds -gt 20){throw 'Python không nạp được _rust.pyd trong thời hạn kiểm thử.'}
+            Start-Sleep -Milliseconds 100
+        }
+        $loaded=(Get-Content -LiteralPath $ready -Raw).Trim()
+        if(-not $loaded.StartsWith(($live+'\'),[StringComparison]::OrdinalIgnoreCase) -or $loaded -notmatch '_rust.*\.pyd$'){throw 'Không chứng minh được _rust.pyd đã nạp từ venv đang kiểm.'}
+        Write-Output ('Đã nạp: '+$loaded)
+        Get-CimInstance Win32_Process | Where-Object {$_.ProcessId -eq $child.Id -or $_.ParentProcessId -eq $child.Id} | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | Format-Table | Out-Host
+        Wait-MinhDucVenvPythonExit -Venv $live -Seconds 1
+        Rename-Item -LiteralPath $live -NewName (Split-Path $moved -Leaf) -ErrorAction Stop
+        if(-not (Test-Path -LiteralPath $moved) -or (Test-Path -LiteralPath $live)){throw 'Đổi tên venv chưa thành công.'}
+        Write-Output 'PASS: real _rust.pyd released; venv renamed after process-tree stop'
+    } finally {
+        if(Test-Path -LiteralPath $moved){Rename-Item -LiteralPath $moved -NewName '.venv' -ErrorAction Stop}
+        if($child -and -not $child.HasExited){Stop-Process -InputObject $child -Force -ErrorAction Stop}
+        Remove-Item -LiteralPath $ready -Force -ErrorAction SilentlyContinue
+    }
+    exit 0
+}
+
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'MinhDuc.Install.psm1'),[ref]$tokens,[ref]$errors)
 foreach ($name in @('Test-MinhDucProcessIdentity','Get-MinhDucVenvProcessTree','Test-MinhDucVenvPythonPath','Wait-MinhDucVenvPythonExit','Invoke-MinhDucAccessRetry','Suspend-MinhDucBackupTasks','Get-MinhDucPythonScriptLabel')) {
@@ -14,9 +48,9 @@ function Start-Sleep { param($Seconds,$Milliseconds) $script:delays.Add(@{Second
 function Get-CimInstance {
     param($ClassName,$Filter,$ErrorAction)
     $script:queries++
-    if ($script:alive -and ($script:case -ne 'Natural' -or $script:queries -eq 1)) { [pscustomobject]@{Name='python.exe';ParentProcessId=1;CreationDate=$null;ProcessId=101;ExecutablePath=$exe;CommandLine='python.exe -m scripts.backup_job --password abc --token sensitive-token --key secret-key -c hidden-code postgresql://hidden-uri'} }
-    [pscustomobject]@{Name='python.exe';ParentProcessId=1;CreationDate=$null;CommandLine='python.exe other.py';ProcessId=202;ExecutablePath=$other}
-    [pscustomobject]@{Name='python.exe';ParentProcessId=1;CreationDate=$null;CommandLine='';ProcessId=303;ExecutablePath=$null}
+    if ($script:alive -and ($script:case -ne 'Natural' -or $script:queries -eq 1)) { [pscustomobject]@{Name='python.exe';ParentProcessId=1;CreationDate=1;ProcessId=101;ExecutablePath=$exe;CommandLine='python.exe -m scripts.backup_job --password abc --token sensitive-token --key secret-key -c hidden-code postgresql://hidden-uri'} }
+    [pscustomobject]@{Name='python.exe';ParentProcessId=1;CreationDate=1;CommandLine='python.exe other.py';ProcessId=202;ExecutablePath=$other}
+    [pscustomobject]@{Name='python.exe';ParentProcessId=1;CreationDate=1;CommandLine='';ProcessId=303;ExecutablePath=$null}
 }
 function Get-Process {
     param($Id,$ErrorAction)
@@ -242,8 +276,8 @@ Write-Output 'PASS: base Python outside venv and recursive child detected/stoppe
     $base=Join-Path ([IO.Path]::GetTempPath()) 'base/pythonw.exe'
     $code=Split-Path $venv -Parent
     $rows=@(
-        [pscustomobject]@{Name='pythonw.exe';ProcessId=501;ParentProcessId=1;ExecutablePath=$base;CommandLine=('pythonw.exe "'+(Join-Path $code 'worker.py')+'"');CreationDate=1},
-        [pscustomobject]@{Name='python.exe';ProcessId=502;ParentProcessId=1;ExecutablePath=$base;CommandLine=('python.exe "'+(Join-Path ($code+'-other') 'worker.py')+'"');CreationDate=1}
+        [pscustomobject]@{Name='pythonw.exe';ProcessId=501;ParentProcessId=1;ExecutablePath=$base;CommandLine='pythonw.exe -m scripts.with_env "C:\ProgramData\MinhDuc\clinic.env" scripts.run_lan';CreationDate=1},
+        [pscustomobject]@{Name='python.exe';ProcessId=502;ParentProcessId=1;ExecutablePath=$base;CommandLine='python.exe --output C:\MinhDuc\reports\x.csv';CreationDate=1}
     )
     function Get-CimInstance {param($ClassName,$Filter,$ErrorAction) $rows}
     $found=@(Get-MinhDucVenvProcessTree -Venv $venv -Known @{})
@@ -254,3 +288,24 @@ Write-Output 'PASS: base Python outside venv and recursive child detected/stoppe
     if(Test-MinhDucProcessIdentity $rows[0] $changed){throw 'Accepted recycled PID with new creation time'}
 }
 Write-Output 'PASS: command-line pythonw root, sibling path excluded, changed command line/creation time rejected'
+
+& {
+    $row=[pscustomobject]@{Name='python.exe';ProcessId=601;ParentProcessId=1;ExecutablePath=$exe;CommandLine='python.exe -c synthetic';CreationDate=$null}
+    function Get-CimInstance {param($ClassName,$Filter,$ErrorAction) $row}
+    function Get-Process {param($Id,$ErrorAction) [pscustomobject]@{Id=601;Path=$exe;ProcessName='python'}}
+    function Stop-Process {throw 'Stopped unverified process'}
+    $script:missingDateLog=''
+    function Write-Luu {param($Message) $script:missingDateLog+=$Message}
+    $threw=$false
+    try { Wait-MinhDucVenvPythonExit -Venv $venv -Seconds 0 } catch { $threw=$true }
+    if(-not $threw -or $script:missingDateLog -notmatch 'CreationDate'){throw 'Missing date must log and fail without stop'}
+    if(Test-MinhDucProcessIdentity $row $row){throw 'Accepted missing date identity'}
+}
+& {
+    $script:emptyScans=0;$script:emptySleeps=0
+    function Get-CimInstance {param($ClassName,$Filter,$ErrorAction) $script:emptyScans++}
+    function Start-Sleep {param($Seconds,$Milliseconds) if($Seconds -ne 2){throw 'Wrong empty confirmation delay'};$script:emptySleeps++}
+    Wait-MinhDucVenvPythonExit -Venv $venv -Seconds 0
+    if($script:emptyScans -ne 2 -or $script:emptySleeps -ne 1){throw 'Must confirm two empty scans two seconds apart'}
+}
+Write-Output 'PASS: unknown CreationDate logs/fails without stop; two empty scans separated by two seconds'
