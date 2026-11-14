@@ -104,11 +104,11 @@ with sync_playwright() as p:
    assert page.evaluate('document.documentElement.scrollWidth')<=width
    assert page.locator('#workspace *').evaluate_all("es=>es.filter(e=>e.getClientRects().length&&e.textContent.trim()).every(e=>parseFloat(getComputedStyle(e).fontSize)>=13)")
    page.screenshot(path=str(EVIDENCE/f'r3-doctor-{width}.png'))
-   page.locator('[data-action=doctor-tab][data-target=rx]').click()
+   page.locator('.doctor-tabs [data-action=doctor-tab][data-target=rx]').click()
    page.wait_for_function("document.querySelector('.r3-layout').dataset.r3Tab==='rx'")
    assert page.locator('.m6-dose-grid input').evaluate_all('es=>es.every(e=>e.getBoundingClientRect().width>=50)')
    page.screenshot(path=str(EVIDENCE/f'r3-rx-{width}.png'))
-   page.locator('[data-action=doctor-tab][data-target=exam]').click()
+   page.locator('.doctor-tabs [data-action=doctor-tab][data-target=exam]').click()
   go('m6-list')
   for width,height in ((1366,768),(390,844)):
    page.set_viewport_size({'width':width,'height':height})
