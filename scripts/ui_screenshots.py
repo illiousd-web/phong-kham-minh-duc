@@ -17,6 +17,8 @@ from pathlib import Path
 import httpx
 from playwright.sync_api import sync_playwright
 
+from scripts.ui_wait import wait_for_login
+
 ROOT = Path(__file__).resolve().parents[1]
 ROLES = [('letan', 'le-tan'), ('bs_noi', 'bac-si'), ('kythuat', 'ky-thuat-vien'), ('dieuduong', 'dieu-duong'),
          ('duoc', 'duoc'), ('thungan', 'thu-ngan'), ('quanly', 'quan-ly'), ('quantri', 'quan-tri')]
@@ -108,7 +110,7 @@ def main():
                     page.locator('[data-form="login"] select[name="username"]').select_option(user)
                     page.locator('[data-form="login"] input[name="password"]').fill(password)
                     page.locator('[data-form="login"] button').click()
-                    page.locator('#logout').wait_for(state='visible')
+                    wait_for_login(page)
                     page.locator('#workspace[aria-busy="false"]').wait_for()
                     if args.before:
                         page.locator(f'[data-action="navigate"][data-page="{BEFORE_PAGE[user]}"]').first.click()
