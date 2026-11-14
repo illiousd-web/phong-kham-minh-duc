@@ -12,7 +12,7 @@ Phong cách: Liquid Glass + Android 17 Expressive (A + C). Font Be Vietnam Pro. 
 - Khối tiêu đề lớn (hero): nền xanh rgba(0,118,66,0.9) / xanh dương rgba(0,95,180,0.9) / đen rgba(11,31,23,0.86), chữ trắng, không làm mờ chữ.
 - Tương phản chữ ≥ 4,5:1 (chữ thường), ≥ 3:1 (chữ ≥ 24px hoặc ≥ 18,7px đậm).
 - Cỡ chữ nhỏ nhất 13px. Nút, tab, mục điều hướng cao ≥ 44px.
-- Viền ô nhập #9DB7AA (≥ 3:1 trên nền trắng).
+- Viền ô nhập #6F8F7E (3,56:1 trên nền trắng).
 - Dải "Bản thử nghiệm" luôn hiện, kể cả màn đăng nhập; điện thoại cho xuống 2 dòng.
 - Điện thoại (≤ 900px): điều hướng là thanh nổi ở đáy; thông báo (toast) nằm trên thanh đáy.
 

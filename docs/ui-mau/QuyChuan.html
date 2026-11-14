@@ -11,8 +11,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800;900&amp;display=swap" rel="stylesheet">
 <style>
 body{margin:0}
-a{color:#0B1F17}a:hover{color:#17803D}
-:focus-visible{outline:3px solid #17803D;outline-offset:2px}
+a{color:#0B1F17}a:hover{color:#008249}
+:focus-visible{outline:3px solid #008249;outline-offset:2px}
 </style>
 </helmet>
 <div style="width: 1366px; box-sizing: border-box; padding: 32px; font-family: 'Be Vietnam Pro', sans-serif; color: #0B1F17; background: linear-gradient(160deg, #EAF6EF 0%, #EEF2FB 100%); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px">
@@ -72,7 +72,7 @@ a{color:#0B1F17}a:hover{color:#17803D}
 
   <section style="border-radius: 28px; padding: 22px; background: #FFFFFF; display: flex; flex-direction: column; gap: 10px">
     <strong style="font-size: 18px">Bàn phím và viền chọn</strong>
-    <button style="height: 46px; border: 0; border-radius: 999px; background: rgba(23,128,61,0.92); color: #FFFFFF; font: inherit; font-size: 15px; font-weight: 800; outline: 3px solid #17803D; outline-offset: 2px">Ví dụ đang được chọn</button>
+    <button style="height: 46px; border: 0; border-radius: 999px; background: rgba(0,130,73,0.92); color: #FFFFFF; font: inherit; font-size: 15px; font-weight: 800; outline: 3px solid #008249; outline-offset: 2px">Ví dụ đang được chọn</button>
     <span style="font-size: 13px; color: #1F3A31; line-height: 1.6">Mọi ô, nút: viền xanh lá 3px khi được chọn bằng bàn phím. F2 tìm người bệnh · Enter lưu · Esc đóng. Kích thước kiểm thử: 1366×768 và 390px.</span>
   </section>
 </div>
@@ -82,11 +82,11 @@ class Component extends DCLogic {
   renderVals() {
     return {
       buttons: [
-        { label: 'Lưu', style: 'border:0;background:rgba(23,128,61,0.92);color:#FFFFFF', use: 'Hành động chính, hoàn tất: lưu, khóa đơn, đã thu' },
+        { label: 'Lưu', style: 'border:0;background:rgba(0,130,73,0.92);color:#FFFFFF', use: 'Hành động chính, hoàn tất: lưu, khóa đơn, đã thu' },
         { label: 'Gửi duyệt', style: 'border:0;background:rgba(22,99,168,0.92);color:#FFFFFF', use: 'Chuyển việc sang người khác: chỉ định, gửi duyệt' },
         { label: 'Đang chọn', style: 'border:0;background:#0B1F17;color:#FFFFFF', use: 'Mục đang chọn: tab, chip, bộ lọc' },
         { label: 'In phiếu', style: 'border:1px solid #CFE3D7;background:#F2F8F4;color:#0B1F17', use: 'Hành động phụ: in, lưu nháp' },
-        { label: 'Hủy', style: 'border:0;background:#B3261E;color:#FFFFFF', use: 'Chỉ cho hủy, xóa; luôn hỏi xác nhận' }
+        { label: 'Hủy', style: 'border:0;background:#B42318;color:#FFFFFF', use: 'Chỉ cho hủy, xóa; luôn hỏi xác nhận' }
       ],
       states: [
         { label: 'Chờ', style: 'background:#E3E8E5;color:#2B322C', use: 'Đang đợi' },

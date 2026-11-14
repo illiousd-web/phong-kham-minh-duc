@@ -425,10 +425,15 @@ def test_u1r1_shared_shell(https_server,clients,width,height,role_name):
         try:
             page=browser.new_page(viewport={'width':width,'height':height})
             errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+            # Synthetic nonzero counts exercise the visible badge even on an empty database.
+            def badge_counts(route):
+                route.fulfill(json={key:1 for key in ('reception','doctor','cashier','prices','m6-list','m5-queue')})
+            page.route('**/api/queue-counts',badge_counts)
             page.goto(origin)
             expect(page.locator('[data-form=login]')).to_be_visible()
             expect(page.locator('.glass-small-copy')).to_have_count(0)
             expect(page.locator('.trial-strip')).to_be_visible()
+            expect(page.locator('.trial-strip')).to_have_css('font-size','13px')
             expect(page.locator('.trial-strip')).to_contain_text('Chưa được thẩm định')
             if width<=900:
                 assert page.locator('.trial-strip').evaluate("e=>{const s=getComputedStyle(e);return e.scrollWidth<=e.clientWidth && e.clientHeight-parseFloat(s.paddingTop)-parseFloat(s.paddingBottom)<=36}")
@@ -442,6 +447,11 @@ def test_u1r1_shared_shell(https_server,clients,width,height,role_name):
             page.locator('[name=password]').fill(PASSWORDS[role_name])
             page.locator('[data-form=login] button').click()
             expect(page.locator('.account-trigger')).to_be_visible();settle(page)
+            expect(page.locator('#navigation .badge').first).to_be_visible()
+            for badge in page.locator('#navigation .badge:visible').all():
+                expect(badge).to_have_css('background-color','rgb(180, 35, 24)')
+                assert badge.evaluate('e=>e.getBoundingClientRect().height>=24')
+            expect(page.locator('.trial-strip')).to_have_css('font-size','13px')
             expect(page.locator('.glass-small-copy')).to_have_count(0)
             if width<=900:
                 toast=page.locator('#toast').bounding_box();nav=page.locator('#navigation').bounding_box()
@@ -459,7 +469,7 @@ def test_u1r1_shared_shell(https_server,clients,width,height,role_name):
                 nav=page.locator('#navigation')
                 expect(nav).to_have_css('position','fixed')
                 box=nav.bounding_box();assert abs(box['x']-16)<1 and abs(box['y']+box['height']-(height-22))<1
-                assert page.locator('.trial-strip').evaluate("e=>e.scrollWidth<=e.clientWidth && e.clientHeight-10<=36")
+                assert page.locator('.trial-strip').evaluate("e=>{const s=getComputedStyle(e);return e.scrollWidth<=e.clientWidth && e.clientHeight-parseFloat(s.paddingTop)-parseFloat(s.paddingBottom)<=36}")
             expect(page.locator('.shell-header img')).to_have_attribute('src','/assets/MinhDuc_logo_mau.svg')
             active=page.locator('#navigation [aria-current=page]')
             expect(active).to_have_css('background-color','rgba(255, 255, 255, 0.9)')
