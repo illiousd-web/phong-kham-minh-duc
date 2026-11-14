@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>A + C – Nhập kết quả xét nghiệm</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E6ECFB}
+a{color:#0B1F17}a:hover{color:#17803D}
+:focus-visible{outline:3px solid #17803D;outline-offset:2px}
+</style>
+</helmet>
+<div style="position: relative; overflow: hidden; min-height: 900px; padding: 22px 26px 110px; box-sizing: border-box; font-family: 'Be Vietnam Pro', system-ui, sans-serif; color: #0B1F17; background: radial-gradient(circle at 12% 12%, #8EC2FF 0%, rgba(142,194,255,0) 40%), radial-gradient(circle at 88% 20%, #C3AEFF 0%, rgba(195,174,255,0) 40%), radial-gradient(circle at 30% 95%, #7FE0A8 0%, rgba(127,224,168,0) 40%), linear-gradient(160deg, #E3EEFB 0%, #ECE6FB 55%, #E2F3EA 100%); display: flex; flex-direction: column; gap: 16px">
+  <div style="display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px">
+    <section style="grid-column: span 4; display: flex; flex-direction: column; gap: 10px">
+      <h1 style="margin: 0; font-size: 40px; line-height: 1; font-weight: 900; letter-spacing: -1px">Xét nghiệm</h1>
+      <div style="display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: rgba(255,255,255,0.45); border: 1px solid rgba(255,255,255,0.85); align-self: flex-start">
+        <button style="height: 38px; padding: 0 16px; border: 0; border-radius: 999px; background: #0B1F17; color: #FFFFFF; font: inherit; font-size: 13px; font-weight: 800">Đang làm 5</button>
+        <button style="height: 38px; padding: 0 16px; border: 0; border-radius: 999px; background: transparent; font: inherit; font-size: 13px; font-weight: 700">Chờ duyệt 2</button>
+        <button style="height: 38px; padding: 0 16px; border: 0; border-radius: 999px; background: transparent; font: inherit; font-size: 13px; font-weight: 700">Xong 11</button>
+      </div>
+      <sc-for list="{{queue}}" as="q" hint-placeholder-count="4">
+        <a href="#" style="display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 20px; text-decoration: none; color: #0B1F17; border: 1px solid rgba(255,255,255,0.85); box-shadow: inset 0 1px 0 #FFFFFF; backdrop-filter: blur(22px) saturate(180%); {{q.bg}}">
+          <span style="width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 900; {{q.num}}">{{q.no}}</span>
+          <span style="display: flex; flex-direction: column"><strong style="font-size: 15px">{{q.name}}</strong><span style="font-size: 12px; color: #1F3A31">{{q.test}}</span></span>
+        </a>
+      </sc-for>
+    </section>
+
+    <section style="grid-column: span 8; border-radius: 40px; padding: 22px; display: flex; flex-direction: column; gap: 12px; background: rgba(255,255,255,0.45); border: 1px solid rgba(255,255,255,0.85); box-shadow: inset 0 1px 0 #FFFFFF, 0 20px 50px rgba(16,30,60,0.16); backdrop-filter: blur(28px) saturate(180%)">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+        <span style="display: flex; flex-direction: column"><strong style="font-size: 22px; font-weight: 900">Hoàng Văn Nam · Nam · 32t</strong><span style="font-size: 13px; color: #1F3A31">Sinh hóa máu · lấy mẫu 08:10 · KTV Lê Minh</span></span>
+        <span style="margin-left: auto; font-size: 13px; padding: 8px 14px; border-radius: 999px; background: rgba(255,224,138,0.85); color: #3A2A00; font-weight: 800">Nháp – chưa duyệt</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; padding: 0 16px; font-size: 12px; font-weight: 700; color: #1F3A31">
+        <span style="grid-column: span 4">Chỉ số</span><span style="grid-column: span 3">Kết quả</span><span style="grid-column: span 3">Tham chiếu</span><span style="grid-column: span 2">Đơn vị</span>
+      </div>
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+        <div style="display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 10px 16px; border-radius: 20px; {{r.bg}}">
+          <span style="grid-column: span 4; display: flex; flex-direction: column"><strong style="font-size: 15px">{{r.name}}</strong><span style="font-size: 11px; color: #1F3A31">{{r.code}}</span></span>
+          <span style="grid-column: span 3; display: flex; align-items: center; gap: 8px">
+            <input aria-label="Kết quả {{r.name}}" value="{{r.value}}" style="width: 90px; height: 40px; padding: 0 12px; border: 1px solid rgba(255,255,255,0.95); border-radius: 12px; background: rgba(255,255,255,0.9); font: inherit; font-size: 17px; font-weight: 800">
+            <sc-if value="{{r.flag}}" hint-placeholder-val="{{ false }}">
+              <span style="font-size: 13px; padding: 4px 10px; border-radius: 10px; font-weight: 900; {{r.flagStyle}}">{{r.flag}}</span>
+            </sc-if>
+          </span>
+          <span style="grid-column: span 3; font-size: 14px">{{r.ref}}</span>
+          <span style="grid-column: span 2; font-size: 14px; color: #1F3A31">{{r.unit}}</span>
+        </div>
+      </sc-for>
+    </section>
+  </div>
+
+  <div style="position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 24px; border-radius: 999px; background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.85); box-shadow: inset 0 1px 0 #FFFFFF, 0 18px 44px rgba(16,30,60,0.24); backdrop-filter: blur(26px) saturate(190%)">
+    <span style="font-size: 14px; font-weight: 700">2 chỉ số bất thường</span>
+    <button style="height: 50px; padding: 0 20px; border: 1px solid rgba(255,255,255,0.85); border-radius: 999px; background: rgba(255,255,255,0.65); font: inherit; font-size: 15px; font-weight: 800">Lưu nháp</button>
+    <button style="height: 50px; padding: 0 26px; border: 0; border-radius: 999px; background: rgba(22,99,168,0.92); color: #FFFFFF; font: inherit; font-size: 16px; font-weight: 900">Gửi duyệt</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1366,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const hi = 'background:#D6283A;color:#FFFFFF', lo = 'background:#1663A8;color:#FFFFFF';
+    const glass = 'background:rgba(255,255,255,0.55)', warn = 'background:rgba(255,218,212,0.8)';
+    return {
+      queue: [
+        { no: '21', name: 'Hoàng Văn Nam', test: 'Sinh hóa máu · 6 chỉ số', bg: 'background:rgba(255,255,255,0.8)', num: 'background:#1663A8;color:#FFFFFF' },
+        { no: '20', name: 'Vũ Ngọc Bích', test: 'Tổng phân tích máu', bg: 'background:rgba(255,255,255,0.45)', num: 'background:rgba(255,255,255,0.9);color:#0B1F17' },
+        { no: '22', name: 'Lý Thị Hạnh', test: 'Nước tiểu 10 thông số', bg: 'background:rgba(255,255,255,0.45)', num: 'background:rgba(255,255,255,0.9);color:#0B1F17' },
+        { no: '25', name: 'Phan Văn Lộc', test: 'Glucose', bg: 'background:rgba(255,255,255,0.45)', num: 'background:rgba(255,255,255,0.9);color:#0B1F17' }
+      ],
+      rows: [
+        { name: 'Glucose', code: 'GLU', value: '7,8', flag: 'H', flagStyle: hi, ref: '[TRỊ SỐ CỦA MÁY]', unit: 'mmol/L', bg: warn },
+        { name: 'Ure', code: 'URE', value: '5,1', flag: '', flagStyle: '', ref: '[TRỊ SỐ CỦA MÁY]', unit: 'mmol/L', bg: glass },
+        { name: 'Creatinin', code: 'CREA', value: '88', flag: '', flagStyle: '', ref: '[TRỊ SỐ CỦA MÁY]', unit: 'µmol/L', bg: glass },
+        { name: 'AST (GOT)', code: 'AST', value: '24', flag: '', flagStyle: '', ref: '[TRỊ SỐ CỦA MÁY]', unit: 'U/L', bg: glass },
+        { name: 'ALT (GPT)', code: 'ALT', value: '61', flag: 'H', flagStyle: hi, ref: '[TRỊ SỐ CỦA MÁY]', unit: 'U/L', bg: warn },
+        { name: 'Cholesterol toàn phần', code: 'CHOL', value: '', flag: '', flagStyle: lo, ref: '[TRỊ SỐ CỦA MÁY]', unit: 'mmol/L', bg: glass }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

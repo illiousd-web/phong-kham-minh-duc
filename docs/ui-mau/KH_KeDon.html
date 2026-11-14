@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>A + C – Kê đơn</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#DCEFE4}
+a{color:#0B1F17}a:hover{color:#17803D}
+:focus-visible{outline:3px solid #17803D;outline-offset:2px}
+</style>
+</helmet>
+<div style="position: relative; overflow: hidden; min-height: 900px; padding: 22px 26px 110px; box-sizing: border-box; font-family: 'Be Vietnam Pro', system-ui, sans-serif; color: #0B1F17; background: radial-gradient(circle at 10% 10%, #7FE0A8 0%, rgba(127,224,168,0) 38%), radial-gradient(circle at 90% 15%, #FFD9A0 0%, rgba(255,217,160,0) 40%), radial-gradient(circle at 70% 95%, #8EC2FF 0%, rgba(142,194,255,0) 42%), linear-gradient(160deg, #DCF3E7 0%, #F4EEDF 55%, #E6ECFB 100%); display: flex; flex-direction: column; gap: 16px">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px">
+    <span style="display: flex; flex-direction: column">
+      <span style="font-size: 14px; color: #1F3A31">Trần Văn Minh · 45t · K29.7 Viêm dạ dày</span>
+      <h1 style="margin: 0; font-size: 44px; line-height: 1; font-weight: 900; letter-spacing: -1px">Kê đơn</h1>
+    </span>
+    <span style="font-size: 15px; padding: 10px 16px; border-radius: 12px; background: #FFDAD4; color: #8C1D18; font-weight: 900">Dị ứng: Amoxicillin</span>
+    <span style="margin-left: auto; font-size: 13px; padding: 8px 14px; border-radius: 999px; background: rgba(255,255,255,0.55); border: 1px solid rgba(255,255,255,0.85); font-weight: 700">Đơn nháp · chưa liên thông</span>
+  </header>
+
+  <label style="display: flex; align-items: center; gap: 12px; height: 62px; padding: 0 24px; border-radius: 999px; background: rgba(255,255,255,0.55); border: 1px solid rgba(255,255,255,0.9); box-shadow: inset 0 1px 0 #FFFFFF, 0 12px 30px rgba(16,40,30,0.14); backdrop-filter: blur(24px) saturate(180%)">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#17803D" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+    <input aria-label="Thêm thuốc" placeholder="Thêm thuốc: gõ tên hoặc hoạt chất, không dấu cũng được" style="flex: 1; border: 0; background: transparent; font: inherit; font-size: 18px; outline: none">
+  </label>
+
+  <div style="display: flex; flex-direction: column; gap: 6px">
+    <sc-for list="{{drugs}}" as="d" hint-placeholder-count="3">
+      <div style="display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; align-items: center; padding: 16px 20px; border-radius: {{d.radius}}; background: {{d.bg}}; border: 1px solid rgba(255,255,255,0.85); box-shadow: inset 0 1px 0 #FFFFFF, 0 12px 30px rgba(16,40,30,0.1); backdrop-filter: blur(24px) saturate(180%)">
+        <span style="grid-column: span 4; display: flex; align-items: center; gap: 12px">
+          <span style="width: 42px; height: 42px; border-radius: 12px; background: #17803D; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 900">{{d.no}}</span>
+          <span style="display: flex; flex-direction: column"><strong style="font-size: 17px; font-weight: 800">{{d.name}}</strong><span style="font-size: 13px; color: #1F3A31">{{d.form}}</span></span>
+        </span>
+        <sc-for list="{{d.fields}}" as="f" hint-placeholder-count="4">
+          <label style="grid-column: span 2; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 12px; background: rgba(255,255,255,0.75); font-size: 11px; color: #1F3A31">{{f.label}}
+            <input value="{{f.value}}" style="border: 0; background: transparent; font: inherit; font-size: 17px; font-weight: 800; color: #0B1F17; padding: 0; width: 100%; outline: none">
+          </label>
+        </sc-for>
+        <sc-if value="{{d.warn}}" hint-placeholder-val="{{ false }}">
+          <span style="grid-column: span 12; font-size: 13px; padding: 8px 14px; border-radius: 12px; background: rgba(255,224,138,0.85); color: #3A2A00; font-weight: 700">{{d.warn}}</span>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">
+    <label style="display: flex; flex-direction: column; gap: 4px; padding: 14px 18px; border-radius: 28px; background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.85); font-size: 12px; color: #1F3A31">Lời dặn
+      <input value="Ăn chín, uống sôi; tránh rượu bia, đồ cay" style="border: 0; background: transparent; font: inherit; font-size: 15px; color: #0B1F17; padding: 0; outline: none">
+    </label>
+    <label style="display: flex; flex-direction: column; gap: 4px; padding: 14px 18px; border-radius: 28px; background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.85); font-size: 12px; color: #1F3A31">Tái khám
+      <input value="Sau 14 ngày" style="border: 0; background: transparent; font: inherit; font-size: 15px; color: #0B1F17; padding: 0; outline: none">
+    </label>
+    <label style="display: flex; flex-direction: column; gap: 4px; padding: 14px 18px; border-radius: 28px; background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.85); font-size: 12px; color: #1F3A31">Thời hạn mua thuốc
+      <input placeholder="Không bắt buộc" style="border: 0; background: transparent; font: inherit; font-size: 15px; color: #0B1F17; padding: 0; outline: none">
+    </label>
+  </div>
+
+  <div style="position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 24px; border-radius: 999px; background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.85); box-shadow: inset 0 1px 0 #FFFFFF, 0 18px 44px rgba(16,40,30,0.24); backdrop-filter: blur(26px) saturate(190%)">
+    <span style="font-size: 14px; font-weight: 700">2 thuốc · 14 ngày</span>
+    <button style="height: 50px; padding: 0 20px; border: 1px solid rgba(255,255,255,0.85); border-radius: 999px; background: rgba(255,255,255,0.65); font: inherit; font-size: 15px; font-weight: 800">In nháp</button>
+    <button style="height: 50px; padding: 0 26px; border: 0; border-radius: 999px; background: rgba(23,128,61,0.92); color: #FFFFFF; font: inherit; font-size: 16px; font-weight: 900">Khóa đơn và in</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1366,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      drugs: [
+        { no: '1', name: 'Omeprazol 20mg', form: 'Viên nang · Uống · trước ăn sáng 30 phút', radius: '32px 32px 10px 10px', bg: 'rgba(255,255,255,0.55)', warn: '',
+          fields: [ { label: 'Liều/lần', value: '1 viên' }, { label: 'Lần/ngày', value: '1' }, { label: 'Số ngày', value: '14' }, { label: 'Tổng', value: '14 viên' } ] },
+        { no: '2', name: 'Domperidon 10mg', form: 'Viên nén · Uống · trước ăn 15 phút', radius: '10px 10px 32px 32px', bg: 'rgba(255,255,255,0.55)', warn: 'Số lượng nhập 20 viên khác cách dùng (42 viên). Cần xác nhận lý do khi khóa đơn.',
+          fields: [ { label: 'Liều/lần', value: '1 viên' }, { label: 'Lần/ngày', value: '3' }, { label: 'Số ngày', value: '14' }, { label: 'Tổng', value: '20 viên' } ] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
