@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'MinhDuc.Install.psm1') -Force -DisableNameChecking
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'MinhDuc.Install.psm1'),[ref]$tokens,[ref]$errors)
-foreach ($name in @('Test-MinhDucVenvPythonPath','Wait-MinhDucVenvPythonExit','Invoke-MinhDucAccessRetry','Suspend-MinhDucBackupTasks','Get-MinhDucPythonScriptLabel')) {
+foreach ($name in @('Test-MinhDucProcessIdentity','Get-MinhDucVenvProcessTree','Test-MinhDucVenvPythonPath','Wait-MinhDucVenvPythonExit','Invoke-MinhDucAccessRetry','Suspend-MinhDucBackupTasks','Get-MinhDucPythonScriptLabel')) {
     $definition=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -14,9 +14,9 @@ function Start-Sleep { param($Seconds,$Milliseconds) $script:delays.Add(@{Second
 function Get-CimInstance {
     param($ClassName,$Filter,$ErrorAction)
     $script:queries++
-    if ($script:alive -and ($script:case -ne 'Natural' -or $script:queries -eq 1)) { [pscustomobject]@{ProcessId=101;ExecutablePath=$exe;CommandLine='python.exe -m scripts.backup_job --password abc --token sensitive-token --key secret-key -c hidden-code postgresql://hidden-uri'} }
-    [pscustomobject]@{ProcessId=202;ExecutablePath=$other}
-    [pscustomobject]@{ProcessId=303;ExecutablePath=$null}
+    if ($script:alive -and ($script:case -ne 'Natural' -or $script:queries -eq 1)) { [pscustomobject]@{Name='python.exe';ParentProcessId=1;CreationDate=$null;ProcessId=101;ExecutablePath=$exe;CommandLine='python.exe -m scripts.backup_job --password abc --token sensitive-token --key secret-key -c hidden-code postgresql://hidden-uri'} }
+    [pscustomobject]@{Name='python.exe';ParentProcessId=1;CreationDate=$null;CommandLine='python.exe other.py';ProcessId=202;ExecutablePath=$other}
+    [pscustomobject]@{Name='python.exe';ParentProcessId=1;CreationDate=$null;CommandLine='';ProcessId=303;ExecutablePath=$null}
 }
 function Get-Process {
     param($Id,$ErrorAction)
@@ -200,3 +200,57 @@ if($assignments.Count -ne 1){throw 'More than one snapshot assignment in updater
 $text=$flow.Extent.Text
 if($text.IndexOf('    Save-InitialBackupTaskSnapshot') -gt $text.IndexOf("Write-Buoc 'Bước 1/8")){throw 'Snapshot captured too late'}
 Write-Output 'PASS: one pre-update snapshot capture, no recapture; exact legacy one-task and modern two-task restore'
+
+# Win32_Process snapshots: venv launcher -> base Python -> helper; unrelated Python stays alive.
+& {
+    $script:treeAlive=@{101=$true;404=$true;405=$true;202=$true}
+    $script:treeStopped=New-Object 'System.Collections.Generic.List[int]'
+    $script:treeLog=New-Object 'System.Collections.Generic.List[string]'
+    $base=Join-Path ([IO.Path]::GetTempPath()) 'base-python/python.exe'
+    $rows=@(
+        [pscustomobject]@{Name='python.exe';ProcessId=101;ParentProcessId=1;ExecutablePath=$exe;CommandLine='python.exe -m scripts.run_lan';CreationDate=1},
+        [pscustomobject]@{Name='python.exe';ProcessId=404;ParentProcessId=101;ExecutablePath=$base;CommandLine='python.exe worker.py --password never-log-this';CreationDate=2},
+        [pscustomobject]@{Name='pythonw.exe';ProcessId=405;ParentProcessId=404;ExecutablePath=$base;CommandLine='pythonw.exe helper.py';CreationDate=3},
+        [pscustomobject]@{Name='python.exe';ProcessId=202;ParentProcessId=1;ExecutablePath=$base;CommandLine='python.exe unrelated.py';CreationDate=1}
+    )
+    function Get-CimInstance {param($ClassName,$Filter,$ErrorAction) $rows | Where-Object {$script:treeAlive[[int]$_.ProcessId]} }
+    function Get-Process {param($Id,$ErrorAction)
+        $row=$rows | Where-Object {$_.ProcessId -eq $Id}
+        $p=[pscustomobject]@{Id=$Id;ProcessName=$row.Name;Path=$row.ExecutablePath}
+        $p | Add-Member ScriptMethod WaitForExit {param($ms) return $true};return $p
+    }
+    function Stop-Process {param($InputObject,[switch]$Force,$ErrorAction)
+        if($InputObject.Id -eq 202){throw 'Stopped unrelated base Python'}
+        $script:treeStopped.Add($InputObject.Id);$script:treeAlive[[int]$InputObject.Id]=$false
+    }
+    function Write-Luu {param($Message) $script:treeLog.Add($Message)}
+    $known=@{};$found=@(Get-MinhDucVenvProcessTree -Venv $venv -Known $known)
+    if($found.Count -ne 3 -or 404 -notin $found.ProcessId -or 405 -notin $found.ProcessId){throw 'Missed base Python child or recursive descendant'}
+    # Remember descendants even after the launcher has exited during the wait.
+    $script:treeAlive[101]=$false
+    $orphans=@(Get-MinhDucVenvProcessTree -Venv $venv -Known $known)
+    if($orphans.Count -ne 2){throw 'Lost descendants when launcher exited'}
+    $script:treeAlive[101]=$true
+    Wait-MinhDucVenvPythonExit -Venv $venv -Seconds 0
+    if($script:treeStopped.Count -ne 3 -or 404 -notin $script:treeStopped -or 405 -notin $script:treeStopped -or -not $script:treeAlive[202]){throw 'Wrong process tree termination'}
+    if(($script:treeLog -join ' ') -match 'never-log-this'){throw 'Logged sensitive process arguments'}
+    foreach($id in @(101,404,405)){if(-not ($script:treeLog | Where-Object {$_ -match ('PID='+$id+'; ExecutablePath=')})){throw 'Missing PID/executable log'}}
+}
+Write-Output 'PASS: base Python outside venv and recursive child detected/stopped; unrelated Python untouched; orphan tracked; sensitive arguments hidden'
+
+& {
+    $base=Join-Path ([IO.Path]::GetTempPath()) 'base/pythonw.exe'
+    $code=Split-Path $venv -Parent
+    $rows=@(
+        [pscustomobject]@{Name='pythonw.exe';ProcessId=501;ParentProcessId=1;ExecutablePath=$base;CommandLine=('pythonw.exe "'+(Join-Path $code 'worker.py')+'"');CreationDate=1},
+        [pscustomobject]@{Name='python.exe';ProcessId=502;ParentProcessId=1;ExecutablePath=$base;CommandLine=('python.exe "'+(Join-Path ($code+'-other') 'worker.py')+'"');CreationDate=1}
+    )
+    function Get-CimInstance {param($ClassName,$Filter,$ErrorAction) $rows}
+    $found=@(Get-MinhDucVenvProcessTree -Venv $venv -Known @{})
+    if($found.Count -ne 1 -or $found[0].ProcessId -ne 501){throw 'Command-line root selection included sibling or missed pythonw'}
+    $changed=$rows[0].PSObject.Copy();$changed.CommandLine='pythonw.exe unrelated.py'
+    if(Test-MinhDucProcessIdentity $rows[0] $changed){throw 'Accepted PID with changed command line'}
+    $changed=$rows[0].PSObject.Copy();$changed.CreationDate=2
+    if(Test-MinhDucProcessIdentity $rows[0] $changed){throw 'Accepted recycled PID with new creation time'}
+}
+Write-Output 'PASS: command-line pythonw root, sibling path excluded, changed command line/creation time rejected'

@@ -703,14 +703,45 @@ function Test-MinhDucVenvPythonPath {
     if (-not $ExecutablePath) { return $false }
     $root = [IO.Path]::GetFullPath($Venv).TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar
     $path = [IO.Path]::GetFullPath($ExecutablePath)
-    return $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($path).Equals('python.exe', [StringComparison]::OrdinalIgnoreCase)
+    return $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -and ([IO.Path]::GetFileName($path) -in @('python.exe','pythonw.exe'))
+}
+
+function Test-MinhDucProcessIdentity {
+    param($Before, $Now)
+    return $Now -and $Before.ExecutablePath -eq $Now.ExecutablePath -and $Before.CommandLine -eq $Now.CommandLine -and $Before.CreationDate -eq $Now.CreationDate
+}
+
+function Get-MinhDucVenvProcessTree {
+    param([string]$Venv, [hashtable]$Known)
+    $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    $selected = @{}
+    $code = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Venv).TrimEnd([char[]]'\/'))
+    $pattern = '(?i)' + [regex]::Escape($code) + '(?:[/\\]|["\s]|$)'
+    foreach ($item in $all) {
+        $key = [string]$item.ProcessId
+        $root = $item.Name -in @('python.exe','pythonw.exe') -and ((Test-MinhDucVenvPythonPath -ExecutablePath $item.ExecutablePath -Venv $Venv) -or $item.CommandLine -match $pattern)
+        if ($root -or ($Known.ContainsKey($key) -and (Test-MinhDucProcessIdentity $Known[$key] $item))) { $selected[$key] = $item }
+    }
+    do {
+        $added = $false
+        foreach ($item in $all) {
+            $key = [string]$item.ProcessId
+            $parent = $selected[[string]$item.ParentProcessId]
+            if (-not $selected.ContainsKey($key) -and $parent -and (-not $item.CreationDate -or -not $parent.CreationDate -or $item.CreationDate -ge $parent.CreationDate)) {
+                $selected[$key] = $item; $added = $true
+            }
+        }
+    } while ($added)
+    foreach ($key in $selected.Keys) { $Known[$key] = $selected[$key] }
+    return @($selected.Values)
 }
 
 function Wait-MinhDucVenvPythonExit {
     param([Parameter(Mandatory=$true)][string]$Venv, [ValidateRange(0,30)][int]$Seconds=30)
+    $known = @{}
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
-        $remaining = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction Stop | Where-Object { Test-MinhDucVenvPythonPath -ExecutablePath $_.ExecutablePath -Venv $Venv })
+        $remaining = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
         if (-not $remaining.Count) { return }
         if ($watch.Elapsed.TotalSeconds -ge $Seconds) { break }
         Start-Sleep -Milliseconds 200
@@ -721,14 +752,15 @@ function Wait-MinhDucVenvPythonExit {
             if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { continue }
             throw
         }
-        # Recheck the current process object before stopping it (PID reuse).
-        if (-not (Test-MinhDucVenvPythonPath -ExecutablePath $process.Path -Venv $Venv)) { continue }
-        Write-Luu ('Quá hạn chờ Python 30 giây; dừng tiến trình ' + $process.ProcessName + '; PID=' + $process.Id + '; ' + (Get-MinhDucPythonScriptLabel -CommandLine $candidate.CommandLine))
+        # Refresh CIM identity immediately before stopping: PID alone is never trusted.
+        $now = @(Get-CimInstance Win32_Process -Filter ("ProcessId=" + $candidate.ProcessId) -ErrorAction Stop | Where-Object { $_.ProcessId -eq $candidate.ProcessId })
+        if ($now.Count -ne 1 -or -not (Test-MinhDucProcessIdentity $candidate $now[0]) -or $process.Path -ne $candidate.ExecutablePath) { continue }
+        Write-Luu ('Quá hạn chờ Python 30 giây; dừng tiến trình ' + $process.ProcessName + '; PID=' + $process.Id + '; ExecutablePath=' + $now[0].ExecutablePath + '; ' + (Get-MinhDucPythonScriptLabel -CommandLine $now[0].CommandLine))
         Stop-Process -InputObject $process -Force -ErrorAction Stop
         if (-not $process.WaitForExit(5000)) { throw 'Python trong môi trường phòng khám chưa thoát; dừng phục hồi.' }
     }
-    $left = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction Stop | Where-Object { Test-MinhDucVenvPythonPath -ExecutablePath $_.ExecutablePath -Venv $Venv })
-    if ($left.Count) { throw 'Còn Python đang giữ môi trường phòng khám; dừng phục hồi.' }
+    $left = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
+    if ($left.Count) { throw 'Còn tiến trình đang giữ môi trường phòng khám; dừng phục hồi.' }
 }
 
 function Invoke-MinhDucAccessRetry {
