@@ -53,7 +53,7 @@ def test_administrative_practitioner_and_refund_ui(https_server, clients, reques
             page.set_viewport_size({'width':width,'height':900})
             page.locator('[data-form=patient-search] [name=q]').fill('000000001234')
             page.locator('[data-form=patient-search] button').first.click();settle(page)
-            table=page.locator('.table').first
+            table=page.locator('.r2-patients')
             expect(table).to_contain_text('••••1234');assert '000000001234' not in table.inner_text()
             pick(page,'patient',pid)
             expect(page.locator('[data-form=patient-administrative] [name=document_number]')).to_have_value('000000001234')
