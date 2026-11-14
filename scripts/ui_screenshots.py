@@ -17,7 +17,10 @@ from pathlib import Path
 import httpx
 from playwright.sync_api import sync_playwright
 
-from scripts.ui_wait import wait_for_login
+if __package__:
+    from .ui_wait import wait_for_login
+else:
+    from ui_wait import wait_for_login
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLES = [('letan', 'le-tan'), ('bs_noi', 'bac-si'), ('kythuat', 'ky-thuat-vien'), ('dieuduong', 'dieu-duong'),

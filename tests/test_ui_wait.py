@@ -19,3 +19,15 @@ def test_login_wait_old_new_and_anonymous(html,authenticated):
             else:
                 with pytest.raises(TimeoutError):wait_for_login(page)
         finally:browser.close()
+
+
+@pytest.mark.parametrize('script',['do_hieu_nang','ui_screenshots'])
+def test_ui_tool_direct_file_entrypoint(script):
+    import subprocess
+    import sys
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]
+    env=dict(os.environ,PYTHONPATH='')
+    result=subprocess.run([sys.executable,str(root/'scripts'/f'{script}.py'),'--help'],cwd=root,env=env,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    assert 'usage:' in result.stdout

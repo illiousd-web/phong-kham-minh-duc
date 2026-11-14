@@ -26,7 +26,10 @@ import psutil
 import psycopg
 from psycopg import sql
 
-from scripts.ui_wait import wait_for_login
+if __package__:
+    from .ui_wait import wait_for_login
+else:
+    from ui_wait import wait_for_login
 
 ROOT=Path(__file__).resolve().parents[1]
 MIB=1024**2
