@@ -464,8 +464,10 @@ body[data-screen=lab] .toolbar,body[data-screen=cashier] .toolbar,body[data-scre
 .r4-cash{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}
 .r4-layout>*,.r4-cash-record{min-width:0}
 .r4-layout h1{font-size:40px;line-height:1;font-weight:900;letter-spacing:-1px;margin:0 0 12px}
+@media(min-width:901px){
 body[data-screen=lab]{background:radial-gradient(circle at 12% 12%,#8EC2FF,transparent 40%),radial-gradient(circle at 88% 20%,#C3AEFF,transparent 40%),radial-gradient(circle at 30% 95%,#7FE0A8,transparent 40%),linear-gradient(160deg,#E3EEFB,#ECE6FB 55%,#E2F3EA)}
 body[data-screen=cashier]{background:radial-gradient(circle at 15% 15%,#FFD9A0,transparent 40%),radial-gradient(circle at 85% 10%,#7FE0A8,transparent 40%),radial-gradient(circle at 60% 95%,#8EC2FF,transparent 40%),linear-gradient(160deg,#F6EEDC,#E2F3EA 55%,#E3EEFB)}
+}
 .r4-queue{grid-template-columns:minmax(0,1fr);max-height:calc(100vh - var(--shell-h,100px) - 220px);overflow-y:auto;min-height:80px;scrollbar-gutter:stable}
 .r4-person{display:flex;flex-direction:row;align-items:center;gap:12px;padding:14px 16px;border-radius:20px;background:rgba(255,255,255,.45);border:1px solid rgba(255,255,255,.9);margin-bottom:12px;color:#0B1F17;text-align:left;min-width:0;width:100%;box-sizing:border-box}
 .r4-person.current{background:rgba(255,255,255,.92);border:2px solid #008249}
