@@ -183,10 +183,15 @@ def test_r5_selected_prescription_dispense_pdf_cancel_and_pages(https_server, cl
     from .conftest import PASSWORDS, SERVICE
     from .test_v050_abcd import medicine, rx
     from .browser_helpers import settle, pick, send, go
+    import secrets
 
     patient_id = clients['doctor'].get(f'/api/visits/{visit}').json()['patient_id']
+    other_name = 'Người bệnh tìm kiếm B ' + secrets.token_hex(5)
+    patient_b = clients['reception'].post('/api/patients', json={
+        'full_name': other_name, 'sex': 'Nữ', 'date_of_birth': '1990-01-01', 'phone': '0900000010'})
+    assert patient_b.status_code == 201, patient_b.text
     other = clients['reception'].post('/api/visits', json={
-        'patient_id': patient_id, 'doctor_id': IDS['doctor'], 'service_id': SERVICE})
+        'patient_id': patient_b.json()['id'], 'doctor_id': IDS['doctor'], 'service_id': SERVICE})
     assert other.status_code == 201, other.text
     mid = medicine(clients)
     first = rx(clients, visit, mid, qty=3)
@@ -201,7 +206,9 @@ def test_r5_selected_prescription_dispense_pdf_cancel_and_pages(https_server, cl
         try:
             page = browser.new_page(viewport={'width': width, 'height': 844}, accept_downloads=True)
             errors = []
+            confirmations = []
             page.on('pageerror', lambda error: errors.append(str(error)))
+            page.on('dialog', lambda dialog: confirmations.append(dialog.message) if dialog.type == 'confirm' else None)
             page.on('dialog', lambda dialog: dialog.accept('Hủy đơn giả lập R5 để kiểm tra đúng đơn')
                 if dialog.type == 'prompt' else dialog.accept())
             page.goto(origin)
@@ -213,19 +220,29 @@ def test_r5_selected_prescription_dispense_pdf_cancel_and_pages(https_server, cl
             detail = page.locator('#r5-rx-detail')
             pick(page, 'pharmacy-rx', first)
             expect(detail.locator('[data-action=dispense]')).to_have_attribute('data-id', str(first))
+            search = page.locator('[data-r5-search]')
+            search.fill(other_name)
+            expect(detail).to_be_hidden()
+            expect(page.locator('[data-r5-choose-rx] h3')).to_have_text('Chọn một đơn trong kết quả tìm kiếm')
+            expect(page.locator('[data-r5-choose-rx]')).to_be_visible()
+            expect(detail.locator(f'[data-action=dispense][data-id="{first}"]')).to_be_disabled()
+            expect(page.locator(f'[data-action=dispense][data-id="{first}"]:visible')).to_have_count(0)
             pick(page, 'pharmacy-rx', second)
+            expect(detail).to_be_visible()
             expect(detail.locator('[data-action=dispense]')).to_have_attribute('data-id', str(second))
             with page.expect_download() as download:
                 detail.locator(f'[data-kind=rx][data-id="{second}"][data-format=pdf]').click()
             assert Path(download.value.path()).read_bytes().startswith(b'%PDF-')
             sent = send(page, detail.locator(f'[data-action=dispense][data-id="{second}"]'))
             assert sent.url.endswith(f'/api/prescriptions/{second}/dispense')
+            assert confirmations[-1].startswith(f'Cấp thuốc cho {other_name} · đơn #{second}?')
             with db() as c:
                 states = {row['id']: row['status'] for row in c.execute(
                     'SELECT id,status FROM prescriptions WHERE id IN (?,?)', (first, second))}
                 assert states == {first: 'draft', second: 'dispensed'}
                 assert c.execute('SELECT COUNT(*) FROM dispensations WHERE prescription_id=?', (first,)).fetchone()[0] == 0
                 assert c.execute('SELECT COUNT(*) FROM dispensations WHERE prescription_id=?', (second,)).fetchone()[0] == 1
+            search.fill('')
             pick(page, 'pharmacy-rx', first)
             cancelled = send(page, detail.locator(f'[data-action=cancel-rx][data-id="{first}"]'))
             assert cancelled.url.endswith(f'/api/prescriptions/{first}/cancel')
@@ -260,6 +277,17 @@ def test_r5_selected_prescription_dispense_pdf_cancel_and_pages(https_server, cl
             settle(page)
             expect(page.locator('.r5-rx-queue')).to_contain_text('Trang 1')
             expect(detail.locator('[data-action=dispense]')).to_have_attribute('data-id', str(seeded[-1]))
+            # The daily count is a lower bound once the response reaches its 100-row cap.
+            def recent_dispensations(route):
+                route.fulfill(json=[{'id': i, 'patient_name': other_name, 'dispensed_at': created,
+                    'prescription_id': second} for i in range(100)])
+
+            page.route('**/api/dispensations', recent_dispensations)
+            go(page, 'pharmacy')
+            stat = page.locator('[data-r2-stat=dispensed]')
+            expect(stat.locator('strong')).to_have_text('≥ 100')
+            expect(stat).to_have_attribute('title', 'Đếm trong 100 phiếu gần nhất')
+            page.unroute('**/api/dispensations', recent_dispensations)
             assert not errors, errors
         finally:
             browser.close()

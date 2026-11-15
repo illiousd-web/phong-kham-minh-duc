@@ -75,3 +75,12 @@ Nhánh `feat/u1-r5-nha-thuoc`, tạo từ `main` tại `7539cd3`.
 | `lan_tests/test_pending_queues.py` | +96 / −0 |
 | `lan_tests/test_v050_browser.py` | +1 / −0 |
 | `docs/U1_R5_KIEM_THU.md` | +35 / −1 |
+
+## Sửa tiếp từ head 33b6a29 — tìm đúng đơn và giới hạn thống kê
+
+- Khi tìm kiếm làm ẩn đơn đang chọn, ẩn khung chi tiết, khóa các nút trong khung và hiện “Chọn một đơn trong kết quả tìm kiếm”. Chọn một kết quả mới sẽ mở đúng chi tiết. Thao tác cấp cũng từ chối nút bị khóa/khung bị ẩn.
+- Xác nhận cấp ghi rõ tên người bệnh và mã đơn: “Cấp thuốc cho … · đơn #…? Hệ thống sẽ xuất kho và ghi tiền thuốc.”
+- Khi `/api/dispensations` trả từ 100 phiếu, “Đã cấp hôm nay” hiện “≥ N” và title “Đếm trong 100 phiếu gần nhất”; không thêm API.
+- Mở rộng ca Chromium ở 1366/390px: hai người bệnh A/B, chọn A rồi tìm B; khung A ẩn và nút cấp A khóa; chọn và cấp B, kiểm xác nhận đúng tên/mã, CSDL chỉ B đã cấp, A vẫn nháp. Giữ các kiểm tra PDF/hủy/phân trang và mọi assertion cũ. Kiểm thêm phản hồi 100 phiếu hiển thị giới hạn thống kê.
+
+Kết quả lần sửa: `test_pending_queues.py` **5 đạt**; `test_v050_browser.py` + `test_mot_ngay_kham.py` **13 đạt**; Ruff, ESLint và `git diff --check` đạt. Test mới so chính xác tiêu đề h3, tách biểu tượng trạng thái khỏi chữ; giữ mọi assertion cũ. Số dòng so với 33b6a29: app.js +10/−4, pending_queues +29/−1, báo cáo +9/−0. Chờ S2.
