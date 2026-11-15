@@ -240,6 +240,9 @@ def test_cashier_cash_change_is_ui_only(https_server, clients, visit, width):
             pick(page, 'cash', visit)
             form = page.locator('[data-form=payment]')
             expect(form.locator('button')).to_have_count(1)
+            payment_posts = []
+            page.on('request', lambda r: payment_posts.append(r.post_data_json)
+                if r.url.endswith('/api/payments') and r.method == 'POST' else None)
             given = form.get_by_label('Khách đưa', exact=True)
             assert given.get_attribute('name') is None
             expect(given).to_be_visible()
@@ -247,25 +250,45 @@ def test_cashier_cash_change_is_ui_only(https_server, clients, visit, width):
             amount.fill('1000')
             given.fill('500')
             expect(form.locator('output')).to_have_text('Thiếu 500 đ')
+            expect(form.locator('button')).to_be_disabled()
+            expect(form.locator('[data-r5-cash-short]')).to_have_text('Khách đưa chưa đủ')
+            expect(form.locator('[data-r5-cash-short]')).to_be_visible()
+            # requestSubmit exercises the guard even if the disabled button is bypassed.
+            form.evaluate('f => f.requestSubmit()')
+            expect(page.locator('#toast')).to_have_text('Khách đưa chưa đủ')
+            expect(form.locator('button')).to_be_disabled()
+            assert payment_posts == []
+            given.fill('')
+            expect(form.locator('button')).to_be_enabled()
+            expect(form.locator('[data-r5-cash-short]')).to_be_hidden()
             given.fill('2000')
             expect(form.locator('output')).to_have_text('1.000 đ')
             amount.fill('500')
             expect(form.locator('output')).to_have_text('1.500 đ')
             amount.fill('1000')
+            given.fill('500')
             form.locator('[name=method][value=transfer]').check()
             expect(given).to_be_hidden()
             expect(form.locator('output')).to_be_hidden()
+            expect(form.locator('button')).to_be_enabled()
             form.locator('[name=method][value=cash]').check()
+            expect(form.locator('button')).to_be_disabled()
+            given.fill('2000')
             expect(given).to_be_visible()
             expect(form.locator('output')).to_have_text('1.000 đ')
             no_horizontal_scroll(page)
             evidence = Path('test_evidence/r5')
             evidence.mkdir(parents=True, exist_ok=True)
             form.screenshot(path=str(evidence / f'cash-change-{width}.png'))
+            given.fill('1000')
+            expect(form.locator('output')).to_have_text('0 đ')
+            expect(form.locator('button')).to_be_enabled()
+            assert payment_posts == []
             with page.expect_response(lambda r: r.url.endswith('/api/payments') and r.request.method == 'POST') as paid:
                 form.locator('button').click()
             assert paid.value.status == 201, paid.value.text()
             payload = paid.value.request.post_data_json
+            assert payment_posts == [payload]
             assert set(payload) == {'visit_id', 'amount', 'method', 'external_ref', 'idempotency_key', 'confirm_over_limit'}
             assert payload['amount'] == 1000 and payload['method'] == 'cash'
             saved = next(x for x in clients['cashier'].get('/api/payments').json() if x['id'] == paid.value.json()['id'])

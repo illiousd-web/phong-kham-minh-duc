@@ -74,6 +74,7 @@ def test_v050_all_workflows_https_browser(clients,visit):
                 rid=prescription['id']
                 pharm=go(pages['pharmacy'],'pharmacy')
                 expect(pharm.locator('#navigation [data-count="pharmacy"]')).to_have_text(str(sum(x['status']=='draft' for x in clients['pharmacy'].get('/api/prescriptions').json())))
+                pick(pharm,'pharmacy-rx',rid)
                 send(pharm,pharm.locator(f'[data-action="dispense"][data-id="{rid}"]'),'Đã cấp thuốc')
                 with pharm.expect_download() as download:pharm.locator(f'[data-kind="rx"][data-id="{rid}"][data-format="pdf"]').first.click()
                 download.value.save_as(str(evidence/'B-don-da-cap.pdf'))

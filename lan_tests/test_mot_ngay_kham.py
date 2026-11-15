@@ -280,6 +280,7 @@ class Day:
         self.audit('visit_completed', 'visit', vid, 'doctor')
         if ui:
             pharm = self.ui('pharmacy')
+            pick(pharm, 'pharmacy-rx', rid)
             dispensed = send(pharm, pharm.locator(f'[data-action="dispense"][data-id="{rid}"]')).json()
             path = EVIDENCE / f'{v["index"]}-don-thuoc.pdf'
             with pharm.expect_download() as download:

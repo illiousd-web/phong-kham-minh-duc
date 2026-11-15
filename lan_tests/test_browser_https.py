@@ -17,69 +17,6 @@ from .browser_helpers import settle,go,pick,send,submit,no_horizontal_scroll
 from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.
 
 
-@pytest.mark.parametrize('width', [1366, 390])
-def test_u1r1_lost_connection_reload_and_http_error(https_server, width):
-    origin, certdir = https_server
-    cert = x509.load_pem_x509_certificate((certdir / 'server.crt').read_bytes())
-    pin = base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(
-        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'), headless=True,
-            args=['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors-spki-list=' + pin])
-        try:
-            page = browser.new_page(viewport={'width': width, 'height': 844})
-            errors = []
-            page.on('pageerror', lambda error: errors.append(str(error)))
-            page.goto(origin)
-            page.locator('[name=username]').fill('test_technician')
-            page.locator('[name=password]').fill(PASSWORDS['technician'])
-            page.locator('[data-form=login] button').click()
-            page.locator('.account-trigger').wait_for()
-            settle(page)
-            attempts = []
-
-            def disconnected(route):
-                attempts.append(route.request.url)
-                route.abort('failed')
-
-            page.route('**/api/orders', disconnected)
-            page.locator('#navigation [data-page=lab]').click()
-            settle(page)
-            state = page.locator('.r4-state-error')
-            expect(state).to_contain_text('Mất kết nối tới máy chủ phòng khám. Kiểm tra mạng LAN rồi bấm Tải lại.')
-            assert len(attempts) == 1
-            state.get_by_role('button', name='Tải lại', exact=True).click()
-            settle(page)
-            expect(state).to_be_visible()
-            assert len(attempts) == 2
-            page.unroute('**/api/orders', disconnected)
-            state.get_by_role('button', name='Tải lại', exact=True).click()
-            settle(page)
-            expect(state).to_have_count(0)
-            expect(page.locator('.r5-lab-hero')).to_have_css('background-color', 'rgba(0, 95, 180, 0.9)')
-            expect(page.locator('.r5-lab-hero h1')).to_have_text('Xét nghiệm')
-            no_horizontal_scroll(page)
-            evidence = Path('test_evidence/r5')
-            evidence.mkdir(parents=True, exist_ok=True)
-            page.screenshot(path=str(evidence / f'lab-{width}.png'))
-
-            def server_error(route):
-                route.fulfill(status=500, json={'detail': 'Lỗi máy chủ giả lập R5'})
-
-            page.route('**/api/orders', server_error)
-            page.locator('#navigation [data-page=lab]').click()
-            settle(page)
-            expect(state).to_contain_text('Không thể tải trang: Lỗi máy chủ giả lập R5')
-            expect(state).not_to_contain_text('Mất kết nối')
-            page.unroute('**/api/orders', server_error)
-            state.get_by_role('button', name='Tải lại', exact=True).click()
-            settle(page)
-            expect(state).to_have_count(0)
-            assert not errors, errors
-        finally:
-            browser.close()
-
-
 def test_real_https_three_browser_roles_and_pdf():
     # Pricing and medicine data must exist before the clinician can order/prescribe.
     with db(True) as c:
@@ -230,6 +167,82 @@ def test_real_https_three_browser_roles_and_pdf():
             server.terminate()
             try:server.wait(timeout=10)
             except subprocess.TimeoutExpired:server.kill();server.wait()
+
+
+@pytest.mark.parametrize('width', [1366, 390])
+def test_u1r1_lost_connection_reload_and_http_error(https_server, width):
+    origin, certdir = https_server
+    cert = x509.load_pem_x509_certificate((certdir / 'server.crt').read_bytes())
+    pin = base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'), headless=True,
+            args=['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors-spki-list=' + pin])
+        try:
+            page = browser.new_page(viewport={'width': width, 'height': 844})
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.goto(origin)
+            page.locator('[name=username]').fill('test_technician')
+            page.locator('[name=password]').fill(PASSWORDS['technician'])
+            page.locator('[data-form=login] button').click()
+            page.locator('.account-trigger').wait_for()
+            settle(page)
+            attempts = []
+
+            def disconnected(route):
+                attempts.append(route.request.url)
+                route.abort('failed')
+
+            page.route('**/api/orders', disconnected)
+            page.locator('#navigation [data-page=lab]').click()
+            settle(page)
+            state = page.locator('.r4-state-error')
+            expect(state).to_contain_text('Mất kết nối tới máy chủ phòng khám. Kiểm tra mạng LAN rồi bấm Tải lại.')
+            assert len(attempts) == 1
+            state.get_by_role('button', name='Tải lại', exact=True).click()
+            settle(page)
+            expect(state).to_be_visible()
+            assert len(attempts) == 2
+            page.unroute('**/api/orders', disconnected)
+            state.get_by_role('button', name='Tải lại', exact=True).click()
+            settle(page)
+            expect(state).to_have_count(0)
+            expect(page.locator('.r5-lab-hero')).to_have_css('background-color', 'rgba(0, 95, 180, 0.9)')
+            expect(page.locator('.r5-lab-hero h1')).to_have_text('Xét nghiệm')
+            no_horizontal_scroll(page)
+            evidence = Path('test_evidence/r5')
+            evidence.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(evidence / f'lab-{width}.png'))
+
+            def server_error(route):
+                route.fulfill(status=500, json={'detail': 'Lỗi máy chủ giả lập R5'})
+
+            page.route('**/api/orders', server_error)
+            page.locator('#navigation [data-page=lab]').click()
+            settle(page)
+            expect(state).to_contain_text('Không thể tải trang: Lỗi máy chủ giả lập R5')
+            expect(state).not_to_contain_text('Mất kết nối')
+            page.unroute('**/api/orders', server_error)
+            state.get_by_role('button', name='Tải lại', exact=True).click()
+            settle(page)
+            expect(state).to_have_count(0)
+            # An internal TypeError must not be reported as a network failure.
+            assert page.evaluate('navigator.onLine') is True
+            page.evaluate("""async () => {
+                const screen = SCREENS.lab;
+                SCREENS.lab = () => { throw new TypeError('Lỗi JS nội bộ giả lập R5'); };
+                try { await render(); } finally { SCREENS.lab = screen; }
+            }""")
+            settle(page)
+            expect(state).to_contain_text('Không thể tải trang: Lỗi JS nội bộ giả lập R5')
+            expect(state).not_to_contain_text('Mất kết nối')
+            state.get_by_role('button', name='Tải lại', exact=True).click()
+            settle(page)
+            expect(state).to_have_count(0)
+            assert not errors, errors
+        finally:
+            browser.close()
 
 
 @pytest.mark.parametrize('width,height',[(1366,768),(390,844)])
