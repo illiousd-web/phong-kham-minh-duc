@@ -4,7 +4,7 @@ const browserGlobals = Object.fromEntries([
     "fetch", "FormData", "URL", "URLSearchParams", "Blob", "File", "FileReader",
     "crypto", "setTimeout", "clearTimeout", "setInterval", "clearInterval",
     "requestAnimationFrame", "cancelAnimationFrame", "console", "alert", "confirm",
-    "prompt", "getComputedStyle", "MutationObserver", "ResizeObserver", "CSS",
+    "prompt", "getComputedStyle", "matchMedia", "MutationObserver", "ResizeObserver", "CSS",
     "scrollY", "innerHeight", "HTMLElement", "Event", "CustomEvent", "AbortController", "performance",
 ].map(name => {
     return [name, "readonly"];
@@ -21,7 +21,7 @@ const sharedGlobals = {
     ],
     "app/static/m6.js": [
         "SCREENS", "api", "auth", "authHeader", "boot", "cap", "card", "empty",
-        "esc", "menus", "notify", "render", "t",
+        "esc", "menus", "notify", "render", "r2Mark", "r2Stats", "t",
     ],
 };
 
