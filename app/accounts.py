@@ -5,14 +5,14 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 from .auth import verify
 
-Role = Literal['admin','manager','reception','doctor','technician','nurse','pharmacy','cashier','controlled_prescriber','controlled_pharmacy','controlled_reviewer']
+Role = Literal['admin','manager','reception','doctor','technician','nurse','pharmacy','cashier','controlled_prescriber','controlled_pharmacy','controlled_reviewer','stock_owner']
 
 
 class AccountInput(BaseModel):
     username: str = Field(pattern=r'^[a-z][a-z0-9_.-]{1,39}$')
     full_name: str = Field(min_length=2, max_length=180)
     password: str = Field(min_length=12, max_length=250)
-    roles: list[Role] = Field(min_length=1, max_length=11)
+    roles: list[Role] = Field(min_length=1, max_length=12)
 
 
 class PasswordInput(BaseModel):
@@ -27,7 +27,7 @@ class ResetInput(BaseModel):
 class AccountUpdate(BaseModel):
     """Chỉ đổi trường được gửi. Không gửi roles thì giữ nguyên quyền (ví dụ chỉ khóa/mở)."""
     active: bool | None = None
-    roles: list[Role] | None = Field(default=None, min_length=1, max_length=11)
+    roles: list[Role] | None = Field(default=None, min_length=1, max_length=12)
     full_name: str | None = Field(default=None, min_length=2, max_length=180)
 
 

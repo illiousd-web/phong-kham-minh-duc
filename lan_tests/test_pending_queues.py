@@ -141,14 +141,16 @@ def test_r5_pharmacy_and_nurse_layouts(https_server, clients, visit):
                         expect(page.locator('#r5-stock')).to_contain_text('R5-LOT')
                         expect(page.locator('#r5-stock')).to_contain_text('Sắp hết hạn')
                         expect(page.locator('[data-r2-stat=expiring] strong')).to_have_text('1')
+                        # S2b mở rộng form theo U_KhoThuoc_v2.html:113–118.
                         receipt = page.locator('[data-form=stock-receipt]')
                         assert set(receipt.locator('[name]').evaluate_all('es=>es.map(e=>e.name)')) == {
-                            'medicine_id', 'lot_number', 'expiry_date', 'quantity'}
+                            'medicine_id', 'lot_number', 'expiry_date', 'quantity', 'supplier', 'invoice_no', 'invoice_date'}
                         issue = page.locator('[data-form=stock-issue]')
                         assert set(issue.locator('[name]').evaluate_all('es=>es.map(e=>e.name)')) == {
-                            'medicine_id', 'quantity', 'purpose'}
+                            'medicine_id', 'quantity', 'purpose', 'reason', 'recipient', 'lot_id'}
                         if width > 900:
-                            assert receipt.bounding_box()['x'] > page.locator('.r5-stock-layout .table').bounding_box()['x']
+                            # U_KhoThuoc_v2.html:111–113: bảng tồn và nhập lô đều span 12.
+                            assert receipt.bounding_box()['y'] > page.locator('[data-stock-table^=lots-]').bounding_box()['y']
                         no_horizontal_scroll(page)
                         assert page.locator('#r5-stock').bounding_box()['y'] >= page.locator('.r5-tabs').bounding_box()['y'] + page.locator('.r5-tabs').bounding_box()['height']
                         page.screenshot(path=str(evidence / f'stock-{width}.png'))
@@ -331,3 +333,8 @@ def test_r6_pharmacy_empty_and_tabs(https_server, width):
             no_horizontal_scroll(page)
         finally:
             browser.close()
+
+
+def test_s2b_stock_390px_sticky_resize_cost_privacy_and_forms(https_server, clients):
+    from .s2b_browser_cases import check_stock_390px_sticky_resize_cost_privacy_and_forms
+    check_stock_390px_sticky_resize_cost_privacy_and_forms(https_server, clients)

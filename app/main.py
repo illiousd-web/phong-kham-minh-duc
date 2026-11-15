@@ -55,7 +55,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=15").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=16").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -88,6 +88,8 @@ def init_db():
         migrate_result_versions(c)
         from .s2a_migration import migrate_s2a
         migrate_s2a(c)
+        from .s2b_migration import migrate_s2b
+        migrate_s2b(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -759,53 +761,8 @@ def create_payment(data:PaymentInput,u=Depends(principal)):
         audit(c,u,'payment_recorded_demo','payment',payid,kind+('; vượt trần thu tạm đã xác nhận' if kind=='provisional' and data.confirm_over_limit else ''))
         return {'id':payid,'status':'recorded','kind':kind}
 
-@app.get('/api/stock')
-def stock(u=Depends(principal)):
-    require(u,'pharmacy','manager')
-    with db() as c:
-        return [dict(x) for x in c.execute('''SELECT l.id,m.name,m.base_unit,m.controlled,l.lot_number,l.expiry_date,l.quantity,l.quarantined
-          FROM stock_lots l JOIN medicines m ON m.id=l.medicine_id ORDER BY m.id,l.expiry_date''')]
-
-
-@app.get('/api/medicines')
-def get_medicines(u=Depends(principal)):
-    require(u,'pharmacy','manager')
-    with db() as c:
-        return [dict(x) for x in c.execute('SELECT id,name,base_unit,controlled FROM medicines ORDER BY id')]
-
-class StockReceipt(BaseModel):
-    medicine_id:int=Field(gt=0)
-    lot_number:str=Field(min_length=2,max_length=80)
-    expiry_date:str
-    quantity:int=Field(gt=0,le=10_000_000)
-
-    @field_validator('expiry_date')
-    @classmethod
-    def check_expiry(cls,v):
-        if date.fromisoformat(v)<date.today():raise ValueError('Không nhận thuốc đã hết hạn')
-        return v
-
-@app.post('/api/stock/receipts',status_code=201)
-def add_stock_receipt(data:StockReceipt,u=Depends(principal)):
-    require(u,'pharmacy')
-    with db(True) as c:
-        med=c.execute('SELECT * FROM medicines WHERE id=?',(data.medicine_id,)).fetchone()
-        if not med:raise HTTPException(404,'Không tìm thấy mặt hàng')
-        if med['controlled']:raise HTTPException(403,'Chưa triển khai tiếp nhận thuốc phải kiểm soát đặc biệt trong bản demo')
-        old=c.execute('SELECT * FROM stock_lots WHERE medicine_id=? AND lot_number=?',(data.medicine_id,data.lot_number)).fetchone()
-        if old:
-            if old['expiry_date']!=data.expiry_date or old['quarantined']:
-                raise HTTPException(409,'Lô đã có thông tin khác hoặc đang cách ly')
-            c.execute('UPDATE stock_lots SET quantity=quantity+? WHERE id=?',(data.quantity,old['id']))
-            lid=old['id']
-        else:
-            c.execute('INSERT INTO stock_lots(medicine_id,lot_number,expiry_date,quantity) VALUES(?,?,?,?)',
-                      (data.medicine_id,data.lot_number,data.expiry_date,data.quantity))
-            lid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
-        c.execute('INSERT INTO stock_movements(stock_lot_id,movement_type,quantity,created_by,created_at) VALUES(?,?,?,?,?)',
-                  (lid,'receipt',data.quantity,u['id'],NOW()))
-        audit(c,u,'stock_received_demo','stock_lot',lid,str(data.quantity))
-        return {'stock_lot_id':lid,'quantity_added':data.quantity}
+from .stock import install_stock
+install_stock(app, db, principal, require, audit, NOW)
 
 @app.get('/api/overview')
 def overview(u=Depends(principal)):
@@ -927,32 +884,6 @@ def review_adjustment(adj_id:int,data:AdjustmentReview,u=Depends(principal)):
         c.execute('UPDATE adjustments SET status=?,reviewed_by=?,reviewed_at=? WHERE id=?',(new,u['id'],NOW(),adj_id))
         audit(c,u,'adjustment_'+new,'adjustment',adj_id)
         return {'id':adj_id,'status':new}
-
-class StockIssue(BaseModel):
-    medicine_id:int=Field(gt=0)
-    quantity:int=Field(gt=0,le=10_000_000)
-    purpose:str=Field(default='Sử dụng nội bộ mô phỏng',min_length=5,max_length=200)
-
-@app.post('/api/stock/issues',status_code=201)
-def stock_issue(data:StockIssue,u=Depends(principal)):
-    require(u,'pharmacy')
-    with db(True) as c:
-        med=c.execute('SELECT * FROM medicines WHERE id=?',(data.medicine_id,)).fetchone()
-        if not med:raise HTTPException(404,'Không có thuốc/vật tư')
-        if med['controlled']:raise HTTPException(403,'Chưa triển khai xuất thuốc phải kiểm soát đặc biệt')
-        lots=c.execute("SELECT id,quantity FROM stock_lots WHERE medicine_id=? AND quarantined=0 AND expiry_date>=? AND quantity>0 ORDER BY expiry_date,id",(data.medicine_id,date.today().isoformat())).fetchall()
-        if sum(l['quantity'] for l in lots)<data.quantity:raise HTTPException(409,'Không đủ tồn khả dụng hoặc đã hết hạn')
-        remaining=data.quantity;used=[]
-        for l in lots:
-            if not remaining:break
-            take=min(remaining,l['quantity']); remaining-=take
-            updated=c.execute('UPDATE stock_lots SET quantity=quantity-? WHERE id=? AND quantity>=?',(take,l['id'],take))
-            if updated.rowcount!=1:raise HTTPException(409,'Tồn kho đã thay đổi; hãy tải lại')
-            c.execute('INSERT INTO stock_movements(stock_lot_id,movement_type,quantity,created_by,created_at) VALUES(?,?,?,?,?)',
-                      (l['id'],'issue',take,u['id'],NOW()))
-            used.append({'lot_id':l['id'],'quantity':take})
-        audit(c,u,'stock_issued_demo','medicine',data.medicine_id,f'{data.purpose}: {data.quantity} base units')
-        return {'medicine_id':data.medicine_id,'quantity':data.quantity,'lots':used,'status':'demo_issued'}
 
 @app.get('/api/print/{kind}/{item_id}')
 @export_slot

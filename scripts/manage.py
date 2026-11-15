@@ -16,6 +16,7 @@ def main():
     sub.add_parser('migrate')
     sub.add_parser('rollback-manual-prices', help='Quay lui migration giá nhập tay nếu chưa có dữ liệu của chức năng này')
     sub.add_parser('rollback-s2a', help='Quay lui S2a khi chưa có thông tin phòng khám hoặc chữ ký')
+    sub.add_parser('rollback-s2b', help='Quay lui S2b khi chưa có dữ liệu kho mới')
     user = sub.add_parser('create-admin')
     user.add_argument('--username', required=True)
     user.add_argument('--name', required=True)
@@ -39,6 +40,12 @@ def main():
         with db(True) as c:
             migrate_s2a(c, postgres=True, down=True)
         print('Đã quay lui S2a; dữ liệu trước nâng cấp giữ nguyên.')
+        return
+    if args.command == 'rollback-s2b':
+        from app.s2b_migration import migrate_s2b
+        with db(True) as c:
+            migrate_s2b(c, postgres=True, down=True)
+        print('Đã quay lui S2b; dữ liệu trước nâng cấp giữ nguyên.')
         return
     if args.password_env:
         password = os.environ.pop(args.password_env, '')

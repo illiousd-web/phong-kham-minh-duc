@@ -84,14 +84,14 @@ def dispense_rx(c,rid,u,audit,now):
     did=c.execute('SELECT last_insert_rowid()').fetchone()[0];total=0;parts=[]
     for it in items:
         remain=it['quantity']
-        lots=c.execute('SELECT id,quantity FROM stock_lots WHERE medicine_id=? AND quarantined=0 AND expiry_date>=? AND quantity>0 ORDER BY expiry_date,id',(it['medicine_id'],date.today().isoformat())).fetchall()
+        lots=c.execute('SELECT id,quantity,unit_cost FROM stock_lots WHERE medicine_id=? AND quarantined=0 AND expiry_date>=? AND quantity>0 ORDER BY expiry_date,id',(it['medicine_id'],date.today().isoformat())).fetchall()
         for lot in lots:
             if not remain:break
             take=min(remain,lot['quantity']);remain-=take
             amount=take*it['unit_price']
             if amount>2_000_000_000:raise HTTPException(409,'Khoản tiền quá giới hạn')
             if c.execute('UPDATE stock_lots SET quantity=quantity-? WHERE id=? AND quantity>=?',(take,lot['id'],take)).rowcount!=1:raise HTTPException(409,'Tồn đã đổi')
-            c.execute('INSERT INTO stock_movements(stock_lot_id,movement_type,quantity,created_by,created_at) VALUES(?,?,?,?,?)',(lot['id'],'rx_dispense',take,u['id'],now()))
+            c.execute('INSERT INTO stock_movements(stock_lot_id,movement_type,quantity,created_by,created_at,unit_cost,revenue_amount) VALUES(?,?,?,?,?,?,?)',(lot['id'],'rx_dispense',take,u['id'],now(),lot['unit_cost'],amount))
             c.execute('INSERT INTO dispensation_items(dispensation_id,prescription_item_id,medicine_id,stock_lot_id,quantity,unit_price) VALUES(?,?,?,?,?,?)',(did,it['id'],it['medicine_id'],lot['id'],take,it['unit_price']))
             itemid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
             c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',(rx['visit_id'],f'Thuốc: {it["name"]} - {take} {it["base_unit"]}',amount,now()))

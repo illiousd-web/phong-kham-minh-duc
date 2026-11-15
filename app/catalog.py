@@ -23,6 +23,7 @@ class MedicineInput(BaseModel):
     base_unit:str=Field(min_length=1,max_length=40)
     code:str|None=Field(default=None,pattern=r'^[A-Za-z0-9_-]{2,40}$')
     controlled:bool=False
+    min_stock:int|None=Field(default=None,ge=0,le=10_000_000)
 
 
 def install_catalog(app,db,principal,require,audit):
@@ -61,10 +62,11 @@ def install_catalog(app,db,principal,require,audit):
     @app.post('/api/catalog/medicines',status_code=201)
     def medicine(data:MedicineInput,u=Depends(principal)):
         require(u,'admin','manager','pharmacy')
+        if data.min_stock is not None:require(u,'admin','stock_owner')
         if data.controlled and not {'manager','controlled_reviewer'}.issubset(u['roles']):raise HTTPException(403,'Danh mục kiểm soát cần quản lý có quyền kiểm soát đặc biệt')
         with db(True) as c:
             if data.code and c.execute('SELECT 1 FROM medicines WHERE code=?',(data.code,)).fetchone():raise HTTPException(409,'Trùng mã thuốc')
-            c.execute('INSERT INTO medicines(name,base_unit,code,controlled) VALUES(?,?,?,?)',(data.name,data.base_unit,data.code,int(data.controlled)))
+            c.execute('INSERT INTO medicines(name,base_unit,code,controlled,min_stock) VALUES(?,?,?,?,?)',(data.name,data.base_unit,data.code,int(data.controlled),data.min_stock))
             uid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
             if not data.code:c.execute('UPDATE medicines SET code=? WHERE id=?',('TH'+str(uid),uid))
             audit(c,u,'medicine_created','medicine',uid)

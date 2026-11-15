@@ -30,6 +30,12 @@ Chủ dự án là người duy nhất bấm Merge.
 
 ## GIAO DIỆN (chuẩn v2)
 
+- Bảng mới dùng `<table>` thật, `table-layout:fixed`, một `<colgroup>` chung cho đầu và thân.
+  Số/tiền căn phải, `font-variant-numeric:tabular-nums`, không cắt số; ngày/trạng thái
+  căn giữa; chữ căn trái. Cột số có độ rộng tối thiểu đủ nội dung, kể cả khi kéo thu hẹp.
+- Chữ dài dùng `text-overflow:ellipsis` và `title` đầy đủ. Khung bảng cuộn ngang/dọc;
+  tiêu đề `sticky top`, cột đầu `sticky left`. Kéo vạch mép tiêu đề để giãn cột;
+  lưu độ rộng vào `localStorage`, mọi lần đọc/ghi đều bọc `try/catch`.
 - Mẫu bắt buộc nằm ở docs/ui-mau (PNG và HTML). Làm đúng bố cục, thứ tự khối,
   màu, cỡ chữ của mẫu; không tự sáng tác.
 - Chữ nhỏ nhất 13px. Nút, tab, mục menu cao ít nhất 44px. Ở 390px, nút rộng
