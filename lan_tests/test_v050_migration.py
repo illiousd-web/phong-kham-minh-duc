@@ -78,7 +78,10 @@ def test_upgrade_preserves_every_old_column_and_backup_restore(version,tmp_path,
                         {'file':filename,'rows':count,'sha256':sha} for filename,count,sha,*_ in SOURCES.values()]
                     from app.controlled_migration import FILES
                     assert json.loads(added[-1][columns.index('details')])=={'substances':122,'limits':62,'files':{name:spec[1] for name,spec in FILES.items()}}
-                    assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0]==14
+                    # S2a explicitly adds migration 15; keep the exact-version check.
+                    assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0]==15
+                    assert c.execute('SELECT * FROM clinic_profile').fetchall()==[(1,'','','','','')]
+                    assert c.execute('SELECT count(*) FROM user_signatures').fetchone()[0]==0
                     assert c.execute("SELECT COUNT(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('s1_prescription_immutable','s1_prescription_items_immutable','s1_lab_immutable','s1_lab_results_immutable','s1_outbox_immutable')").fetchone()[0]==5
                 else:assert actual==rows,table
             result=c.execute('SELECT version,snapshot FROM order_result_versions WHERE order_id=1').fetchone()

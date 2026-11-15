@@ -55,7 +55,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=14").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=15").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -86,6 +86,8 @@ def init_db():
         migrate_controlled(c)
         from .order_result_migration import migrate_result_versions
         migrate_result_versions(c)
+        from .s2a_migration import migrate_s2a
+        migrate_s2a(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -665,7 +667,8 @@ def get_rx(u=Depends(principal), visit_id:int|None=None,
            offset:Annotated[int,Query(ge=0,le=1000000)]=0):
     require(u,'doctor','pharmacy')
     with db() as c:
-        sql="SELECT rx.*,v.patient_id,p.full_name AS patient_name,p.code AS patient_code FROM prescriptions rx JOIN visits v ON v.id=rx.visit_id JOIN patients p ON p.id=v.patient_id"
+        allergy_column = ',p.allergies AS patient_allergies' if 'pharmacy' in u['roles'] else ''
+        sql="SELECT rx.*,v.patient_id,p.full_name AS patient_name,p.code AS patient_code"+allergy_column+" FROM prescriptions rx JOIN visits v ON v.id=rx.visit_id JOIN patients p ON p.id=v.patient_id"
         args=[];where=[]
         if 'doctor' in u['roles'] and 'pharmacy' not in u['roles']:
             where.append('rx.doctor_id=?');args.append(u['id'])
@@ -1034,7 +1037,9 @@ def form_context(c, kind: str, object_id: int):
     if not visit:raise HTTPException(404,'Không có lượt khám')
     patient=redact_document(row(c.execute('SELECT * FROM patients WHERE id=?',(visit['patient_id'],)).fetchone()))
     charge=c.execute('SELECT label FROM effective_charges WHERE visit_id=? ORDER BY id LIMIT 1',(visit_id,)).fetchone()
+    from .clinic_profile import read_profile
     context={'visit':visit,'patient':patient,'doctor_name':printed_name(c,visit['doctor_id']),
+             'clinic_profile':read_profile(c),
              'service_label':charge['label'] if charge else 'Chưa xác định',
              'orders':[dict(x) for x in c.execute('SELECT * FROM orders WHERE visit_id=? ORDER BY id LIMIT 201',(visit_id,))]}
     if len(context['orders'])>200:raise HTTPException(413,'Lượt khám quá nhiều chỉ định để xuất gộp; liên hệ quản trị')
@@ -1149,3 +1154,6 @@ install_d0(app,db,principal,require,audit,visit_access,NOW)
 
 from .order_result_versions import install_result_history
 install_result_history(app,db,principal,require,audit,visit_access)
+
+from .clinic_profile import install_clinic_profile
+install_clinic_profile(app, db, principal, require, audit, NOW)

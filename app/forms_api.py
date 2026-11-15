@@ -12,6 +12,7 @@ def mount_forms(app, db, principal, require, audit):
     router=APIRouter(prefix='/api')
 
     def get_visit(c, vid):
+        from .clinic_profile import read_profile
         r=c.execute('''SELECT v.id AS visit_id,v.doctor_id,v.status AS visit_status,v.created_at,
              v.chief_complaint,v.history,v.vitals,v.primary_icd10,v.diagnosis_codes,v.diagnosis,v.treatment,v.follow_up,
              v.weight_kg,v.escort_name,v.escort_relationship,v.escort_phone,
@@ -22,6 +23,7 @@ def mount_forms(app, db, principal, require, audit):
              WHERE v.id=?''',(vid,)).fetchone()
         if not r:raise HTTPException(404,'Không có lượt khám')
         result=redact_document(dict(r))
+        result['clinic_profile']=read_profile(c)
         result['doctor_name']=printed_name(c,result['doctor_id'])
         return result
 
@@ -38,6 +40,7 @@ def mount_forms(app, db, principal, require, audit):
         visit={key:ctx.get(key) for key in ('chief_complaint','history','vitals','diagnosis','diagnosis_codes','primary_icd10','treatment','follow_up','created_at','weight_kg','escort_name','escort_relationship','escort_phone')}
         visit.update(id=ctx['visit_id'],doctor_id=ctx['doctor_id'],status=ctx['visit_status'])
         payload={'patient':patient,'visit':visit,'doctor_name':ctx['doctor_name'],
+                 'clinic_profile':ctx['clinic_profile'],
                  'service_label':'Khám ngoại trú (mô phỏng)','orders':ctx.get('orders',[]),'addenda':ctx.get('addenda',[])}
         if 'order_id' in ctx:
             payload['order']={'id':ctx['order_id'],'name':ctx['order_name'],'category':ctx['category'],

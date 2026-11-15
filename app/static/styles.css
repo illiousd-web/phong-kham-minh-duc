@@ -638,3 +638,9 @@ body[data-screen=manager] .toolbar,body[data-screen=admin] .toolbar,body[data-sc
 .r2-field-error{color:#B42318;font-size:13px;font-weight:700}.r2-reception .r2-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
 
 @media print{.r3-exam-dock,.r3-rx-dock,.r3-section::before{display:none!important}.r3-profile,.r3-queue-hero,.r3-locked>.card{background:#fff!important;color:#000!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}}
+
+/* S2a: patient safety at dispensing; private signature preview. */
+.pharmacy-allergy{background:#B42318;color:#FFF;padding:12px 16px;border-radius:16px;margin:10px 0;font-size:15px;overflow-wrap:anywhere;white-space:pre-wrap}
+.signature-image{display:block;max-width:100%;max-height:180px;object-fit:contain;background:#FFF}
+#signature-file-name{overflow-wrap:anywhere}
+[data-form=user-signature] .price-file-picker .ghost{min-height:44px;display:flex;align-items:center}
