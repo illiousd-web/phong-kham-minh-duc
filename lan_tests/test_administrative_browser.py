@@ -174,3 +174,44 @@ def test_public_catalog_comboboxes_default_province_and_explicit_ethnicity(https
         assert reload.value.status==200;settle(page)
         assert not errors,errors
         browser.close()
+
+
+def test_cashier_transfer_radio_keyboard_persists_method(https_server,clients,visit):
+    origin,certdir=https_server
+    cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as pw:
+        browser=pw.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
+        try:
+            page=browser.new_page(viewport={'width':390,'height':844})
+            page.goto(origin)
+            page.locator('[name=username]').fill('test_cashier')
+            page.locator('[name=password]').fill(PASSWORDS['cashier'])
+            page.locator('[data-form=login] button').click()
+            page.locator('.account-trigger').wait_for();settle(page);pick(page,'cash',visit)
+            form=page.locator('[data-form=payment]')
+            expect(form.locator('button')).to_have_count(1)
+            cash=form.locator('[type=radio][name=method][value=cash]')
+            transfer=form.locator('[type=radio][name=method][value=transfer]')
+            expect(cash).to_be_checked()
+            for radio in (cash,transfer):
+                assert radio.bounding_box()['height']>=44
+            cash.focus();cash.press('ArrowRight')
+            expect(transfer).to_be_checked();expect(transfer).to_be_focused()
+            assert transfer.evaluate("e=>getComputedStyle(e.nextElementSibling).outlineStyle")=='solid'
+            form.locator('[name=amount]').fill('1000')
+            reference='R4-transfer-'+secrets.token_hex(6)
+            form.locator('[name=external_ref]').fill(reference)
+            with page.expect_response(lambda response:response.url.endswith('/api/payments') and response.request.method=='POST') as paid:
+                form.locator('button').click()
+            assert paid.value.status==201,paid.value.text()
+            assert paid.value.request.post_data_json['method']=='transfer'
+            records=clients['cashier'].get('/api/payments').json()
+            saved=next(row for row in records if row['visit_id']==visit and row['external_ref']==reference)
+            assert saved['method']=='transfer' and saved['amount']==1000
+            with db() as c:
+                stored=c.execute('SELECT method,amount FROM payments WHERE id=?',(saved['id'],)).fetchone()
+                assert stored['method']=='transfer' and stored['amount']==1000
+            no_horizontal_scroll(page)
+        finally:
+            browser.close()

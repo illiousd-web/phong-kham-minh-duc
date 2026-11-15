@@ -35,6 +35,27 @@ def test_m6_missing_ingredient_complete_on_row_and_lock(https_server,clients,req
         if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):assert browser.version.split('.')[0]==os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
         page=browser.new_page(viewport={'width':width,'height':900});page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(origin);page.locator('[name=username]').fill('test_doctor');page.locator('[name=password]').fill(PASSWORDS['doctor']);page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page);pick(page,'visit',vid)
+        if width==390:
+            first=page.locator('.doctor-waiting [data-action=pick]').first
+            first.scroll_into_view_if_needed()
+            expect(first).to_be_visible()
+            padding=page.locator('.r3-waiting').evaluate('e=>parseFloat(getComputedStyle(e).paddingBottom)')
+            dock_height=page.locator('.r3-exam-dock').bounding_box()['height']
+            assert padding>=dock_height
+            first.evaluate("e=>e.scrollIntoView({block:'center'})")
+            assert first.evaluate("e=>{const r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}")
+            pick(page,'visit',vid)
+            settle(page)
+            page.locator('[data-action=doctor-tab][data-target=rx]').click()
+            search=page.locator('[data-r3-drug-search]')
+            search.fill('Thuốc tiếng Việt đang gõ')
+            before=page.locator('.m6-row [name=name]').evaluate_all('es=>es.map(e=>e.value)')
+            search.dispatch_event('keydown',{'key':'Enter','code':'Enter','isComposing':True,'bubbles':True})
+            expect(search).to_have_value('Thuốc tiếng Việt đang gõ')
+            assert page.locator('.m6-row [name=name]').evaluate_all('es=>es.map(e=>e.value)')==before
+            search.dispatch_event('keydown',{'key':'Enter','code':'Enter','isComposing':False,'bubbles':True})
+            expect(search).to_have_value('')
+            expect(page.locator('.m6-row [name=name]').first).to_have_value('Thuốc tiếng Việt đang gõ')
         row=page.locator('.m6-row').first
         for key,value in {'name':'Tên thuốc mới giả lập '+str(width),'strength':'2 mg','dose':'1','frequency':'2','days':'5','unit':'viên','route':'Uống','timing':'sau ăn'}.items():row.locator('[name='+key+']').fill(value)
         expect(row.locator('[name=quantity]')).to_have_value('10')
@@ -113,6 +134,8 @@ def test_s1_text_result_two_tabs_keep_first_version(https_server,clients,width):
         first=context.new_page();first.on('pageerror',lambda e:errors.append(str(e)))
         first.goto(origin);first.locator('[name=username]').fill('test_technician');first.locator('[name=password]').fill(PASSWORDS['technician']);first.locator('[data-form=login] button').click();first.locator('.account-trigger').wait_for();settle(first);pick(first,'order',oid)
         second=context.new_page();second.on('pageerror',lambda e:errors.append(str(e)));second.goto(origin);second.locator('.account-trigger').wait_for();settle(second);pick(second,'order',oid)
+        expect(first.locator('.r4-lab h1')).to_have_text('Xét nghiệm')
+        first.screenshot(path=f'test_evidence/r4-xet-nghiem-{width}.png',full_page=True)
         first.locator('[name=result_text]').fill('Phiên bản đầu giả lập S1')
         second.locator('[name=result_text]').fill('Nội dung chưa được phép ghi đè')
         with first.expect_response(lambda response:response.url.endswith(f'/orders/{oid}/result')) as sent:first.locator('[data-form=result] button').click()
@@ -149,6 +172,9 @@ def test_r3_mobile_dock_and_drug_search_keeps_focus(https_server,clients):
                 expect(button).to_have_css('white-space','nowrap')
             expect(page.locator('.r3-exam-documents')).to_contain_text('Xuất chứng từ')
             expect(page.locator('.r3-exam-documents button')).to_have_count(3)
+            page.emulate_media(media='print')
+            expect(page.locator('.r3-exam-documents')).not_to_be_visible()
+            page.emulate_media(media='screen')
             page.locator('[data-action=doctor-jump][data-target=rx]').click()
             search=page.locator('[data-r3-drug-search]');search.type('Para')
             expect(search).to_have_value('Para');expect(search).to_be_focused()

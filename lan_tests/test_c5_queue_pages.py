@@ -54,6 +54,19 @@ def test_cashier_pages_keep_all_old_debts_selectable(https_server):
             with page.expect_response(lambda response:response.url.endswith('/api/queue-counts')) as polled:
                 page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
             assert polled.value.json()['cashier']==len(expected)
+            expect(page.locator('.r4-cash-waiting h1')).to_have_text('Thu tiền')
+            expect(page.locator('.r4-cash-hero')).to_contain_text('Cần thu')
+            expect(page.locator('.r4-cash-waiting .r4-person-text b').first).to_have_attribute('title','Giả lập phân trang thu ngân C5')
+            page.locator('[name=method][value=transfer]').check()
+            expect(page.locator('[name=method][value=transfer]')).to_be_checked()
+            page.locator('[name=method][value=cash]').check()
+            expect(page.locator('[name=method][value=cash]')).to_be_checked()
+            page.locator('.r4-cash-hero').scroll_into_view_if_needed()
+            page.screenshot(path='test_evidence/r4-thu-ngan-390.png')
+            page.set_viewport_size({'width':1366,'height':900})
+            page.evaluate('window.scrollTo(0,0)')
+            page.screenshot(path='test_evidence/r4-thu-ngan-1366.png')
+            page.set_viewport_size({'width':390,'height':844})
             found=[]
             while True:
                 rows=page.locator('[data-action="pick"][data-kind="cash"]')

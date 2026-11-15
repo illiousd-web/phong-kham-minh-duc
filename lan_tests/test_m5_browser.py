@@ -2,6 +2,7 @@
 import base64,hashlib,os,secrets
 from pathlib import Path
 import pytest
+import re
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from playwright.sync_api import sync_playwright,expect
@@ -43,10 +44,28 @@ def test_m5_numeric_entry_review_snapshot_and_group_print(https_server,clients,r
                 page.locator('.account-trigger').click();page.locator('#logout').click()
             assert response.value.status==200
             expect(page.locator('[data-form=login]')).to_be_visible()
-        login('technician');go(page,'m5-queue')
+        login('technician')
+        if width==390:
+            queue_requests=[]
+            page.on('request',lambda req:queue_requests.append(req.url) if '/api/lab/queue?' in req.url else None)
+            page.route('**/api/lab/queue?*',lambda route:route.fulfill(status=500,json={'detail':'Lỗi tải giả lập R4'}))
+            page.locator('#navigation [data-page="m5-queue"]').click()
+            settle(page)
+            expect(page.locator('.r4-state-error')).to_contain_text('Lỗi tải giả lập R4')
+            page.unroute('**/api/lab/queue?*')
+            page.locator('[data-action=r4-reload]').click()
+            settle(page)
+            assert len(queue_requests)==6  # One failed list, one retry list, four authorized stage totals.
+        else:
+            go(page,'m5-queue')
+        expect(page.locator('.r4-m5-top h1')).to_have_text('Phiếu xét nghiệm')
+        expect(page.locator('.r4-stat')).to_have_count(4)
+        expect(page.locator('.r4-person-text b').first).to_have_attribute('title',re.compile('.+'))
+        page.screenshot(path=str(target/f'r4-hang-cho-{width}.png'),full_page=True)
         page.locator(f'[data-m5=open][data-id="{rid}"]').click();settle(page)
         form=page.locator('[data-m5-form=result]');expect(form.locator('[name=value]')).to_have_attribute('inputmode','decimal')
         form.locator('[name=sample_at]').fill('02/01/2026 08:00');form.locator('[name=result_at]').fill('02/01/2026 09:00');form.locator('[name=value]').fill('21,55');expect(form.locator('.m5-rounding')).to_contain_text('Sẽ làm tròn thành 21,6');form.locator('[name=value]').fill('21,5');form.locator('[name=note]').fill('Ghi chú giao diện giả lập');form.locator('[name=comment]').fill('Nhận xét giao diện giả lập')
+        page.screenshot(path=str(target/f'r4-nhap-ket-qua-{width}.png'),full_page=True)
         with page.expect_response(lambda x:x.url.endswith('/lab/reports/'+str(rid)) and x.request.method=='PUT') as response:form.locator('button.btn').click()
         assert response.value.status==200;settle(page)
         expect(page.locator('.m5-result-row [name=value]')).to_have_value('21.5');expect(page.locator('.m5-result-row .m5-abnormal')).to_contain_text('H')
