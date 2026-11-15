@@ -15,7 +15,7 @@ from .test_ui_settings_backup import _new_db, _drop
 def test_postgres_pharmacy_allergies_and_private_signature_contracts(clients):
     nurse = client_for('nurse')
     try:
-        check_pharmacy_allergies({**clients, 'nurse': nurse}, IDS, SERVICE)
+        check_pharmacy_allergies({**clients, 'nurse': nurse}, IDS, SERVICE, db)
         check_profile_and_signatures({**clients, 'nurse': nurse}, IDS, db)
     finally:
         nurse.close()

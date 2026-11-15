@@ -351,7 +351,7 @@ def test_r6_screens_template_geometry(https_server, clients, visit, width):
 
 
 def test_s2a_allergies_settings_and_today_at_vietnam_midnight(https_server, clients, tmp_path):
-    from tests.s2a_cases import PROFILE, signature_image, draft_prescription
+    from tests.s2a_cases import PROFILE, signature_image, draft_prescription, retire_test_medicine
     r = clients['reception']
     pid = r.post('/api/patients', json={'full_name': 'Người bệnh giao diện giả lập S2a', 'sex': 'Nữ', 'date_of_birth': '1990-01-01', 'phone': '0000000000'}).json()['id']
     vid = r.post('/api/visits', json={'patient_id': pid, 'doctor_id': IDS['doctor'], 'service_id': SERVICE}).json()['id']
@@ -464,6 +464,7 @@ def test_s2a_allergies_settings_and_today_at_vietnam_midnight(https_server, clie
             assert not errors
             browser.close()
     finally:
+        retire_test_medicine(db, rx)
         clients['admin'].put('/api/clinic-profile', json=before)
         with db(True) as c:
             c.execute('DELETE FROM user_signatures WHERE user_id=?', (IDS['doctor'],))

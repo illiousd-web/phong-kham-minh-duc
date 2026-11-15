@@ -24,7 +24,7 @@ def actors():
 
 def test_pharmacy_allergies_only_adds_data_to_pharmacy():
     clients, ids = actors()
-    check_pharmacy_allergies(clients, ids, 1)
+    check_pharmacy_allergies(clients, ids, 1, db)
 
 
 def test_admin_profile_private_signature_validation_and_audit():

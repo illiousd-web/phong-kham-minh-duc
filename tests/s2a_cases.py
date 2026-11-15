@@ -28,26 +28,34 @@ def draft_prescription(clients, visit):
     return rx.json()['id']
 
 
-def check_pharmacy_allergies(clients, ids, service):
+def retire_test_medicine(db, prescription):
+    with db(True) as c:
+        c.execute('UPDATE medicines SET active=0 WHERE id IN (SELECT medicine_id FROM prescription_items WHERE prescription_id=?)', (prescription,))
+
+
+def check_pharmacy_allergies(clients, ids, service, db):
     r, d, p = clients['reception'], clients['doctor'], clients['pharmacy']
     patient = r.post('/api/patients', json={'full_name': 'Người bệnh giả lập S2a', 'sex': 'Nữ', 'date_of_birth': '1990-01-01', 'phone': '0000000000'}).json()['id']
     visit = r.post('/api/visits', json={'patient_id': patient, 'doctor_id': ids['doctor'], 'service_id': service}).json()['id']
     rx = draft_prescription(clients, visit)
-    path = f'/api/prescriptions?visit_id={visit}&status=draft&limit=1'
-    assert p.get(path).json()[0]['patient_allergies'] is None
-    allergy = 'Thuốc giả lập <A> & B: nổi mẩn'
-    assert r.put(f'/api/patients/{patient}/allergies', json={'allergies': allergy}).status_code == 200
-    result = p.get(path).json()[0]
-    assert result['patient_allergies'] == allergy and result['id'] == rx
-    assert 'patient_allergies' not in d.get(path).json()[0]
-    assert clients['doctor2'].get(path).json() == []
-    for role in ('reception', 'cashier', 'manager', 'admin', 'technician', 'nurse'):
-        assert clients[role].get(path).status_code == 403
-    assert p.get(f'/api/patients/{patient}').status_code == 403
-    assert p.put(f'/api/patients/{patient}/allergies', json={'allergies': 'Thay đổi trái quyền'}).status_code == 403
-    assert r.get(f'/api/patients/{patient}').json()['allergies'] == allergy
-    assert clients['cashier'].get(f'/api/patients/{patient}').status_code == 403
-    assert all('patient_allergies' not in row for row in clients['cashier'].get('/api/dues').json())
+    try:
+        path = f'/api/prescriptions?visit_id={visit}&status=draft&limit=1'
+        assert p.get(path).json()[0]['patient_allergies'] is None
+        allergy = 'Thuốc giả lập <A> & B: nổi mẩn'
+        assert r.put(f'/api/patients/{patient}/allergies', json={'allergies': allergy}).status_code == 200
+        result = p.get(path).json()[0]
+        assert result['patient_allergies'] == allergy and result['id'] == rx
+        assert 'patient_allergies' not in d.get(path).json()[0]
+        assert clients['doctor2'].get(path).json() == []
+        for role in ('reception', 'cashier', 'manager', 'admin', 'technician', 'nurse'):
+            assert clients[role].get(path).status_code == 403
+        assert p.get(f'/api/patients/{patient}').status_code == 403
+        assert p.put(f'/api/patients/{patient}/allergies', json={'allergies': 'Thay đổi trái quyền'}).status_code == 403
+        assert r.get(f'/api/patients/{patient}').json()['allergies'] == allergy
+        assert clients['cashier'].get(f'/api/patients/{patient}').status_code == 403
+        assert all('patient_allergies' not in row for row in clients['cashier'].get('/api/dues').json())
+    finally:
+        retire_test_medicine(db, rx)
 
 
 def check_profile_and_signatures(clients, ids, db):
