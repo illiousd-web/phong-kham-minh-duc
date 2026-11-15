@@ -103,3 +103,30 @@ def test_postgres_failed_upgrade_rolls_back_schema_and_version():
             assert not c.execute('SELECT 1 FROM schema_migrations WHERE version=15').fetchone()
         finally:
             connection.rollback()
+
+
+def test_c5_profile_upgrade_reaches_s2a_and_preserves_full_cohort(tmp_path):
+    from urllib.parse import urlsplit, urlunsplit
+    from scripts.tao_du_lieu_gia import generate, CONFIRM
+    from scripts.do_hieu_nang import migrate_profile_schema, database_state
+    name = 'clinic_perf_test_' + secrets.token_hex(6)
+    source = urlunsplit(urlsplit(URL)._replace(path='/postgres'))
+    target = urlunsplit(urlsplit(URL)._replace(path='/'+name))
+    try:
+        generate(source, name, tmp_path/name, CONFIRM, attachments=0)
+        before = database_state(target)
+        with psycopg.connect(target, row_factory=record_factory) as connection:
+            migrate_profile_schema(PGConnection(connection))
+            assert connection.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 15
+            assert connection.execute('SELECT name,governing_body,address,phone,email FROM clinic_profile').fetchone() == dict.fromkeys(PROFILE, '')
+            assert connection.execute('SELECT COUNT(*) FROM user_signatures').fetchone()[0] == 0
+        after = database_state(target)
+        assert after['money'] == before['money'] and after['stock'] == before['stock']
+        assert after['tables']['visits'] == before['tables']['visits'] == 22000
+        assert after['tables']['patients'] == before['tables']['patients'] == 20000
+        for table, count in before['tables'].items():
+            if table not in ('schema_migrations', 'audit_log'):
+                assert after['tables'][table] == count, table
+        assert after['tables']['schema_migrations'] == before['tables']['schema_migrations'] + 11
+    finally:
+        _drop(name)

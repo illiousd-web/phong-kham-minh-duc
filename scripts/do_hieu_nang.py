@@ -155,11 +155,13 @@ def migrate_profile_schema(c):
     from app.s1_migration import migrate_s1
     from app.controlled_migration import migrate_controlled
     from app.order_result_migration import migrate_result_versions
+    from app.s2a_migration import migrate_s2a
     for _ in range(2):
         migrate_m0(c);migrate_administrative(c);migrate_public_catalog(c)
         migrate_m6(c,postgres=True);migrate_m5(c,postgres=True);migrate_d0(c,postgres=True);migrate_source_catalogs(c,postgres=True)
         migrate_s1(c)
         migrate_controlled(c);migrate_result_versions(c,postgres=True)
+        migrate_s2a(c,postgres=True)
 
 
 def database_state(url):
@@ -424,7 +426,9 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 10  # versions 5–14, including S1a + S1b
+                expected_state['tables']['schema_migrations'] += 11  # versions 5–15, including S2a
+                expected_state['tables']['clinic_profile'] = 1
+                expected_state['tables']['user_signatures'] = 0
                 expected_state['tables'].update({name: 0 for name in TABLES+M5_TABLES+D0_TABLES+SOURCE_TABLES})
                 expected_state['tables']['lab_tests'] = sum(len(v) for v in FRAMEWORK.values())
                 expected_state['tables']['audit_log'] += 7  # D0 plus one TT18 source-seed audit
