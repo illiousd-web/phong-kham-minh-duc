@@ -510,6 +510,70 @@ body[data-screen=cashier]{background:radial-gradient(circle at 15% 15%,#FFD9A0,t
  .r4-layout button,.r4-m5-list button,.r4-m5-editor button,.r4-state button{min-width:88px;min-height:44px;white-space:normal;line-height:1.2;padding:10px 12px}
  .r3-waiting{padding-bottom:calc(var(--r4-doctor-dock-h,88px) + 24px)}
 }
+/* R5 — U_NhaThuoc, U_NhaThuocDT, U_KhoThuoc, U_DieuDuong. */
+body[data-screen=pharmacy] .toolbar,body[data-screen=nurse] .toolbar{display:none}
+.r5-top{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px;align-items:start;margin-bottom:18px}
+.r5-top>*{min-width:0}.r5-hero{padding:26px 28px;gap:12px}.r5-hero>span{font-size:15px;font-weight:700;line-height:1.2}.r5-hero p{line-height:1.35}.r5-hero-staff{display:none}
+.r5-hero-wrap{position:relative}.r5-hero-wrap .r5-hero{padding-bottom:90px}
+.r5-pharmacy input.r5-search{width:100%;height:56px;border:1px solid #6F8F7E;border-radius:999px;background:rgba(255,255,255,.85);padding:0 20px;font-size:16px;color:#0B1F17}
+.r5-pharmacy .r5-hero-wrap input.r5-search{position:absolute;bottom:26px;left:28px;width:calc(100% - 56px)}
+.r5-mobile-summary{display:none}.r5-stat-note{font-size:13px;color:#1F3A31;margin:8px 20px}
+.r5-top .r2-stats{margin:0}.r5-top .r2-stat{border-radius:28px;padding:18px 20px;min-height:122px}
+.r5-top .r2-stat span{font-size:14px;font-weight:700;color:inherit}.r5-top .r2-stat-0{background:rgba(255,217,160,.55);color:#4A2800}
+.r5-pharmacy .r2-stat-1{background:rgba(127,224,168,.45);color:#063A1F}.r5-pharmacy .r2-stat-2{background:rgba(255,218,212,.7);color:#8C1D18}
+.r5-dispensing{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px;align-items:start;margin-bottom:18px}
+.r5-nurse-layout{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,8fr);gap:16px;align-items:start}
+.r5-dispensing>*,.r5-nurse-layout>*,.r5-stock-layout>*{min-width:0}
+.r5-pharmacy .card,.r5-nurse .card{border-radius:28px;padding:20px;margin:0 0 16px;background:rgba(255,255,255,.42);border:1px solid rgba(255,255,255,.8);box-shadow:inset 0 1px 0 #fff,0 16px 40px rgba(16,40,30,.14);backdrop-filter:blur(26px) saturate(180%)}
+.r5-pharmacy h2,.r5-nurse h2{font-size:20px;font-weight:800;overflow-wrap:anywhere}
+.r5-pharmacy .stepno,.r5-nurse .stepno{width:30px;height:30px;border-radius:10px;font-size:15px}
+.r5-pharmacy .btn,.r5-pharmacy .ghost,.r5-nurse .btn,.r5-nurse .ghost{min-height:48px;padding:10px 24px;font-size:15px;font-weight:900}
+.r5-pharmacy .r4-person,.r5-nurse .r4-person{background:rgba(255,255,255,.72);min-height:76px;margin:0}
+.r5-pharmacy .r4-person.current,.r5-nurse .r4-person.current{background:rgba(255,255,255,.92);border:2px solid #008249}
+.r5-pharmacy .r4-person-text b,.r5-nurse .r4-person-text b{font-size:16px}.r5-pharmacy .r4-person-text>span,.r5-nurse .r4-person-text>span{font-size:14px}
+.r5-pharmacy .r4-queue,.r5-nurse .r4-queue{gap:12px;max-height:440px;padding-bottom:2px}
+.r5-patient-meta{font-size:14px;color:#1F3A31;margin:0 0 12px}.r5-patient-meta .status{vertical-align:middle}
+.r5-rx-actions{justify-content:flex-end;align-items:center;margin-top:12px;gap:10px}
+.r5-tabs{position:sticky;top:calc(var(--shell-h,0px) + 12px);z-index:12;margin-bottom:18px;backdrop-filter:blur(20px)}.r5-tabs button{font-size:14px;background:transparent}
+.r5-stock-layout{display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:16px;align-items:start}
+.r5-stock>summary{font-size:20px;font-weight:800;cursor:pointer;min-height:44px;margin-bottom:12px;padding:8px 20px;border-radius:24px;background:rgba(255,255,255,.65)}
+.r5-stock-form .fields>.field:first-child,.r5-stock-form .fields>.field:has([name=quantity]),.r5-stock-form .fields>.field:has([name=purpose]){grid-column:1/-1}
+.r5-stock-form .wide>button{width:100%}.r5-pharmacy .table,.r5-nurse .table{border-collapse:separate;border-spacing:0 6px}
+.r5-pharmacy .table td,.r5-nurse .table td{background:rgba(255,255,255,.72);border-top:1px solid rgba(255,255,255,.9);border-bottom:1px solid rgba(255,255,255,.9);padding:12px 16px;font-size:14px;overflow-wrap:anywhere}
+.r5-pharmacy .table td:first-child,.r5-nurse .table td:first-child{border-radius:18px 0 0 18px}
+.r5-pharmacy .table td:last-child,.r5-nurse .table td:last-child{border-radius:0 18px 18px 0}
+.r5-pharmacy .table th,.r5-nurse .table th{background:transparent;border:0;font-size:13px;text-transform:uppercase;color:#1F3A31;padding:0 16px}
+.r5-stock-form .field,.r5-nurse [data-form=nurse-vitals] .field:not(.full),.r5-nurse [data-form=nurse-vitals]>.field:has(textarea){padding:8px 16px;border:1px solid #6F8F7E;border-radius:20px;background:rgba(255,255,255,.8);gap:2px;min-width:0}
+.r5-stock-form .field label,.r5-nurse [data-form=nurse-vitals] label{font-size:13px;font-weight:400;color:#1F3A31}
+.r5-stock-form .field input,.r5-stock-form .field select,.r5-nurse [data-form=nurse-vitals] input,.r5-nurse [data-form=nurse-vitals] textarea{background:transparent;border:0;border-radius:0;padding:0;min-height:24px;font-weight:600;font-size:16px;color:#0B1F17}
+.r5-nurse [data-form=nurse-vitals] textarea{min-height:28px}.r5-nurse .vitals{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.r5-nurse .vitals>.field:nth-child(2){order:3}.r5-nurse .vitals>.field:nth-child(3){order:2}.r5-nurse .vitals>.field:nth-child(4){order:4}.r5-nurse .vitals>.field:nth-child(5){order:6}.r5-nurse .vitals>.field:nth-child(6){order:7}.r5-nurse .vitals>.field:nth-child(7){order:5}
+.r5-nurse [data-form=nurse-vitals]>.wide{text-align:right}
+.r5-lab-hero{margin-bottom:12px}.r5-lab-hero h1{margin:0}
+.r5-cash-change{display:flex;flex-wrap:wrap;gap:10px}.r5-cash-change>label{display:flex;flex:1 1 160px;flex-direction:column;gap:2px;padding:8px 18px;border:1px solid #6F8F7E;border-radius:20px;background:rgba(255,255,255,.65);font-size:13px;color:#1F3A31}
+.r5-cash-change input{width:100%;min-width:0;background:transparent;border:0;font-size:20px;font-weight:900;color:#0B1F17;padding:0}
+.r5-cash-change>span{display:flex;flex:1 1 120px;flex-direction:column;justify-content:center;padding:8px 18px;border-radius:20px;background:rgba(255,216,168,.85);font-size:13px;color:#4A2800}.r5-cash-change output{font-size:20px;font-weight:900}
+.r5-pharmacy [hidden],.r5-cash-change[hidden]{display:none!important}
+@media(max-width:900px){
+ .r5-top,.r5-dispensing,.r5-stock-layout,.r5-nurse-layout{grid-template-columns:minmax(0,1fr);gap:14px}
+ .r5-hero,.r5-hero-wrap .r5-hero{padding:22px;border-radius:32px}.r5-hero h1{font-size:40px}
+ .r5-pharmacy .r5-top>div:last-child{display:none}.r5-hero-wrap .r5-hero>p,.r5-pharmacy .r5-hero-date{display:none}.r5-pharmacy .r5-hero-staff{display:block}.r5-hero-wrap .r5-mobile-summary{display:block;font-size:16px;font-weight:400;line-height:1.5}
+ .r5-pharmacy .r5-hero-wrap input.r5-search{position:static;width:100%;height:52px;margin-top:14px}
+ .r5-pharmacy{display:flex;flex-direction:column}.r5-pharmacy .r5-top{order:0;margin-bottom:14px}.r5-pharmacy .r5-dispensing{order:1}.r5-pharmacy .r5-tabs{order:2}.r5-pharmacy #r5-recent{order:3}.r5-pharmacy .r5-stock{order:4}.r5-pharmacy>.fold{order:5}
+ .r5-pharmacy .r5-rx-queue{padding:0;background:transparent;border:0;box-shadow:none;backdrop-filter:none}.r5-rx-queue>h2{display:none}
+ .r5-pharmacy .r4-queue{max-height:none}.r5-pharmacy .r4-person{flex-wrap:nowrap}.r5-pharmacy .r4-person-text{min-width:0}
+ .r5-pharmacy button,.r5-nurse button{min-width:88px;min-height:44px;white-space:normal;line-height:1.2;padding:10px 12px}
+ .r5-pharmacy .table td,.r5-nurse .table td{border-radius:0;padding:10px 12px}.r5-pharmacy .table tr,.r5-nurse .table tr{border-radius:18px;overflow:hidden;margin-bottom:6px}
+ .r5-pharmacy .table td:first-child,.r5-nurse .table td:first-child{border-radius:18px 18px 0 0}.r5-pharmacy .table td:last-child,.r5-nurse .table td:last-child{border-radius:0 0 18px 18px}
+ .r5-stock-form .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.r5-stock-form .wide{grid-column:1/-1}
+ .r5-nurse .vitals{grid-template-columns:repeat(2,minmax(0,1fr))}.r5-nurse .r5-top .r2-stat{padding:12px;min-height:110px}
+ .r5-lab-hero h1{font-size:36px}
+}
+@media print{
+ .r5-top,.r5-tabs,.r5-rx-queue,.r5-stock>summary,.r5-nurse-layout>aside,.r5-rx-actions{display:none!important}
+ .r5-dispensing,.r5-nurse-layout,.r5-stock-layout{display:block}
+ .r5-pharmacy *,.r5-nurse *,.r5-cash-change *{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-shadow:none!important;background:#fff!important;color:#000!important}
+}
 @media print{
  .r3-exam-documents{display:none!important}
  .r4-layout,.r4-m5-top{display:block}

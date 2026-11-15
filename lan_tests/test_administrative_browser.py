@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 import secrets
+import pytest
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
@@ -213,5 +214,62 @@ def test_cashier_transfer_radio_keyboard_persists_method(https_server,clients,vi
                 stored=c.execute('SELECT method,amount FROM payments WHERE id=?',(saved['id'],)).fetchone()
                 assert stored['method']=='transfer' and stored['amount']==1000
             no_horizontal_scroll(page)
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize('width', [1366, 390])
+def test_cashier_cash_change_is_ui_only(https_server, clients, visit, width):
+    origin, certdir = https_server
+    cert = x509.load_pem_x509_certificate((certdir / 'server.crt').read_bytes())
+    pin = base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'), headless=True,
+            args=['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors-spki-list=' + pin])
+        try:
+            page = browser.new_page(viewport={'width': width, 'height': 844})
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.goto(origin)
+            page.locator('[name=username]').fill('test_cashier')
+            page.locator('[name=password]').fill(PASSWORDS['cashier'])
+            page.locator('[data-form=login] button').click()
+            page.locator('.account-trigger').wait_for()
+            settle(page)
+            pick(page, 'cash', visit)
+            form = page.locator('[data-form=payment]')
+            expect(form.locator('button')).to_have_count(1)
+            given = form.get_by_label('Khách đưa', exact=True)
+            assert given.get_attribute('name') is None
+            expect(given).to_be_visible()
+            amount = form.locator('[name=amount]')
+            amount.fill('1000')
+            given.fill('500')
+            expect(form.locator('output')).to_have_text('Thiếu 500 đ')
+            given.fill('2000')
+            expect(form.locator('output')).to_have_text('1.000 đ')
+            amount.fill('500')
+            expect(form.locator('output')).to_have_text('1.500 đ')
+            amount.fill('1000')
+            form.locator('[name=method][value=transfer]').check()
+            expect(given).to_be_hidden()
+            expect(form.locator('output')).to_be_hidden()
+            form.locator('[name=method][value=cash]').check()
+            expect(given).to_be_visible()
+            expect(form.locator('output')).to_have_text('1.000 đ')
+            no_horizontal_scroll(page)
+            evidence = Path('test_evidence/r5')
+            evidence.mkdir(parents=True, exist_ok=True)
+            form.screenshot(path=str(evidence / f'cash-change-{width}.png'))
+            with page.expect_response(lambda r: r.url.endswith('/api/payments') and r.request.method == 'POST') as paid:
+                form.locator('button').click()
+            assert paid.value.status == 201, paid.value.text()
+            payload = paid.value.request.post_data_json
+            assert set(payload) == {'visit_id', 'amount', 'method', 'external_ref', 'idempotency_key', 'confirm_over_limit'}
+            assert payload['amount'] == 1000 and payload['method'] == 'cash'
+            saved = next(x for x in clients['cashier'].get('/api/payments').json() if x['id'] == paid.value.json()['id'])
+            assert saved['amount'] == 1000 and saved['method'] == 'cash'
+            assert not errors, errors
         finally:
             browser.close()
