@@ -180,10 +180,10 @@ const SCREENS={reception:receptionScreen,prices:pricesScreen,doctor:doctorScreen
 async function render(){if(!auth){renderLogin();return}viewInit();const page=active,epoch=++renderEpoch;$('workspace').setAttribute('aria-busy','true');$('workspace').dataset.page=page;$('workspace').innerHTML=renderState('loading','Đang tải danh sách…');try{
  if(!uiLoaded)await loadUi();
  const out=await SCREENS[page]();if(epoch!==renderEpoch)return;
- const html=typeof out==='string'?out:out.html;$('workspace').innerHTML=html;labelTables($('workspace'));if(out&&out.after)out.after();
+ const html=typeof out==='string'?out:out.html;$('workspace').classList.remove('r6-screen','r6-report','r6-visits','r6-audit');$('workspace').innerHTML=html;r6Present(page);labelTables($('workspace'));if(out&&out.after)out.after();
  }catch(e){if(epoch!==renderEpoch)return;$('workspace').innerHTML=renderState('error',e.network===true||navigator.onLine===false?'Mất kết nối tới máy chủ phòng khám. Kiểm tra mạng LAN rồi bấm Tải lại.':'Không thể tải trang: '+e.message)}finally{if(epoch===renderEpoch){await refreshCounts();if(epoch===renderEpoch)$('workspace').setAttribute('aria-busy','false')}}}
 const r2Mark='<svg class="r2-mark" aria-hidden="true" width="240" height="240" viewBox="0 0 100 100"><path fill="#FFFFFF" d="M50 2l9 12 15-4 2 15 14 6-6 14 8 13-13 8 1 15-15 1-8 13-12-9-13 6-5-14-15-3 3-15-11-10 11-10-3-15 15-3 5-14 13 6z"></path></svg>';
-function renderLogin(){document.body.classList.add('login-view');scopeWarnings.clear();priceFile=null;pricePreview=null;priceResult=null;auth=null;uiLoaded=false;for(const k in lastCounts)delete lastCounts[k];$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');$('change-password').classList.add('hidden');$('workspace').setAttribute('aria-busy','false');
+function renderLogin(){$('workspace').classList.remove('r6-screen','r6-report','r6-visits','r6-audit');delete $('workspace').dataset.r6Page;document.body.classList.add('login-view');scopeWarnings.clear();priceFile=null;pricePreview=null;priceResult=null;auth=null;uiLoaded=false;for(const k in lastCounts)delete lastCounts[k];$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');$('change-password').classList.add('hidden');$('workspace').setAttribute('aria-busy','false');
  const users=[['letan','Lễ tân'],['bs_noi','Bác sĩ Nội'],['bs_san','Bác sĩ Sản'],['kythuat','Kỹ thuật viên'],['duoc','Nhân viên dược'],['thungan','Thu ngân'],['quanly','Quản lý'],['quantri','Quản trị viên'],['dieuduong','Điều dưỡng']];
  $('workspace').innerHTML=`<div class="r2-login-layout"><section class="r2-hero r2-login-brand">${r2Mark}<img class="login-logo" src="/assets/MinhDuc_logo_trang.svg" alt="Phòng khám đa khoa Minh Đức"><div><b>Phòng khám đa khoa</b><h1>Minh Đức</h1><p class="r2-description">Phần mềm quản lý phòng khám nội bộ · chạy trong mạng LAN của phòng khám</p><p class="r2-mobile-description">Phần mềm nội bộ</p><div class="r2-features">${["Tiếp đón","Khám bệnh","Cận lâm sàng","Nhà thuốc","Thu ngân"].map(x=>`<span>${x}</span>`).join('')}</div></div></section><section class="card login-card"><h2>Đăng nhập</h2><p class="login-subtitle">Đăng nhập bằng tài khoản của bạn</p><form data-form="login" class="fields">${serverMode==='lan'?field('Tài khoản nhân viên','username','text','',true):selectField('Tài khoản mô phỏng','username',users)}${field('Mật khẩu','password','password','',true)}<div class="field full"><button class="btn" type="submit">Đăng nhập</button><p class="hint">${serverMode==='lan'?'Dùng tài khoản riêng do quản trị cấp. Phiên kết thúc sau 20 phút không hoạt động hoặc tối đa 8 giờ.':'Nhập mật khẩu đã chọn khi khởi động bản demo cục bộ.'}</p></div></form></section></div>`;}
 
@@ -348,7 +348,7 @@ async function pharmacyScreen(){
  const pager=`<div class="toolbar-actions"><span>Trang ${1+offset/100}</span>${offset?btn('Trang trước','rx-page',`data-id="${Math.max(0,offset-100)}"`):''}${rxs.length>100?btn('Trang sau','rx-page',`data-id="${offset+100}"`):''}</div>`;
  if(!waiting.some(x=>x.id===sel.pharmacyRx))sel.pharmacyRx=waiting[0]?.id??null;
  const selected=waiting.find(x=>x.id===sel.pharmacyRx);
- const rxDetail=selected?`<section class="card r5-rx-detail" id="r5-rx-detail"><h2>${step(1,'Cấp thuốc · '+selected.patient_name)}</h2><p class="r5-patient-meta">${esc(selected.patient_code)} · đơn #${selected.id} · lượt #${selected.visit_id}</p>${t(selected.items.length?selected.items.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="muted">${esc(x.directions)}</div></td><td><b>${esc(x.quantity)} ${esc(x.base_unit)}</b></td></tr>`):[`<tr><td colspan="2">${esc(selected.drug_lines).replace(/\n/g,'<br>')}</td></tr>`],['Thuốc','Kê (đơn vị cơ sở)'])}${selected.instructions?`<p>${esc(selected.instructions)}</p>`:''}<p class="hint">Khi cấp, hệ thống chọn lô còn hạn gần nhất trước (FEFO).</p><div class="multi-actions r5-rx-actions">${btn('Hủy đơn','cancel-rx',`data-id="${selected.id}"`,'ghost smallbtn')}${formButtons('rx',selected.id)}${btn('Cấp thuốc','dispense',`data-id="${selected.id}" data-patient="${esc(selected.patient_name)}"`,'btn smallbtn')}</div></section>`:empty('Không còn đơn chờ cấp.');
+ const rxDetail=selected?`<section class="card r5-rx-detail" id="r5-rx-detail"><h2>${step(1,'Cấp thuốc · '+selected.patient_name)}</h2><p class="r5-patient-meta">${esc(selected.patient_code)} · đơn #${selected.id} · lượt #${selected.visit_id}</p>${t(selected.items.length?selected.items.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="muted">${esc(x.directions)}</div></td><td><b>${esc(x.quantity)} ${esc(x.base_unit)}</b></td></tr>`):[`<tr><td colspan="2">${esc(selected.drug_lines).replace(/\n/g,'<br>')}</td></tr>`],['Thuốc','Kê (đơn vị cơ sở)'])}${selected.instructions?`<p>${esc(selected.instructions)}</p>`:''}<p class="hint">Khi cấp, hệ thống chọn lô còn hạn gần nhất trước (FEFO).</p><div class="multi-actions r5-rx-actions">${btn('Hủy đơn','cancel-rx',`data-id="${selected.id}"`,'ghost smallbtn')}${formButtons('rx',selected.id)}${btn('Cấp thuốc','dispense',`data-id="${selected.id}" data-patient="${esc(selected.patient_name)}"`,'btn smallbtn')}</div></section>`:'';
  let returnHtml='';
  if(sel.dispense&&disp.some(d=>d.id===sel.dispense)){const items=await api('/dispensations/'+sel.dispense+'/items');const left=items.filter(i=>i.quantity>i.returned);
   returnHtml=card(t(items.map(i=>`<tr><td>${esc(i.name)}</td><td>${esc(i.lot_number)}</td><td>${i.quantity}</td><td>${i.returned}</td></tr>`),['Thuốc','Lô','Đã cấp','Đã trả'])+
@@ -372,7 +372,7 @@ async function pharmacyScreen(){
  const dispensedToday=disp.filter(x=>new Date(x.dispensed_at).toLocaleDateString('en-CA',{timeZone:'Asia/Ho_Chi_Minh'})===today).length;
  const top=`<div class="r5-top"><div class="r5-hero-wrap">${r5Hero('Nhà thuốc','Cấp thuốc theo đơn · xuất theo hạn dùng gần nhất trước (FEFO).',`<span class="r5-mobile-summary">${waiting.length} đơn trên trang · ${visibleStock.filter(soon).length} lô sắp hết hạn</span>`)}${search}</div><div>${r2Stats([['waiting','Đơn chờ cấp (trang này)',waiting.length],['dispensed','Đã cấp hôm nay',disp.length>=100?'≥ '+dispensedToday:dispensedToday],['expiring','Lô sắp hết hạn',visibleStock.filter(soon).length]])}<p class="r5-stat-note">Lô sắp hết hạn trong 60 ngày</p></div></div>`;
  const nav=`<nav class="r4-tabs r5-tabs" aria-label="Công việc nhà thuốc">${[['r5-dispensing','Cấp thuốc'],['r5-recent','Đã cấp gần đây'],['r5-stock','Kho thuốc'],['r5-receipt','Nhập lô'],['r5-issue','Xuất dùng nội bộ'],['r5-medicine','Thêm thuốc/vật tư']].map(([target,label])=>`<button type="button" data-r5-jump="${target}" aria-pressed="${(sel.rxSection||'r5-dispensing')===target}">${label}</button>`).join('')}</nav>`;
- return {html:`<div class="r5-pharmacy">${top}<div class="r5-dispensing" id="r5-dispensing"><aside class="card r5-rx-queue"><h2>Đơn chờ cấp</h2>${r4Queue(waiting.map(x=>({id:x.id,name:x.patient_name,sub:x.patient_code+' · đơn #'+x.id+' · '+(x.items.length?x.items.length+' thuốc':'đơn văn bản')})),'pharmacy-rx',sel.pharmacyRx,'Không còn đơn chờ cấp.')}<div data-r5-no-match hidden>${empty('Không tìm thấy đơn trên trang này.')}</div>${pager}</aside><div><div data-r5-choose-rx hidden>${empty('Chọn một đơn trong kết quả tìm kiếm')}</div>${rxDetail}</div></div>${nav}<div id="r5-recent">`+
+ return {html:`<div class="r5-pharmacy">${top}${nav}<div class="r5-dispensing" id="r5-dispensing"><aside class="card r5-rx-queue"><h2>Đơn chờ cấp</h2>${r4Queue(waiting.map(x=>({id:x.id,name:x.patient_name,sub:x.patient_code+' · đơn #'+x.id+' · '+(x.items.length?x.items.length+' thuốc':'đơn văn bản')})),'pharmacy-rx',sel.pharmacyRx,'Không còn đơn chờ cấp.')}<div data-r5-no-match hidden>${empty('Không tìm thấy đơn trên trang này.')}</div>${pager}</aside><div><div data-r5-choose-rx hidden>${empty('Chọn một đơn trong kết quả tìm kiếm')}</div>${rxDetail}</div></div><div id="r5-recent">`+
   card(t(recent.map(d=>`<tr><td>#${d.id}</td><td>${esc(d.patient_name)}<div class="muted">${showDay(d.dispensed_at)}</div></td><td><div class="multi-actions">${formButtons('rx',d.prescription_id)}${btn(sel.dispense===d.id?'Đang mở':'Trả thuốc','pick',`data-kind="dispense" data-id="${d.id}"`)}</div></td></tr>`),['Phiếu cấp','Bệnh nhân','In / trả']),'Đã cấp gần đây')+returnHtml+
   `</div><details class="r5-stock" id="r5-stock"><summary>Kho thuốc</summary>${stockHtml}</details>${controlled}</div>`,
   after(){
@@ -462,6 +462,127 @@ async function cashierScreen(){
    form.querySelector('[name=amount]').value=unpriced?'':due;
    form.addEventListener('input',()=>r5PaymentChange(form));form.addEventListener('change',()=>r5PaymentChange(form));r5PaymentChange(form);
   }}}
+
+// R6: presentation only; forms, permission gates and API requests stay with their screens.
+function r6Hero(title,description,tone='') {
+ const labels={'Nhập bảng giá':'Tệp Excel theo mẫu','Cài đặt':'Áp dụng cho toàn phòng khám','Thuốc chưa rà soát':'Danh mục thuốc','Chỉ số xét nghiệm':'Danh mục chỉ số'};
+ const label=labels[title]||new Date().toLocaleDateString('vi-VN',{weekday:'long',day:'2-digit',month:'2-digit',timeZone:'Asia/Ho_Chi_Minh'});
+ return `<section class="r2-hero r6-hero ${tone}">${r2Mark}<span class="r6-kicker">${esc(label)}</span><h1>${esc(title)}</h1><p>${esc(description)}</p></section>`;
+}
+function r6Present(page) {
+ const supported=['manager','admin','price-management','settings','m6-admin','m5-admin'];
+ if(!supported.includes(page))return;
+ const root=$('workspace');root.classList.add('r6-screen');root.dataset.r6Page=page;
+ root.querySelectorAll('.tabs').forEach(tabs=>tabs.classList.add('r4-tabs'));
+ const group=(className,nodes)=>{
+  const box=document.createElement('div');box.className=className;
+  for(const node of nodes)if(node)box.append(node);
+  return box;
+ };
+ const hero=(title,description,tone='')=>{
+  const box=document.createElement('div');box.innerHTML=r6Hero(title,description,tone);return box.firstElementChild;
+ };
+ if(page==='manager'&&sel.mgrTab==='approve'){
+  const cards=[...root.querySelectorAll(':scope>.card')];
+  for(const c of cards){
+   const table=c.querySelector('table');if(!table)continue;
+   const list=document.createElement('div');list.className='r6-approval-list';
+   for(const row of table.tBodies[0].rows){
+    if(!row.querySelector('button')){list.append(...row.firstElementChild.childNodes);continue;}
+    const item=document.createElement('article');item.className='r4-person r6-approval';
+    const text=document.createElement('div');text.className='r4-person-text';
+    for(const cell of row.cells){
+     if(cell.querySelector('button'))item.append(...cell.childNodes);
+     else{const line=document.createElement('div');line.append(...cell.childNodes);text.append(line);}
+    }
+    const lines=[...text.children];
+    if(lines.length===4){
+     const title=document.createElement('div'),meta=document.createElement('div');
+     title.append(...lines[1].childNodes,' · ',...lines[2].childNodes);
+     meta.append(...lines[0].childNodes,' · ',...lines[3].childNodes);text.replaceChildren(title,meta);
+    }
+    item.prepend(text);const actions=item.querySelector('.multi-actions');if(actions)actions.prepend(actions.querySelector('[data-value=reject]'));list.append(item);
+   }
+   table.closest('.tablebox').replaceWith(list);
+  }
+  const panel=document.createElement('section');panel.className='card r6-approvals';
+  panel.append(root.querySelector('.tabs'));
+  let populated=false;
+  for(const c of cards){
+   if(c.querySelector('button')){c.classList.add('r6-approval-group');panel.append(c);populated=true;}
+   else c.remove();
+  }
+  if(!populated)panel.insertAdjacentHTML('beforeend',renderState('empty','Không có đề nghị chờ duyệt.'));
+  root.append(panel);
+  const n=root.querySelector('[data-tab=approve]')?.textContent.match(/\d+/)?.[0]||'0';
+  const top=group('r6-top',[hero('Quản lý','Duyệt các đề nghị trước khi thực hiện. Mỗi quyết định ghi nhật ký.','r2-ink')]);
+  const counts=document.createElement('div');counts.innerHTML=r2Stats([['pending','Cần duyệt',n],['revenue','Doanh thu hôm nay','—'],['visits','Lượt hôm nay','—']]);top.append(counts);root.prepend(top);
+ }
+ if(page==='admin'&&sel.adminTab==='accounts'){
+  const cards=[...root.querySelectorAll(':scope>.card')];
+  const [create,edit,people]=cards;
+  if(people&&create){
+   for(const row of people.querySelectorAll('tbody tr')){
+    const cells=row.cells;if(cells.length!==4)continue;
+    const names=cells[2].textContent.split(', ');cells[2].textContent='';
+    for(const name of names){const badge=document.createElement('span');badge.className='status';badge.textContent=name;cells[2].append(badge,' ');}
+    const state=document.createElement('span');state.className='status'+(cells[3].textContent==='Đã khóa'?' error':'');state.textContent=cells[3].textContent;cells[3].replaceChildren(state);
+   }
+   people.querySelector('h2').textContent='Nhân viên · '+people.querySelectorAll('tbody tr').length+' tài khoản';
+   root.append(group('r6-accounts',[group('r6-account-list',[people,edit]),create]));
+  }
+ }
+ if(page==='admin'&&sel.adminTab==='audit'){
+  root.classList.add('r6-audit');
+  const table=root.querySelector('table');
+  if(table)for(const row of table.rows)if(row.cells.length>1)row.prepend(row.lastElementChild);
+  const search=document.createElement('input');search.type='search';search.placeholder='Lọc nhật ký trên trang này';search.setAttribute('aria-label',search.placeholder);
+  search.oninput=()=>{for(const row of table.tBodies[0].rows)row.hidden=!r5SearchText(row.textContent).includes(r5SearchText(search.value));};
+  root.querySelector('.card h2')?.after(search);
+ }
+ if(page==='price-management'||(page==='manager'&&sel.mgrTab==='import')){
+  const first=root.querySelector(':scope>.card');
+  if(first){const top=group('r6-top',[hero('Nhập bảng giá','Xem trước thay đổi trước khi áp dụng; giá cũ giữ lịch sử.'),first]);root.querySelector('.tabs')?.after(top);if(!top.isConnected)root.prepend(top);}
+ }
+ if(page==='settings'){
+  const first=root.querySelector(':scope>.card');if(first)root.prepend(group('r6-top',[hero('Cài đặt','Bật/tắt chức năng phụ và thông tin in trên đơn thuốc.','r2-ink'),first]));
+ }
+ if(page==='manager'&&sel.mgrTab==='visits'){
+  root.classList.add('r6-visits');const cards=[...root.querySelectorAll(':scope>.card')];
+  if(cards.length>=2)root.querySelector('.tabs').after(group('r6-visits-layout',cards.slice(0,2)));
+ }
+ if(page==='manager'&&sel.mgrTab==='report'){
+  root.classList.add('r6-report');
+  const form=root.querySelector('[data-form=manual-report]');
+  if(form){const aside=document.createElement('section');aside.className='card r6-report-period';aside.innerHTML='<h2>Kỳ báo cáo</h2>';aside.append(form);const contents=group('r6-report-data',[...root.children].filter(x=>!x.classList.contains('tabs')));root.append(group('r6-report-layout',[aside,contents]));}
+ }
+ if(page==='m5-admin'){
+  const cards=[...root.querySelectorAll(':scope>.card')];
+  const list=document.createElement('div');list.innerHTML=t(M5.catalog.map(x=>`<tr><td><b>${esc(x.code)}</b></td><td>${esc(x.name)}</td><td>${esc(x.unit)}</td><td>${x.references.length?'Đã đặt':'Chưa đặt'}</td></tr>`),['Mã','Chỉ số','Đơn vị','Tham chiếu']);
+  cards[0]?.append(list);root.append(group('r6-index-layout',[hero('Chỉ số xét nghiệm','Khung chỉ số gợi ý cần quản trị rà soát; không tự có khoảng tham chiếu.','r4-blue'),...cards]));
+ }
+ if(page==='m6-admin'){
+  const cards=[...root.querySelectorAll(':scope>.card')],review=cards.find(c=>c.querySelector('[data-m6-form=search]'));
+  if(review){
+   const entries=[...review.querySelectorAll('details')],list=document.createElement('section');list.className='card r6-drug-list';list.innerHTML='<h2>Thuốc chưa rà soát</h2>';
+   const search=review.querySelector('[data-m6-form=search]');list.append(search);
+   const editors=group('r6-drug-editors',entries);
+   const choose=index=>{
+    entries.forEach((entry,i)=>{entry.hidden=i!==index;entry.open=i===index;});
+    list.querySelectorAll('[data-r6-drug]').forEach((b,i)=>{b.classList.toggle('current',i===index);b.setAttribute('aria-pressed',String(i===index));});
+   };
+   entries.forEach((entry,i)=>{
+    const b=document.createElement('button');b.type='button';b.className='r4-person';b.dataset.r6Drug=String(i);b.textContent=entry.querySelector('summary').textContent;b.onclick=()=>choose(i);list.append(b);
+   });
+   if(!entries.length)list.insertAdjacentHTML('beforeend',renderState('empty','Không còn thuốc chờ rà soát.'));
+   list.append(...review.querySelectorAll('[data-m6=drugs-prev],[data-m6=drugs-next]'));
+   const main=group('r6-drug-layout',[list,editors]);review.replaceWith(main);choose(0);
+   root.prepend(group('r6-top',[hero('Thuốc chưa rà soát','Rà soát danh mục để gợi ý đúng cho lần sau.'),group('r6-drug-count',[])]));
+   root.querySelector('.r6-drug-count').innerHTML=r2Stats([['unreviewed','Chưa rà soát (trang này)',entries.length],['reviewed','Đã rà soát','—'],['substances','Dược chất TT18',root.querySelectorAll('.s1-controlled>details').length]]);
+   root.querySelector('.r6-top').after(main);
+  }
+ }
+}
 
 // ---------- Quản lý: duyệt, lượt khám, danh mục, báo cáo ----------
 async function manualPending(){
