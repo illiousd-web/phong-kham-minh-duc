@@ -173,3 +173,6 @@ def migrate():
 
         from .order_result_migration import migrate_result_versions
         migrate_result_versions(PGConnection(con),postgres=True)
+
+        from .s2a_migration import migrate_s2a
+        migrate_s2a(PGConnection(con), postgres=True)

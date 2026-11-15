@@ -348,3 +348,122 @@ def test_r6_screens_template_geometry(https_server, clients, visit, width):
             assert not errors, errors
         finally:
             browser.close()
+
+
+def test_s2a_allergies_settings_and_today_at_vietnam_midnight(https_server, clients, tmp_path):
+    from tests.s2a_cases import PROFILE, signature_image, draft_prescription
+    r = clients['reception']
+    pid = r.post('/api/patients', json={'full_name': 'Người bệnh giao diện giả lập S2a', 'sex': 'Nữ', 'date_of_birth': '1990-01-01', 'phone': '0000000000'}).json()['id']
+    vid = r.post('/api/visits', json={'patient_id': pid, 'doctor_id': IDS['doctor'], 'service_id': SERVICE}).json()['id']
+    rx = draft_prescription(clients, vid)
+    allergy = 'Thuốc giả lập <A> & B: nổi mẩn'
+    assert r.put(f'/api/patients/{pid}/allergies', json={'allergies': allergy}).status_code == 200
+    with db(True) as c:
+        # More than one page; UTC April 1 at 18:30 is April 2 in Vietnam.
+        for _ in range(52):
+            c.execute('INSERT INTO visits(patient_id,doctor_id,created_by,created_at) VALUES(?,?,?,?)',
+                      (pid, IDS['doctor'], IDS['reception'], '2030-04-01T18:30:00+00:00'))
+        for outside in ('2030-04-01T16:59:59+00:00', '2030-04-02T17:00:00+00:00'):
+            c.execute('INSERT INTO visits(patient_id,doctor_id,created_by,created_at) VALUES(?,?,?,?)', (pid, IDS['doctor'], IDS['reception'], outside))
+    origin, certdir = https_server
+    certificate = x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin = base64.b64encode(hashlib.sha256(certificate.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    before = clients['admin'].get('/api/clinic-profile').json()
+    errors = []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'), headless=True,
+                                        args=['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors-spki-list='+pin])
+            if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):
+                assert browser.version.split('.')[0] == os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
+            page = browser.new_page(viewport={'width': 1366, 'height': 900}, timezone_id='UTC')
+            page.add_init_script("""{
+                const RealDate=Date;
+                window.Date=class extends RealDate {
+                    constructor(...args){super(...(args.length?args:['2030-04-01T18:30:00Z']));}
+                    static now(){return new RealDate('2030-04-01T18:30:00Z').getTime();}
+                };
+            }""")
+            page.on('pageerror', lambda error: errors.append(str(error)))
+
+            def login(role):
+                page.goto(origin)
+                page.locator('[name=username]').fill('test_'+role)
+                page.locator('[name=password]').fill(PASSWORDS[role])
+                page.locator('[data-form=login] button').click()
+                page.locator('.account-trigger').wait_for()
+                settle(page)
+
+            def logout():
+                page.locator('.account-trigger').click()
+                page.locator('#logout').click()
+                page.locator('[data-form=login]').wait_for()
+
+            login('pharmacy')
+            for width in (1366, 390):
+                page.set_viewport_size({'width': width, 'height': 900})
+                pick(page, 'pharmacy-rx', rx)
+                expect(page.locator(f'[data-kind=pharmacy-rx][data-id="{rx}"]')).to_contain_text('Dị ứng')
+                warning = page.locator('#r5-rx-detail .pharmacy-allergy')
+                expect(warning).to_have_text('DỊ ỨNG: '+allergy)
+                assert warning.evaluate("el=>getComputedStyle(el).backgroundColor") == 'rgb(180, 35, 24)'
+                assert page.locator('#r5-rx-detail').evaluate("el=>!!el.querySelector('h2 + .pharmacy-allergy') && !!(el.querySelector('.pharmacy-allergy').compareDocumentPosition(el.querySelector('table')) & Node.DOCUMENT_POSITION_FOLLOWING)")
+                messages = []
+                page.once('dialog', lambda dialog: (messages.append(dialog.message), dialog.dismiss()))
+                page.locator(f'[data-action=dispense][data-id="{rx}"]').click()
+                assert len(messages) == 1 and 'Người bệnh dị ứng: '+allergy in messages[0]
+                evidence = Path('test_evidence/s2a'); evidence.mkdir(parents=True, exist_ok=True)
+                page.locator('#r5-rx-detail').screenshot(path=str(evidence/f'allergy-{width}.png'))
+                no_horizontal_scroll(page)
+            # No red warning for unknown history or explicitly recorded no allergy.
+            for value in (None, 'Không dị ứng'):
+                assert r.put(f'/api/patients/{pid}/allergies', json={'allergies': value}).status_code == 200
+                go(page, 'pharmacy')
+                pick(page, 'pharmacy-rx', rx)
+                expect(page.locator('.pharmacy-allergy')).to_have_count(0)
+                messages = []
+                page.once('dialog', lambda dialog: (messages.append(dialog.message), dialog.dismiss()))
+                page.locator(f'[data-action=dispense][data-id="{rx}"]').click()
+                assert len(messages) == 1 and 'Người bệnh dị ứng:' not in messages[0]
+            logout()
+            login('manager')
+            expected = clients['manager'].get('/api/manager/visits?date_from=2030-04-02&date_to=2030-04-02').json()
+            assert expected['total'] == 52 and len(expected['items']) == 50
+            expect(page.locator('[data-r2-stat=visits] strong')).to_have_text('52')
+            expect(page.locator('[data-r2-stat=revenue] strong')).to_have_text('—')
+            logout()
+            login('admin')
+            for width in (1366, 390):
+                page.set_viewport_size({'width': width, 'height': 900})
+                go(page, 'settings')
+                form = page.locator('[data-form=clinic-profile]')
+                for key, value in PROFILE.items():
+                    form.locator('[name=clinic_'+key+']').fill(value)
+                with page.expect_response(lambda res: '/api/clinic-profile' in res.url and res.request.method == 'PUT') as saved:
+                    form.locator('button').click()
+                assert saved.value.status == 200
+                settle(page)
+                expect(page.locator('[data-form=clinic-profile] [name=clinic_name]')).to_have_value(PROFILE['name'])
+                image = tmp_path/'generated.png'
+                image.write_bytes(signature_image())
+                page.locator('[name=signature_user_id]').select_option(str(IDS['doctor']))
+                page.locator('[name=signature_file]').set_input_files(image)
+                with page.expect_response(lambda res: res.url.endswith('/signature') and res.request.method == 'PUT') as saved:
+                    page.locator('[data-form=user-signature] button.btn').click()
+                assert saved.value.status == 200
+                settle(page)
+                page.locator('[name=signature_user_id]').select_option(str(IDS['doctor']))
+                page.locator('[data-action=view-user-signature]').click()
+                expect(page.locator('#signature-preview img')).to_be_visible()
+                expect(page.locator('#signature-preview img')).to_have_js_property('naturalWidth', 160)
+                expect(page.locator('[data-form=user-signature]')).to_contain_text('Chờ S2b')
+                no_horizontal_scroll(page)
+                page.locator('[data-form=user-signature]').screenshot(path=str(evidence/f'signature-{width}.png'))
+                page.locator('[name=signature_user_id]').select_option(str(IDS['admin']))
+                expect(page.locator('#signature-preview img')).to_have_count(0)
+            assert not errors
+            browser.close()
+    finally:
+        clients['admin'].put('/api/clinic-profile', json=before)
+        with db(True) as c:
+            c.execute('DELETE FROM user_signatures WHERE user_id=?', (IDS['doctor'],))

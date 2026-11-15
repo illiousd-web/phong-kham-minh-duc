@@ -61,7 +61,7 @@ const cap=r=>!!auth?.user.roles.includes(r);
 // Nhãn tiếng Việt cho mã trạng thái lưu trong CSDL; không để mã tiếng Anh lọt ra màn hình.
 const LABEL={restricted:'Theo phân quyền',requested:'Chờ bác sĩ duyệt chỉ định',waiting_results:'Chờ kết quả',returned:'Đã trả thuốc',partially_returned:'Đã trả một phần',not_prescribed:'Chưa kê đơn',not_dispensed:'Chưa cấp thuốc',waiting:'Chờ khám',in_progress:'Đang khám',completed:'Đã hoàn tất',dispensed:'Đã cấp phát',done:'Đã khám xong',cancelled:'Đã hủy',booked:'Đã đặt lịch',arrived:'Đã đến khám',
  ordered:'Chờ thực hiện',pending_review:'Chờ duyệt kết quả',approved:'Đã duyệt',draft:'Đơn nháp',pending:'Chờ quản lý duyệt',rejected:'Bị từ chối',
- manual_price_entered:'Nhập giá khoản phải thu',manual_price_change_requested:'Đề nghị sửa giá nhập tay',manual_price_change_approved:'Duyệt sửa giá nhập tay',manual_price_change_rejected:'Từ chối sửa giá nhập tay',charge:'Khoản phải thu',procedure:'Thủ thuật',unpriced:'CHƯA CÓ GIÁ',consultation:'Khám',service:'Dịch vụ',service_import:'Lần nhập bảng giá',service_price_imported:'Đổi giá từ Excel',service_prices_imported:'Nhập bảng giá từ Excel',
+ clinic_profile_changed:'Đổi thông tin phòng khám',user_signature_changed:'Đổi ảnh chữ ký',clinic_profile:'Thông tin phòng khám',manual_price_entered:'Nhập giá khoản phải thu',manual_price_change_requested:'Đề nghị sửa giá nhập tay',manual_price_change_approved:'Duyệt sửa giá nhập tay',manual_price_change_rejected:'Từ chối sửa giá nhập tay',charge:'Khoản phải thu',procedure:'Thủ thuật',unpriced:'CHƯA CÓ GIÁ',consultation:'Khám',service:'Dịch vụ',service_import:'Lần nhập bảng giá',service_price_imported:'Đổi giá từ Excel',service_prices_imported:'Nhập bảng giá từ Excel',
  lab:'Xét nghiệm',ultrasound:'Siêu âm',xray:'X-quang',ecg:'Điện tim',cash:'Tiền mặt',transfer:'Chuyển khoản',discount:'Giảm phí',refund:'Hoàn tiền'};
 Object.assign(LABEL,{patient_catalog_seeded:'Nạp danh mục có sẵn',patient_document_viewed:'Xem đủ số giấy tờ',patient_administrative_updated:'Sửa hồ sơ hành chính',patient_catalog_imported:'Nạp danh mục hồ sơ',child_visit_updated:'Sửa cân nặng và người đưa trẻ',practitioner_updated:'Sửa hồ sơ người hành nghề',practitioner_scope_warning:'Cảnh báo phạm vi chuyên môn',patient:'Người bệnh',user:'Nhân viên',catalog:'Danh mục'});
 Object.assign(LABEL,{clinical_rx_replaced:'Vô hiệu đơn cũ do thay thế',clinical_rx_allergy_acknowledged:'Xác nhận vẫn kê khi đã biết dị ứng',clinical_rx_created:'Tạo đơn thuốc nháp',clinical_rx_updated:'Sửa đơn thuốc nháp',clinical_rx_locked:'Khóa đơn thuốc',clinical_rx_cancelled:'Hủy đơn thuốc',clinical_rx_printed:'In / in lại đơn thuốc',clinical_rx_json_exported:'Xuất dữ liệu đơn thuốc',clinical_prescription:'Đơn thuốc',prescription_settings:'Cài đặt đơn thuốc',prescription_settings_changed:'Đổi thông tin cơ sở kê đơn',drug:'Thuốc',drug_updated:'Rà soát thuốc',drug_merged:'Gộp danh mục thuốc',drugs_imported:'Nhập danh mục thuốc'});
@@ -127,7 +127,7 @@ function empty(text) {
 function r4Queue(items,kind,current,emptyText) {
  if(!items.length)return empty(emptyText);
  return `<div class="queue r4-queue">${items.map(x=>{
-  return `<button type="button" class="queue-item r4-person${x.id===current?' current':''}" data-action="pick" data-kind="${esc(kind)}" data-id="${x.id}" aria-pressed="${x.id===current}"><span class="r4-number">${x.id}</span><span class="r4-person-text"><b title="${esc(x.name)}">${esc(x.name)}</b><span title="${esc(x.sub)}">${esc(x.sub)}</span></span>${x.amount?`<strong>${esc(x.amount)}</strong>`:''}</button>`;
+  return `<button type="button" class="queue-item r4-person${x.id===current?' current':''}" data-action="pick" data-kind="${esc(kind)}" data-id="${x.id}" aria-pressed="${x.id===current}"><span class="r4-number">${x.id}</span><span class="r4-person-text"><b title="${esc(x.name)}">${esc(x.name)}</b><span title="${esc(x.sub)}">${esc(x.sub)}</span></span>${x.warning?`<span class="status error">${esc(x.warning)}</span>`:''}${x.amount?`<strong>${esc(x.amount)}</strong>`:''}</button>`;
  }).join('')}</div>`;
 }
 
@@ -340,6 +340,10 @@ async function nurseScreen(){
   after(){setVitals(v.vitals)}}}
 
 // ---------- Nhà thuốc: đơn chờ cấp → cấp → in ----------
+function pharmacyAllergies(value) {
+ const text=String(value||'').trim();
+ return text==='Không dị ứng'?'':text;
+}
 async function pharmacyScreen(){
  const offset=sel.rxOffset||0;
  const [rxs,disp,stockList,meds]=await Promise.all([api('/prescriptions?status=draft&limit=101&offset='+offset),api('/dispensations'),api('/stock'),api('/medicines')]);
@@ -348,7 +352,8 @@ async function pharmacyScreen(){
  const pager=`<div class="toolbar-actions"><span>Trang ${1+offset/100}</span>${offset?btn('Trang trước','rx-page',`data-id="${Math.max(0,offset-100)}"`):''}${rxs.length>100?btn('Trang sau','rx-page',`data-id="${offset+100}"`):''}</div>`;
  if(!waiting.some(x=>x.id===sel.pharmacyRx))sel.pharmacyRx=waiting[0]?.id??null;
  const selected=waiting.find(x=>x.id===sel.pharmacyRx);
- const rxDetail=selected?`<section class="card r5-rx-detail" id="r5-rx-detail"><h2>${step(1,'Cấp thuốc · '+selected.patient_name)}</h2><p class="r5-patient-meta">${esc(selected.patient_code)} · đơn #${selected.id} · lượt #${selected.visit_id}</p>${t(selected.items.length?selected.items.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="muted">${esc(x.directions)}</div></td><td><b>${esc(x.quantity)} ${esc(x.base_unit)}</b></td></tr>`):[`<tr><td colspan="2">${esc(selected.drug_lines).replace(/\n/g,'<br>')}</td></tr>`],['Thuốc','Kê (đơn vị cơ sở)'])}${selected.instructions?`<p>${esc(selected.instructions)}</p>`:''}<p class="hint">Khi cấp, hệ thống chọn lô còn hạn gần nhất trước (FEFO).</p><div class="multi-actions r5-rx-actions">${btn('Hủy đơn','cancel-rx',`data-id="${selected.id}"`,'ghost smallbtn')}${formButtons('rx',selected.id)}${btn('Cấp thuốc','dispense',`data-id="${selected.id}" data-patient="${esc(selected.patient_name)}"`,'btn smallbtn')}</div></section>`:'';
+ const allergies=pharmacyAllergies(selected?.patient_allergies);
+ const rxDetail=selected?`<section class="card r5-rx-detail" id="r5-rx-detail"><h2>${step(1,'Cấp thuốc · '+selected.patient_name)}</h2>${allergies?`<div class="pharmacy-allergy" role="note"><b>DỊ ỨNG:</b> ${esc(allergies)}</div>`:''}<p class="r5-patient-meta">${esc(selected.patient_code)} · đơn #${selected.id} · lượt #${selected.visit_id}</p>${t(selected.items.length?selected.items.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="muted">${esc(x.directions)}</div></td><td><b>${esc(x.quantity)} ${esc(x.base_unit)}</b></td></tr>`):[`<tr><td colspan="2">${esc(selected.drug_lines).replace(/\n/g,'<br>')}</td></tr>`],['Thuốc','Kê (đơn vị cơ sở)'])}${selected.instructions?`<p>${esc(selected.instructions)}</p>`:''}<p class="hint">Khi cấp, hệ thống chọn lô còn hạn gần nhất trước (FEFO).</p><div class="multi-actions r5-rx-actions">${btn('Hủy đơn','cancel-rx',`data-id="${selected.id}"`,'ghost smallbtn')}${formButtons('rx',selected.id)}${btn('Cấp thuốc','dispense',`data-id="${selected.id}" data-patient="${esc(selected.patient_name)}" data-allergies="${esc(allergies)}"`,'btn smallbtn')}</div></section>`:'';
  let returnHtml='';
  if(sel.dispense&&disp.some(d=>d.id===sel.dispense)){const items=await api('/dispensations/'+sel.dispense+'/items');const left=items.filter(i=>i.quantity>i.returned);
   returnHtml=card(t(items.map(i=>`<tr><td>${esc(i.name)}</td><td>${esc(i.lot_number)}</td><td>${i.quantity}</td><td>${i.returned}</td></tr>`),['Thuốc','Lô','Đã cấp','Đã trả'])+
@@ -372,7 +377,7 @@ async function pharmacyScreen(){
  const dispensedToday=disp.filter(x=>new Date(x.dispensed_at).toLocaleDateString('en-CA',{timeZone:'Asia/Ho_Chi_Minh'})===today).length;
  const top=`<div class="r5-top"><div class="r5-hero-wrap">${r5Hero('Nhà thuốc','Cấp thuốc theo đơn · xuất theo hạn dùng gần nhất trước (FEFO).',`<span class="r5-mobile-summary">${waiting.length} đơn trên trang · ${visibleStock.filter(soon).length} lô sắp hết hạn</span>`)}${search}</div><div>${r2Stats([['waiting','Đơn chờ cấp (trang này)',waiting.length],['dispensed','Đã cấp hôm nay',disp.length>=100?'≥ '+dispensedToday:dispensedToday],['expiring','Lô sắp hết hạn',visibleStock.filter(soon).length]])}<p class="r5-stat-note">Lô sắp hết hạn trong 60 ngày</p></div></div>`;
  const nav=`<nav class="r4-tabs r5-tabs" aria-label="Công việc nhà thuốc">${[['r5-dispensing','Cấp thuốc'],['r5-recent','Đã cấp gần đây'],['r5-stock','Kho thuốc'],['r5-receipt','Nhập lô'],['r5-issue','Xuất dùng nội bộ'],['r5-medicine','Thêm thuốc/vật tư']].map(([target,label])=>`<button type="button" data-r5-jump="${target}" aria-pressed="${(sel.rxSection||'r5-dispensing')===target}">${label}</button>`).join('')}</nav>`;
- return {html:`<div class="r5-pharmacy">${top}${nav}<div class="r5-dispensing" id="r5-dispensing"><aside class="card r5-rx-queue"><h2>Đơn chờ cấp</h2>${r4Queue(waiting.map(x=>({id:x.id,name:x.patient_name,sub:x.patient_code+' · đơn #'+x.id+' · '+(x.items.length?x.items.length+' thuốc':'đơn văn bản')})),'pharmacy-rx',sel.pharmacyRx,'Không còn đơn chờ cấp.')}<div data-r5-no-match hidden>${empty('Không tìm thấy đơn trên trang này.')}</div>${pager}</aside><div><div data-r5-choose-rx hidden>${empty('Chọn một đơn trong kết quả tìm kiếm')}</div>${rxDetail}</div></div><div id="r5-recent">`+
+ return {html:`<div class="r5-pharmacy">${top}${nav}<div class="r5-dispensing" id="r5-dispensing"><aside class="card r5-rx-queue"><h2>Đơn chờ cấp</h2>${r4Queue(waiting.map(x=>({id:x.id,name:x.patient_name,sub:x.patient_code+' · đơn #'+x.id+' · '+(x.items.length?x.items.length+' thuốc':'đơn văn bản'),warning:pharmacyAllergies(x.patient_allergies)?'Dị ứng':''})),'pharmacy-rx',sel.pharmacyRx,'Không còn đơn chờ cấp.')}<div data-r5-no-match hidden>${empty('Không tìm thấy đơn trên trang này.')}</div>${pager}</aside><div><div data-r5-choose-rx hidden>${empty('Chọn một đơn trong kết quả tìm kiếm')}</div>${rxDetail}</div></div><div id="r5-recent">`+
   card(t(recent.map(d=>`<tr><td>#${d.id}</td><td>${esc(d.patient_name)}<div class="muted">${showDay(d.dispensed_at)}</div></td><td><div class="multi-actions">${formButtons('rx',d.prescription_id)}${btn(sel.dispense===d.id?'Đang mở':'Trả thuốc','pick',`data-kind="dispense" data-id="${d.id}"`)}</div></td></tr>`),['Phiếu cấp','Bệnh nhân','In / trả']),'Đã cấp gần đây')+returnHtml+
   `</div><details class="r5-stock" id="r5-stock"><summary>Kho thuốc</summary>${stockHtml}</details>${controlled}</div>`,
   after(){
@@ -516,7 +521,7 @@ function r6Present(page) {
   root.append(panel);
   const n=root.querySelector('[data-tab=approve]')?.textContent.match(/\d+/)?.[0]||'0';
   const top=group('r6-top',[hero('Quản lý','Duyệt các đề nghị trước khi thực hiện. Mỗi quyết định ghi nhật ký.','r2-ink')]);
-  const counts=document.createElement('div');counts.innerHTML=r2Stats([['pending','Cần duyệt',n],['revenue','Doanh thu hôm nay','—'],['visits','Lượt hôm nay','—']]);top.append(counts);root.prepend(top);
+  const counts=document.createElement('div');counts.innerHTML=r2Stats([['pending','Cần duyệt',n],['revenue','Doanh thu hôm nay','—'],['visits','Lượt hôm nay',sel.managerToday]]);top.append(counts);root.prepend(top);
  }
  if(page==='admin'&&sel.adminTab==='accounts'){
   const cards=[...root.querySelectorAll(':scope>.card')];
@@ -660,8 +665,16 @@ async function managerVisitsTab(head){
 // Bỏ lượt đang xem ngay trên trang (không vẽ lại, để khỏi mất chữ đang gõ trong ô lọc).
 function closeMgrVisit(){sel.mgrVisit=null;const box=$('mgr-visit-detail');if(box)box.remove();
  document.querySelectorAll('[data-action="pick"][data-kind="mgr-visit"]').forEach(b=>{b.setAttribute('aria-pressed','false');b.textContent='Xem lượt này';b.className='ghost smallbtn'})}
+function vietnamToday() {
+ const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+ const day={};
+ for(const part of parts)day[part.type]=part.value;
+ return day.year+'-'+day.month+'-'+day.day;
+}
 async function managerScreen(){
- const p=await pendingApprovals();
+ const today=vietnamToday();
+ const [p,todayVisits]=await Promise.all([pendingApprovals(),sel.mgrTab==='approve'?api('/manager/visits?date_from='+today+'&date_to='+today):null]);
+ if(todayVisits)sel.managerToday=todayVisits.total;
  const head=tabs(sel.mgrTab,[['approve',`Cần duyệt (${p.total})`],['visits','Lượt khám'],['catalog','Danh mục'],['import','Nhập bảng giá'],['report','Báo cáo']],'mgr');
  if(sel.mgrTab==='import')return head+priceImportSection();
  if(sel.mgrTab==='catalog')return head+await catalogSection();
@@ -680,6 +693,21 @@ async function managerScreen(){
 
 // ---------- Quản trị và cài đặt ----------
 function auditDetails(entry){
+ if(entry.event==='clinic_profile_changed'){
+  try{
+   const data=JSON.parse(entry.details),changes=[];
+   for(const [key,label] of [['name','Tên phòng khám'],['governing_body','Cơ quan chủ quản'],['address','Địa chỉ'],['phone','Điện thoại'],['email','Email']]){
+    if(data.old[key]!==data.new[key])changes.push(label+': '+(data.old[key]||'Chưa khai')+' → '+(data.new[key]||'Chưa khai'));
+   }
+   return changes.join('; ');
+  }catch{return 'Đổi thông tin phòng khám';}
+ }
+ if(entry.event==='user_signature_changed'){
+  try{
+   const data=JSON.parse(entry.details);
+   return (data.old_sha256?'Thay ảnh chữ ký':'Tải ảnh chữ ký lần đầu')+' · '+(data.media_type==='image/png'?'PNG':'JPG')+' · '+data.bytes+' byte';
+  }catch{return 'Đổi ảnh chữ ký';}
+ }
  if(entry.event==='clinical_rx_replaced'){try{const d=JSON.parse(entry.details);return 'Thay thế bởi đơn '+(d.code||'#'+d.replacement_id)}catch{return 'Đơn đã được thay thế'}}
  if(entry.event==='clinical_rx_allergy_acknowledged'){try{const d=JSON.parse(entry.details);return 'Dòng '+d.row+': '+d.reason}catch{return 'Xác nhận dị ứng thuốc'}}
  if(entry.event==='prescription_settings_changed'){try{const d=JSON.parse(entry.details);return 'Mã cơ sở: '+(d.old_facility_code||'Chưa khai')+' → '+(d.new_facility_code||'Chưa khai')}catch{return 'Đổi cài đặt đơn thuốc'}}
@@ -720,9 +748,12 @@ function adminChange(form){const had=form.dataset.hadAdmin==='1',has=!!form.quer
  const box=form.querySelector('[data-admin-confirm]');if(box){box.classList.toggle('hidden',had===has);box.querySelector('[data-admin-verb]').textContent=has?'cấp':'bỏ';if(had===has)box.querySelector('[name="confirm_admin"]').checked=false}
  return had!==has}
 const SETTINGS=[['block_practitioner_scope','Chặn duyệt ngoài phạm vi chuyên môn','Mặc định tắt: vẫn duyệt nhưng hiện cảnh báo và ghi nhật ký. Bật sẽ chặn ở API.'],['advance_payment','Ứng trước tiền','Thu ngân nhận tiền trước khi có chỉ định hoặc cấp thuốc.'],['addendum','Phụ lục đính chính','Bác sĩ bổ sung hồ sơ đã khóa, quản lý duyệt.'],['controlled_drugs','Thuốc kiểm soát đặc biệt','Kê, duyệt, nhập, cấp và sổ theo dõi thuốc kiểm soát.']];
-async function settingsScreen(){await loadUi();const provinces=await api('/patient-catalog?kind=province&limit=100');
+async function settingsScreen(){await loadUi();
+ const [provinces,profile,accounts]=await Promise.all([api('/patient-catalog?kind=province&limit=100'),api('/clinic-profile'),api('/accounts')]);
+ const clinic=card(`<form data-form="clinic-profile" class="fields">${[['name','Tên phòng khám'],['governing_body','Cơ quan chủ quản'],['address','Địa chỉ'],['phone','Điện thoại'],['email','Email']].map(([key,label])=>field(label,'clinic_'+key).replace('type="text"',`type="text" value="${esc(profile[key])}" maxlength="${key==='address'?500:key==='phone'?100:250}"`)).join('')}<div class="wide"><button class="btn">Lưu thông tin phòng khám</button></div></form>`,'Thông tin phòng khám');
+ const signatures=card(`<form data-form="user-signature" class="fields">${selectField('Tài khoản nhận chữ ký','signature_user_id',accounts.map(x=>[x.id,x.full_name+' · '+x.username]))}<div class="field"><label for="signature_file">Ảnh chữ ký PNG/JPG (tối đa 300 KB)</label><label for="signature_file" class="price-file-picker"><span class="ghost">Chọn ảnh PNG/JPG</span><input id="signature_file" name="signature_file" type="file" accept="image/png,image/jpeg" aria-label="Chọn ảnh PNG/JPG" required></label><span id="signature-file-name" class="muted">Chưa chọn ảnh</span></div><div class="wide"><button class="btn">Tải lên chữ ký</button><button type="button" class="ghost" data-action="view-user-signature">Xem chữ ký tài khoản đã chọn</button><p class="hint">Lưu trên máy chủ và có trong bản sao lưu. Chờ S2b: chưa chèn chữ ký vào phiếu in.</p></div><div class="wide" id="signature-preview"></div></form>`,'Ảnh chữ ký');
  const warn=ui.source&&ui.source!=='file'?`<div class="notice">${ui.source==='missing'?'Chưa có tệp cài đặt trên máy chủ':'Tệp cài đặt trên máy chủ bị hỏng'}: đang dùng giá trị mặc định. Kiểm tra rồi bấm Lưu cài đặt để ghi lại.</div>`:'';
- return warn+card(`<form data-form="ui-settings" class="settings">${selectField('Tỉnh / thành mặc định của phòng khám','default_province_code',[['','— Chưa đặt —'],...provinces.map(x=>[x.code,x.name])]).replace('value="'+esc(ui.default_province_code||'')+'"','value="'+esc(ui.default_province_code||'')+'" selected')}${SETTINGS.map(([k,label,hint])=>`<label class="switch"><input type="checkbox" name="${k}" ${ui[k]?'checked':''}><span><b>${esc(label)}</b><small>${esc(hint)}</small></span></label>`).join('')}<button class="btn">Lưu cài đặt</button><p class="hint">Cài đặt chặn phạm vi áp dụng tại API duyệt kết quả. Các công tắc chức năng khác điều khiển hiển thị; quyền trên máy chủ giữ nguyên.</p></form>`,'Chức năng phụ')}
+ return warn+card(`<form data-form="ui-settings" class="settings">${selectField('Tỉnh / thành mặc định của phòng khám','default_province_code',[['','— Chưa đặt —'],...provinces.map(x=>[x.code,x.name])]).replace('value="'+esc(ui.default_province_code||'')+'"','value="'+esc(ui.default_province_code||'')+'" selected')}${SETTINGS.map(([k,label,hint])=>`<label class="switch"><input type="checkbox" name="${k}" ${ui[k]?'checked':''}><span><b>${esc(label)}</b><small>${esc(hint)}</small></span></label>`).join('')}<button class="btn">Lưu cài đặt</button><p class="hint">Cài đặt chặn phạm vi áp dụng tại API duyệt kết quả. Các công tắc chức năng khác điều khiển hiển thị; quyền trên máy chủ giữ nguyên.</p></form>`,'Chức năng phụ')+clinic+signatures}
 function passwordPage(){return `<div class="r2-top r2-password"><section class="r2-hero r2-ink">${r2Mark}<b>${esc(auth.user.name)}</b><h1>Đổi mật khẩu</h1><p>Mật khẩu riêng, ít nhất 12 ký tự. Không dùng chung với tài khoản khác.</p></section>`+card(`<form data-form="password" class="fields" novalidate><h2 class="wide">1 · Mật khẩu hiện tại</h2>${field('Mật khẩu hiện tại','current_password','password','',true)}<h2 class="wide">2 · Mật khẩu mới</h2>${field('Mật khẩu mới (ít nhất 12 ký tự)','new_password','password','',true)}${field('Nhập lại mật khẩu mới','confirm_password','password','',true)}<div class="wide r2-checks" aria-live="polite"><span data-r2-check="length">Đủ 12 ký tự</span><span data-r2-check="different">Khác mật khẩu cũ</span><span data-r2-check="match">Hai ô khớp</span></div><div class="wide"><button class="btn">Đổi mật khẩu và đăng xuất các phiên</button></div></form>`,'Đổi mật khẩu cá nhân')+'</div>'}
 
 
@@ -737,6 +768,17 @@ async function keyed(kind,path,body,keyName='request_key'){const fingerprint=kin
 async function handleForm(form){const kind=form.dataset.form;const f=new FormData(form);const value=k=>String(f.get(k)||'').trim();const num=k=>Number(value(k));let msg='';
  if(kind==='login'){
   const res=await api('/login',{method:'POST',body:{username:value('username'),password:value('password')}});auth={token:res.access_token,user:res.user};selectedRole=null;uiLoaded=false;if(res.access_token)sessionStorage.setItem('md_token',res.access_token);active=null;await render();notify('Đăng nhập thành công');return;}
+ if(kind==='clinic-profile'){
+  const body={};for(const key of ['name','governing_body','address','phone','email'])body[key]=value('clinic_'+key);
+  await api('/clinic-profile',{method:'PUT',body});await render();notify('Đã lưu thông tin phòng khám');return;
+ }
+ if(kind==='user-signature'){
+  const image=f.get('signature_file');if(!image?.size)throw new Error('Chọn ảnh chữ ký PNG/JPG');
+  if(image.size>300*1024)throw new Error('Ảnh chữ ký không được vượt quá 300 KB');
+  const body=new FormData();body.append('file',image);
+  await api('/users/'+num('signature_user_id')+'/signature',{method:'PUT',body,isFile:true});
+  await render();notify('Đã lưu chữ ký trên máy chủ');return;
+ }
  if(kind==='password'){if(!r2ValidatePassword(form))return;await api('/password',{method:'POST',body:{current_password:value('current_password'),new_password:value('new_password')}});sessionStorage.removeItem('md_token');selectedRole=null;renderLogin();notify('Đã đổi mật khẩu. Hãy đăng nhập lại');return;}
  if(kind==='mgr-visit-search'){const from=parseDay(value('vs_from'),'Từ ngày'),to=parseDay(value('vs_to'),'Đến ngày');if(from&&to&&from>to)throw new Error('Từ ngày phải trước hoặc bằng Đến ngày');
   mgrSearch={date_from:from||'',date_to:to||'',q:value('vs_q'),status:value('vs_status'),money:value('vs_money'),page:1};sel.mgrVisit=null;await render();return;}
@@ -876,7 +918,26 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
  else if(action==='authorize-order'){await api('/orders/'+id+'/authorize',{method:'POST'});msg='Đã duyệt chỉ định và ghi phí';}
  else if(action==='approve'){const r=await api('/orders/'+id+'/approve',{method:'POST'});msg='Đã duyệt kết quả';if(r.warnings?.length)scopeWarnings.set(id,r.warnings.join(' '));}
  else if(action==='cancel-rx'){const reason=prompt('Lý do hủy đơn (ít nhất 8 ký tự):');if(!reason)return;await api('/prescriptions/'+id+'/cancel',{method:'POST',body:{reason}});msg='Đã hủy đơn chưa cấp';}
- else if(action==='dispense'){if(element.disabled||element.closest('#r5-rx-detail')?.hidden)return;if(!confirm('Cấp thuốc cho '+element.dataset.patient+' · đơn #'+id+'? Hệ thống sẽ xuất kho và ghi tiền thuốc.'))return;await api('/prescriptions/'+id+'/dispense',{method:'POST'});msg='Đã cấp thuốc và ghi tiền thuốc. Bấm "Tải PDF" để in đơn.';}
+ else if(action==='view-user-signature'){
+  const account=document.querySelector('[name=signature_user_id]'),preview=$('signature-preview');
+  const userId=account.value;
+  const response=await fetch('/api/users/'+userId+'/signature',{headers:authHeader()});
+  if(!response.ok){const error=await response.json();throw new Error(error.detail||'Không tải được chữ ký');}
+  const blob=await response.blob(),image=document.createElement('img');
+  const data=await new Promise((resolve,reject)=>{
+   const reader=new FileReader();
+   reader.onload=()=>{
+    resolve(reader.result);
+   };
+   reader.onerror=()=>{
+    reject(new Error('Không đọc được ảnh chữ ký'));
+   };
+   reader.readAsDataURL(blob);
+  });
+  image.alt='Chữ ký tài khoản đã chọn';image.className='signature-image';image.src=data;
+  if(preview.isConnected&&account.value===userId)preview.replaceChildren(image);return;
+ }
+ else if(action==='dispense'){if(element.disabled||element.closest('#r5-rx-detail')?.hidden)return;if(!confirm('Cấp thuốc cho '+element.dataset.patient+' · đơn #'+id+'? Hệ thống sẽ xuất kho và ghi tiền thuốc.'+(element.dataset.allergies?'\nNgười bệnh dị ứng: '+element.dataset.allergies:'')))return;await api('/prescriptions/'+id+'/dispense',{method:'POST'});msg='Đã cấp thuốc và ghi tiền thuốc. Bấm "Tải PDF" để in đơn.';}
  else if(action==='complete-visit'){if(!confirm('Hoàn tất và khóa phiếu khám?'))return;await api('/visits/'+id+'/complete',{method:'POST',body:{version:Number(element.dataset.version)}});if(active==='doctor'){const v=await api('/visits/'+id);sel.doctorDay=parseDay(showDay(v.created_at).split(' ')[0]);}msg='Đã hoàn tất, khóa phiếu khám';}
  else if(action==='cancel-order'){const reason=prompt('Lý do đề nghị hủy chỉ định (ít nhất 8 ký tự):');if(!reason)return;await api('/orders/'+id+'/request-cancel',{method:'POST',body:{reason}});msg='Đã gửi quản lý duyệt hủy chỉ định';}
  else if(action==='execute-task'){const content=prompt('Nội dung, kết quả thực hiện y lệnh:');if(!content)return;await api('/nursing-tasks/'+id+'/execute',{method:'POST',body:{content}});msg='Đã ghi nhận thực hiện y lệnh';}
@@ -887,6 +948,12 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
 document.addEventListener('submit',async ev=>{const form=ev.target.closest('[data-form]');if(!form)return;ev.preventDefault();if(form.dataset.busy)return;form.dataset.busy='1';const buttons=[...form.querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);try{await handleForm(form)}catch(err){notify(err.message,true)}finally{delete form.dataset.busy;buttons.forEach(b=>b.disabled=false);if(form.dataset.form==='payment'&&form.isConnected)r5PaymentChange(form)}});
 document.addEventListener('click',async ev=>{const b=ev.target.closest('[data-action]');if(!b||b.disabled)return;if(b.dataset.busy)return;b.dataset.busy='1';try{await handleClick(b)}catch(err){notify(err.message,true)}finally{delete b.dataset.busy}});
 document.addEventListener('change',async ev=>{const el=ev.target;
+ if(el.name==='signature_user_id'){
+  $('signature-preview')?.replaceChildren();return;
+ }
+ if(el.id==='signature_file'){
+  $('signature-file-name').textContent=el.files[0]?.name||'Chưa chọn ảnh';return;
+ }
  if(el.closest('[data-form="mgr-visit-search"]')){closeMgrVisit();return;}
  if(el.id==='price-file'){pricePreview=null;priceFile=null;priceResult=null;$('price-review')?.remove();$('price-file-name').textContent=el.files[0]?.name||'Chưa chọn tệp';return;}
  if(el.closest('.rx-line')&&el.name==='medicine_id'){const unit=el.closest('.rx-line').querySelector('[name="unit_id"]');if(unit)unit.disabled=true;try{const med=(await api('/dispensable-medicines')).find(m=>m.id===Number(el.value));if(unit)unit.innerHTML='<option value="">Đơn vị cơ sở</option>'+(med?.units||[]).map(u=>`<option value="${u.id}">${esc(u.name)} = ${u.base_factor}</option>`).join('');}catch(e){notify(e.message,true)}finally{if(unit)unit.disabled=false;}return;}

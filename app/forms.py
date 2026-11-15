@@ -136,11 +136,49 @@ def rx_rows(ctx):
         result.append([p[0],p[1] if len(p)>1 else 'Chưa khai báo',p[2] if len(p)>2 else 'Chưa khai báo'])
     return result
 
+
+def clinic_lines(ctx):
+    profile = ctx.get('clinic_profile') or {}
+    if not any(profile.values()):
+        return []
+    return [clean(profile[key]) for key in ('governing_body', 'name', 'address') if profile.get(key)] + [
+        label + clean(profile[key]) for key, label in (('phone', 'Điện thoại: '), ('email', 'Email: ')) if profile.get(key)]
+
+
+def fill_clinic_header(doc, ctx):
+    lines = clinic_lines(ctx)
+    if not lines:
+        return
+    for section in doc.sections:
+        for table in section.header.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if CLINIC in cell.text:
+                        compact = section.page_width.pt < 500
+                        height = 0
+                        for index, text in enumerate(lines):
+                            paragraph = cell.paragraphs[index] if index < len(cell.paragraphs) else cell.add_paragraph()
+                            doc_text(paragraph, text)
+                            is_name = text == clean((ctx.get('clinic_profile') or {}).get('name'))
+                            size = (9 if compact else 11) if is_name else (6.5 if compact else 7.5)
+                            for run in paragraph.runs:
+                                run.font.size = Pt(size)
+                                run.font.bold = is_name
+                            paragraph.paragraph_format.space_before = Pt(0)
+                            paragraph.paragraph_format.space_after = Pt(0)
+                            paragraph.paragraph_format.line_spacing = 1.2
+                            layout = Paragraph(pdf_safe(text), ParagraphStyle(name='WordClinicHeader', fontName=font_name(), fontSize=size, leading=size*1.2))
+                            height += layout.wrap(cell.width.pt, section.page_height.pt)[1]
+                        for paragraph in cell.paragraphs[len(lines):]:
+                            doc_text(paragraph, '')
+                        section.top_margin = Pt(max(section.top_margin.pt, section.header_distance.pt+height+12))
+
 def generate_docx(kind, ctx):
     from .d0 import diagnosis_text
     ctx={**ctx,'visit':{**ctx['visit'],'diagnosis':diagnosis_text(ctx['visit'])}}
     if kind not in TEMPLATE_BY_TYPE:raise ValueError('Biểu mẫu không hợp lệ')
     doc=Document(TEMPLATE_DIR/TEMPLATE_BY_TYPE[kind])
+    fill_clinic_header(doc, ctx)
     doc.core_properties.title=TITLES[kind]+' (thử nghiệm)'
     doc.core_properties.subject='Dữ liệu giả lập, không phát hành hồ sơ y tế'
     p=ctx['patient'];v=ctx['visit'];o=ctx.get('order') or {}
@@ -325,8 +363,12 @@ def generate_pdf(kind,ctx):
     if kind not in TEMPLATE_BY_TYPE:raise ValueError('Biểu mẫu không hợp lệ')
     p=ctx['patient'];v=ctx['visit'];o=ctx.get('order') or {};r=ctx.get('rx') or {}
     font=font_name();size=A5 if kind in ('rx','followup') else A4
-    buf=BytesIO();pdf=SimpleDocTemplate(buf,pagesize=size,rightMargin=39,leftMargin=39,topMargin=91,bottomMargin=54,
-                                      title=TITLES[kind]+' – BẢN NHÁP',author=CLINIC)
+    lines = clinic_lines(ctx)
+    clinic_header = Paragraph('<br/>'.join(pdf_safe(x) for x in lines),
+                              ParagraphStyle(name='ClinicHeader', fontName=font, fontSize=8, leading=11)) if lines else None
+    header_height = clinic_header.wrap(size[0]-154, size[1])[1] if clinic_header else 37
+    buf=BytesIO();pdf=SimpleDocTemplate(buf,pagesize=size,rightMargin=39,leftMargin=39,topMargin=max(91,header_height+54),bottomMargin=54,
+                                      title=TITLES[kind]+' – BẢN NHÁP',author=(ctx.get('clinic_profile') or {}).get('name') or CLINIC)
     styles=getSampleStyleSheet();styles.add(ParagraphStyle(name='VnBody',fontName=font,fontSize=9.2,leading=13,spaceAfter=7))
     styles.add(ParagraphStyle(name='VnTitle',fontName=font,fontSize=12 if size==A5 else 14,leading=19,spaceAfter=13,alignment=1,textColor=colors.HexColor('#087F7A')))
     styles.add(ParagraphStyle(name='VnHeading',fontName=font,fontSize=10,leading=14,spaceBefore=11,spaceAfter=7,textColor=colors.HexColor('#17665F')))
@@ -399,9 +441,12 @@ def generate_pdf(kind,ctx):
         c.saveState()
         if LOGO.exists():
             c.drawImage(ImageReader(str(LOGO)),39,h-67,width=72,height=43,preserveAspectRatio=True,mask='auto')
-        c.setFont(font,9.2);c.setFillColor(colors.HexColor('#087F7A'));c.drawString(115,h-37,CLINIC)
-        c.setFont(font,7);c.setFillColor(colors.black);c.drawString(115,h-51,'60 đường Thái Bình, P. Nam Định, Ninh Bình')
-        c.setStrokeColor(colors.HexColor('#087F7A'));c.line(39,h-73,w-39,h-73)
+        if clinic_header:
+            clinic_header.drawOn(c, 115, h-30-header_height)
+        else:
+            c.setFont(font,9.2);c.setFillColor(colors.HexColor('#087F7A'));c.drawString(115,h-37,CLINIC)
+            c.setFont(font,7);c.setFillColor(colors.black);c.drawString(115,h-51,'60 đường Thái Bình, P. Nam Định, Ninh Bình')
+        c.setStrokeColor(colors.HexColor('#087F7A'));c.line(39,h-max(73,header_height+40),w-39,h-max(73,header_height+40))
         c.setFont(font,7);c.setFillColor(colors.HexColor('#B42318'))
         c.drawCentredString(w/2,33,WATERMARK)
         c.setFont(font,7);c.setFillColor(colors.grey);c.drawRightString(w-39,19,f'Trang {d.page}')
