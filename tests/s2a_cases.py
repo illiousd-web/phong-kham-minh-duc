@@ -69,7 +69,10 @@ def check_profile_and_signatures(clients, ids, db):
             if role != 'doctor':
                 assert client.get(path).status_code == 403
                 assert client.get('/api/users/99999999/signature').status_code == 403
-        for bad in (b'<svg/>', b'not an image', payload[:30], signature_image('GIF'), signature_image(size=(2001, 2000))):
+        corrupt_png = bytearray(payload)
+        chunk = corrupt_png.index(b'IDAT')
+        corrupt_png[chunk+4+int.from_bytes(corrupt_png[chunk-4:chunk], 'big')] ^= 1
+        for bad in (b'<svg/>', b'not an image', payload[:30], bytes(corrupt_png), signature_image('GIF'), signature_image(size=(2001, 2000))):
             assert admin.put(path, files={'file': ('fake.png', bad, 'image/png')}).status_code == 422
         assert admin.put(path, files={'file': ('fake.png', payload + bytes(300*1024), 'image/png')}).status_code == 413
         assert admin.put('/api/users/99999999/signature', files={'file': ('fake.png', payload, 'image/png')}).status_code == 404

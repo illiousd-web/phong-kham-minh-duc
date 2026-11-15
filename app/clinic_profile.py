@@ -38,7 +38,7 @@ def signature_type(payload):
             with Image.open(BytesIO(payload)) as image:
                 image.load()
         return media_type
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning):
         raise HTTPException(422, 'Chỉ nhận ảnh PNG/JPG hợp lệ, tối đa 4 triệu điểm ảnh') from None
 
 
