@@ -559,7 +559,7 @@ body[data-screen=pharmacy] .toolbar,body[data-screen=nurse] .toolbar{display:non
  .r5-hero,.r5-hero-wrap .r5-hero{padding:22px;border-radius:32px}.r5-hero h1{font-size:40px}
  .r5-pharmacy .r5-top>div:last-child{display:none}.r5-hero-wrap .r5-hero>p,.r5-pharmacy .r5-hero-date{display:none}.r5-pharmacy .r5-hero-staff{display:block}.r5-hero-wrap .r5-mobile-summary{display:block;font-size:16px;font-weight:400;line-height:1.5}
  .r5-pharmacy .r5-hero-wrap input.r5-search{position:static;width:100%;height:52px;margin-top:14px}
- .r5-pharmacy{display:flex;flex-direction:column}.r5-pharmacy .r5-top{order:0;margin-bottom:14px}.r5-pharmacy .r5-dispensing{order:1}.r5-pharmacy .r5-tabs{order:2}.r5-pharmacy #r5-recent{order:3}.r5-pharmacy .r5-stock{order:4}.r5-pharmacy>.fold{order:5}
+ .r5-pharmacy{display:flex;flex-direction:column}.r5-pharmacy .r5-top{order:0;margin-bottom:14px}.r5-pharmacy .r5-dispensing{order:2}.r5-pharmacy .r5-tabs{order:1}.r5-pharmacy #r5-recent{order:3}.r5-pharmacy .r5-stock{order:4}.r5-pharmacy>.fold{order:5}
  .r5-pharmacy .r5-rx-queue{padding:0;background:transparent;border:0;box-shadow:none;backdrop-filter:none}.r5-rx-queue>h2{display:none}
  .r5-pharmacy .r4-queue{max-height:none}.r5-pharmacy .r4-person{flex-wrap:nowrap}.r5-pharmacy .r4-person-text{min-width:0}
  .r5-pharmacy button,.r5-nurse button{min-width:88px;min-height:44px;white-space:normal;line-height:1.2;padding:10px 12px}
@@ -569,6 +569,48 @@ body[data-screen=pharmacy] .toolbar,body[data-screen=nurse] .toolbar{display:non
  .r5-nurse .vitals{grid-template-columns:repeat(2,minmax(0,1fr))}.r5-nurse .r5-top .r2-stat{padding:12px;min-height:110px}
  .r5-lab-hero h1{font-size:36px}
 }
+/* R6 — U_QuanLy, U_QuanLyBaoCao, U_QuanTri, U_NhatKy, U_NhapBangGia,
+   U_CaiDat, U_ThuocRaSoat, U_ChiSoXN. */
+body[data-screen=manager] .toolbar,body[data-screen=admin] .toolbar,body[data-screen=settings] .toolbar,body[data-screen=price-management] .toolbar,body[data-screen=m5-admin] .toolbar,body[data-screen=m6-admin] .toolbar{display:none}
+.r6-screen{font-size:15px;min-width:0}.r6-screen>*{min-width:0}
+.r6-top{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px;align-items:start;margin-bottom:18px}
+.r6-hero{padding:26px 28px;gap:12px}.r6-kicker{font-size:15px;font-weight:700}.r6-hero h1{font-size:56px;font-weight:900;line-height:1.05;letter-spacing:-1.5px;overflow-wrap:anywhere}.r6-hero p{font-size:16px;line-height:1.4}
+.r6-screen .card{border-radius:28px;padding:20px;margin:0 0 16px;background:rgba(255,255,255,.42);border:1px solid rgba(255,255,255,.8);box-shadow:inset 0 1px 0 #fff,0 16px 40px rgba(16,40,30,.14);backdrop-filter:blur(26px) saturate(180%);min-width:0}
+.r6-screen h2{font-size:20px;font-weight:800}.r6-screen h3{font-size:16px}.r6-screen .stepno{width:30px;height:30px;border-radius:10px;font-size:15px}
+.r6-screen .r2-stat{border-radius:28px;min-height:122px}.r6-screen .r2-stat strong{overflow-wrap:anywhere}.r6-screen .r2-stat-0{background:rgba(255,217,160,.55)}
+.r6-screen .tabs{margin-bottom:18px}.r6-screen .tab{border:0;background:transparent;border-radius:999px;font-size:14px}.r6-screen .tab[aria-selected=true]{background:#0B1F17;color:#fff}
+.r6-screen button{min-height:44px;font-size:14px;line-height:1.3;max-width:100%;white-space:normal;overflow-wrap:anywhere}.r6-screen .btn,.r6-screen .ghost{min-height:48px;padding:10px 22px;font-weight:800}
+.r6-screen .field:not(fieldset){border:1px solid #6F8F7E;border-radius:20px;padding:8px 16px;background:rgba(255,255,255,.8);min-width:0;gap:3px}
+.r6-screen .field label,.r6-screen label,.r6-screen legend{font-size:13px;color:#1F3A31}.r6-screen .field input:not([type=checkbox]),.r6-screen .field select,.r6-screen .field textarea{background:transparent;border:0;border-radius:0;padding:0;font-size:16px;font-weight:600;min-width:0;max-width:100%}
+.r6-screen input:not([type=checkbox]),.r6-screen select,.r6-screen textarea{max-width:100%;min-width:0;border-color:#6F8F7E}.r6-screen input[type=file]{width:100%;font-size:13px}
+.r6-screen .table{border-collapse:separate;border-spacing:0 6px}.r6-screen .table th{background:transparent;border:0;text-transform:uppercase;font-size:13px;color:#1F3A31}.r6-screen .table td{background:rgba(255,255,255,.72);padding:12px 16px;border:0;font-size:14px;overflow-wrap:anywhere}.r6-screen .table td:first-child{border-radius:18px 0 0 18px}.r6-screen .table td:last-child{border-radius:0 18px 18px 0}
+.r6-accounts{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:16px;align-items:start}.r6-accounts>*,.r6-report-layout>*,.r6-top>*,.r6-index-layout>*,.r6-drug-layout>*{min-width:0}
+.r6-accounts>[class=card] .fields{grid-template-columns:minmax(0,1fr)}.r6-screen .roles{border:0;padding:0;display:flex;gap:6px;flex-wrap:wrap}.r6-screen .roles legend{font-weight:800}.r6-screen .check{margin:0;padding:8px;border-radius:20px;background:rgba(255,255,255,.72);min-height:44px}
+.r6-approval{background:rgba(255,255,255,.72);margin:8px 0;gap:12px}.r6-approval .r4-person-text{white-space:normal;overflow-wrap:anywhere}.r6-approval .r4-person-text>div:first-child{font-weight:800}.r6-approval [data-value=reject]{background:#B42318;color:#fff}.r6-approval [data-value=approve]{background:#008249;color:#fff}
+.r6-screen .switch{background:rgba(255,255,255,.72);border:1px solid rgba(255,255,255,.9);border-radius:20px;padding:14px 16px}.r6-screen .switch b{font-size:16px}.r6-screen .switch small{font-size:14px}.r6-screen .switch input{appearance:none;width:48px;height:28px;min-width:48px;border:0;border-radius:999px;background:radial-gradient(circle at 14px 14px,#fff 10px,transparent 11px),#C9D6CF}.r6-screen .switch input:checked{background:radial-gradient(circle at 34px 14px,#fff 10px,transparent 11px),#008249}
+.r6-report-layout{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,8fr);gap:16px;align-items:start}.r6-report-period .fields{grid-template-columns:1fr}
+.r6-index-layout{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px;align-items:start}.r6-index-layout>.card:nth-child(3){grid-column:1;grid-row:2}.r6-index-layout>.card:nth-child(4){grid-column:2;grid-row:2}
+.r6-drug-layout{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:16px;align-items:start;margin-bottom:18px}.r6-drug-editors>details{padding:20px;border-radius:28px;border:1px solid rgba(255,255,255,.8);background:rgba(255,255,255,.42)}.r6-drug-editors summary{font-size:20px;font-weight:800;margin-bottom:12px}.r6-drug-list .r4-person{font-size:16px;font-weight:800;margin:12px 0;overflow-wrap:anywhere}.r6-drug-list form{display:flex;gap:10px;flex-wrap:wrap}.r6-drug-list form label{flex:1;min-width:0}
+.r6-screen [hidden]{display:none!important}.r6-screen small,.r6-screen .hint,.r6-screen .muted,.r6-screen .status{font-size:13px}.r6-screen .price-file-picker{border:1.5px dashed #6F8F7E;padding:22px;border-radius:20px;min-height:100px}
+@media(max-width:900px){
+ .r6-top,.r6-accounts,.r6-report-layout,.r6-index-layout,.r6-drug-layout{grid-template-columns:minmax(0,1fr)}.r6-index-layout>.card:nth-child(n){grid-column:auto;grid-row:auto}
+ .r6-hero{border-radius:32px;padding:22px}.r6-hero h1{font-size:40px}.r6-screen button{min-width:88px}.r6-screen .r4-person{flex-wrap:wrap}.r6-screen .r2-stats{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.r6-screen .r2-stat{padding:12px}.r6-screen .r2-stat strong{font-size:28px}
+ .r6-screen .table td:first-child,.r6-screen .table td:last-child{border-radius:0}.r6-screen .table tr{border-radius:18px;overflow:hidden}.r6-screen .cards{grid-template-columns:repeat(2,minmax(0,1fr))}.r6-screen .stat b{overflow-wrap:anywhere}
+ .r5-tabs{position:relative;top:auto;z-index:1}
+}
+
+.r6-screen button:not(.btn):not(.tab):not(.r4-person){border:1px solid rgba(255,255,255,.9);border-radius:999px;background:rgba(255,255,255,.65);color:#0B1F17;padding:10px 18px;font-weight:800}
+.r6-approvals .r6-approval-group{background:transparent;border:0;box-shadow:none;padding:0;backdrop-filter:none}.r6-approval-group h2{font-size:15px}
+.r6-index-layout>.card:nth-child(2){grid-column:2;grid-row:1 / span 2}.r6-index-layout>.card:nth-child(4){grid-column:1/-1;grid-row:3}
+.r6-screen [data-m5-form=import] label,.r6-screen label:has(>select),.r6-screen [data-m6-form=drug]>label{display:flex;flex-direction:column;gap:5px;min-width:0}
+.r6-screen .settings>.field{width:100%}.r6-screen [data-m6-form=search] input{width:100%;min-height:44px;border:1px solid #6F8F7E;border-radius:999px;padding:10px 16px}
+@media(max-width:900px){.r6-index-layout>.card:nth-child(n){grid-column:auto;grid-row:auto}}
+.r6-screen button:not(.btn):not(.tab):not(.r4-person)[data-value=reject]{background:#B42318;color:#fff}.r6-screen button:not(.btn):not(.tab):not(.r4-person)[data-value=approve]{background:#008249;color:#fff}
+.r6-visits-layout{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,8fr);gap:16px;align-items:start}.r6-visits-layout>*{min-width:0}.r6-visits-layout>.card:first-child .fields{grid-template-columns:1fr}
+@media(max-width:900px){.r6-visits-layout{grid-template-columns:minmax(0,1fr)}}
+.r6-screen[data-r6-page=manager]>.r6-top .r2-stat-0{background:rgba(255,218,212,.7);color:#8C1D18}.r6-screen[data-r6-page=manager]>.r6-top .r2-stat-1,.r6-drug-count .r2-stat-1{background:rgba(127,224,168,.45);color:#063A1F}.r6-screen[data-r6-page=manager]>.r6-top .r2-stat-2{background:rgba(142,194,255,.45);color:#0A2A5E}.r6-drug-count .r2-stat-2{background:rgba(255,218,212,.7);color:#8C1D18}
+.r6-screen [data-form=price-preview] .btn,.r6-screen [data-m5-form=import] .btn{background:#0069C7}.r6-screen .check:has(input:checked){background:#0B1F17;color:#fff}
+@media print{.r6-screen *{box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:#fff!important;color:#000!important}.r6-top,.r6-accounts,.r6-index-layout,.r6-drug-layout,.r6-report-layout{display:block}.r6-screen .r6-hero,.r6-screen .tabs{display:none!important}}
 @media print{
  .r5-top,.r5-tabs,.r5-rx-queue,.r5-stock>summary,.r5-nurse-layout>aside,.r5-rx-actions{display:none!important}
  .r5-dispensing,.r5-nurse-layout,.r5-stock-layout{display:block}

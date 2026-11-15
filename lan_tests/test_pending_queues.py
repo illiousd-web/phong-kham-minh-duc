@@ -291,3 +291,43 @@ def test_r5_selected_prescription_dispense_pdf_cancel_and_pages(https_server, cl
             assert not errors, errors
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize('width', [1366, 390])
+def test_r6_pharmacy_empty_and_tabs(https_server, width):
+    import base64
+    import hashlib
+    import os
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    from playwright.sync_api import sync_playwright, expect
+    from .conftest import PASSWORDS
+    from .browser_helpers import settle, no_horizontal_scroll
+    origin, certdir = https_server
+    cert = x509.load_pem_x509_certificate((certdir / 'server.crt').read_bytes())
+    pin = base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'), headless=True,
+            args=['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors-spki-list=' + pin])
+        try:
+            page = browser.new_page(viewport={'width': width, 'height': 844})
+            page.route('**/api/prescriptions**', lambda route: route.fulfill(json=[]))
+            page.goto(origin)
+            page.locator('[name=username]').fill('test_pharmacy')
+            page.locator('[name=password]').fill(PASSWORDS['pharmacy'])
+            page.locator('[data-form=login] button').click()
+            page.locator('.account-trigger').wait_for(); settle(page)
+            expect(page.locator('#r5-rx-detail')).to_have_count(0)
+            expect(page.locator('#r5-dispensing .r4-state:visible')).to_have_count(1)
+            hero = page.locator('.r5-top').bounding_box()
+            tabs = page.locator('.r5-tabs').bounding_box()
+            queue = page.locator('#r5-dispensing').bounding_box()
+            assert tabs['y'] >= hero['y'] + hero['height']
+            assert tabs['y'] + tabs['height'] <= queue['y']
+            if width == 390:
+                menu = page.locator('#navigation').bounding_box()
+                assert tabs['y'] + tabs['height'] <= menu['y']
+            no_horizontal_scroll(page)
+        finally:
+            browser.close()

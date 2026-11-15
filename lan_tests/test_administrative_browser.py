@@ -296,3 +296,55 @@ def test_cashier_cash_change_is_ui_only(https_server, clients, visit, width):
             assert not errors, errors
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize('width', [1366, 390])
+def test_r6_screens_template_geometry(https_server, clients, visit, width):
+    import re
+    origin, certdir = https_server
+    cert = x509.load_pem_x509_certificate((certdir / 'server.crt').read_bytes())
+    pin = base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with db(True) as c:
+        c.execute('INSERT INTO drugs(name,name_key,strength_key) VALUES(?,?,?)',
+            ('Thuốc rà soát R6 '+str(width), 'r6-review-'+str(width)+'-'+secrets.token_hex(4), ''))
+    proposal = clients['cashier'].post('/api/adjustments', json={
+        'visit_id': visit, 'kind': 'discount', 'amount': 1000, 'reason': 'Đề nghị giả lập R6'})
+    assert proposal.status_code == 201, proposal.text
+    target = Path('test_evidence/r6'); target.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'), headless=True,
+            args=['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors-spki-list=' + pin])
+        try:
+            errors = []
+            for role, screens in [('manager', [('manager', 'approve'), ('manager', 'report'), ('manager', 'visits')]),
+                                  ('admin', [('admin', 'accounts'), ('admin', 'audit'), ('price-management', None),
+                                             ('settings', None), ('m6-admin', None), ('m5-admin', None)])]:
+                context = browser.new_context(viewport={'width': width, 'height': 900})
+                page = context.new_page(); page.on('pageerror', lambda error: errors.append(str(error)))
+                page.goto(origin)
+                page.locator('[name=username]').fill('test_' + role)
+                page.locator('[name=password]').fill(PASSWORDS[role])
+                page.locator('[data-form=login] button').click()
+                page.locator('.account-trigger').wait_for(); settle(page)
+                for screen, tab in screens:
+                    go(page, screen)
+                    if tab:
+                        page.locator(f'[data-action=tab][data-tab={tab}]').click(); settle(page)
+                    expect(page.locator('#workspace')).to_have_class(re.compile(r'\br6-screen\b'))
+                    no_horizontal_scroll(page)
+                    small = page.locator('#workspace *:visible').evaluate_all('''es => es.filter(e =>
+                        [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()) &&
+                        parseFloat(getComputedStyle(e).fontSize) < 13).map(e => e.textContent.slice(0,80))''')
+                    assert not small, small
+                    for button in page.locator('#workspace button:visible').all():
+                        assert button.bounding_box()['height'] >= 44, button.inner_text()
+                    if screen == 'manager' and tab == 'approve':
+                        expect(page.locator(f'.r6-approval [data-action=review-adjustment][data-id="{proposal.json()["id"]}"][data-value=approve]')).to_be_visible()
+                    if tab == 'audit':
+                        assert page.locator('#workspace [data-form], #workspace [data-action*="delete"], #workspace [data-action*="edit"]').count() == 0
+                    page.screenshot(path=str(target / f'{screen}-{tab or "main"}-{width}.png'))
+                context.close()
+            assert not errors, errors
+        finally:
+            browser.close()
