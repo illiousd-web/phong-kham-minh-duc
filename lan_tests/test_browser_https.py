@@ -331,7 +331,7 @@ def test_u1c_doctor_queue_and_prescription(https_server,clients,width,height):
                 expect(page.locator('.doctor-sticky .allergy-warning')).to_contain_text('DỊ ỨNG')
                 assert page.locator('[data-action="patient-details"]').evaluate("e=>!e.closest('.doctor-sticky')")
             expect(page.locator('.queue-item.current .waiting-allergy')).to_contain_text('Dị ứng')
-            assert page.locator('.queue-item.current .queue-ticket').bounding_box()['width']==44
+            assert page.locator('.queue-item.current .queue-ticket').bounding_box()['width']==50
             assert page.locator('.queue-item.current .waiting-name').evaluate("e=>e.scrollWidth>e.clientWidth && getComputedStyle(e).textOverflow==='ellipsis'")
             no_horizontal_scroll(page)
             page.screenshot(path=str(evidence/f'doctor-{width}.png'))

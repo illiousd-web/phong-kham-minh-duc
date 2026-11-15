@@ -128,3 +128,39 @@ def test_s1_text_result_two_tabs_keep_first_version(https_server,clients,width):
         expect(first.locator('dialog')).not_to_contain_text('Nội dung chưa được phép ghi đè')
         no_horizontal_scroll(first);no_horizontal_scroll(second);assert not errors,errors
         context.close();browser.close()
+
+
+def test_r3_mobile_dock_and_drug_search_keeps_focus(https_server,clients):
+    r=clients['reception']
+    patient=r.post('/api/patients',json={'full_name':'Người giả lập tìm thuốc mobile','date_of_birth':'1990-01-01','sex':'Nữ','phone':'0900000000'}).json()['id']
+    vid=r.post('/api/visits',json={'patient_id':patient,'doctor_id':IDS['doctor'],'service_id':SERVICE}).json()['id']
+    origin,certdir=https_server
+    cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin=base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    with sync_playwright() as pw:
+        browser=pw.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--disable-dev-shm-usage','--ignore-certificate-errors-spki-list='+pin])
+        try:
+            page=browser.new_page(viewport={'width':390,'height':844})
+            page.goto(origin);page.locator('[name=username]').fill('test_doctor');page.locator('[name=password]').fill(PASSWORDS['doctor']);page.locator('[data-form=login] button').click();page.locator('.account-trigger').wait_for();settle(page);pick(page,'visit',vid)
+            buttons=page.locator('.r3-exam-dock button')
+            expect(buttons).to_have_count(3)
+            for button in buttons.all():
+                rect=button.bounding_box();assert rect['width']>=88 and 44<=rect['height']<=56,rect
+                expect(button).to_have_css('white-space','nowrap')
+            expect(page.locator('.r3-exam-documents')).to_contain_text('Xuất chứng từ')
+            expect(page.locator('.r3-exam-documents button')).to_have_count(3)
+            page.locator('[data-action=doctor-jump][data-target=rx]').click()
+            search=page.locator('[data-r3-drug-search]');search.type('Para')
+            expect(search).to_have_value('Para');expect(search).to_be_focused()
+            expect(page.locator('.m6-row [name=name]').first).to_have_value('')
+            search.press('Enter');expect(search).to_have_value('')
+            expect(page.locator('.m6-row [name=name]').first).to_have_value('Para')
+            expect(page.locator('.m6-row [name=dose]').first).to_be_focused()
+            page.route('**/api/drugs?*',lambda route:route.fulfill(json=[{'name':'Thuốc giả lập gợi ý mobile','ingredient':'Hoạt chất giả lập','brand_name':'','strength':'10 mg','unit':'viên','route':'Uống'}]))
+            search.fill('gợi ý')
+            search.locator('..').locator('.m6-suggestions button').first.click()
+            expect(search).to_have_value('')
+            expect(page.locator('.m6-row').last.locator('[name=name]')).to_have_value('Thuốc giả lập gợi ý mobile')
+            expect(page.locator('.m6-row').last.locator('[name=strength]')).to_have_value('10 mg')
+            expect(page.locator('.m6-row').last.locator('[name=dose]')).to_be_focused()
+        finally:browser.close()
