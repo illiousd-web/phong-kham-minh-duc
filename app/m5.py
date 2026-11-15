@@ -3,7 +3,7 @@ import json
 from datetime import datetime,date
 from decimal import Decimal,InvalidOperation,ROUND_HALF_UP
 from typing import Literal
-from fastapi import Depends,HTTPException,Query,UploadFile,File,Form,Response
+from fastapi import Depends,HTTPException,Query,Response
 from pydantic import BaseModel,ConfigDict,Field,model_validator,field_validator
 from .labels import VN_TZ
 from .practitioners import printed_name,scope_warning

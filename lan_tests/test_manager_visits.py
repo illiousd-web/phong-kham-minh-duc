@@ -16,8 +16,8 @@ from cryptography.hazmat.primitives import serialization
 from playwright.sync_api import sync_playwright, expect
 
 from .conftest import PASSWORDS, IDS, SERVICE, client_for
-from .test_tls_chrome_compat import https_server
-from .browser_helpers import settle, go, pick, send, no_horizontal_scroll, small_targets
+from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.
+from .browser_helpers import settle, go, pick, no_horizontal_scroll, small_targets
 from tests import manager_visits_cases as cases
 
 ROLES = ('manager', 'admin', 'reception', 'doctor', 'technician', 'nurse', 'pharmacy', 'cashier')

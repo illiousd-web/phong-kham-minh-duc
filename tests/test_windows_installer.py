@@ -415,7 +415,6 @@ def test_renew_keeps_ca_and_names_new_key_and_rollback(tmp_path):
     assert result['ca_fingerprint'] == fp and (tls / 'ca.crt').read_bytes() == ca_before, 'CA must not change'
     new, old = _x509(tls / 'server.crt'), _x509(tls / f"server.crt.cu-{result['stamp']}")
     assert (tls / 'server.key').read_bytes() != old_key and new.serial_number != old.serial_number
-    from cryptography import x509
     from cryptography.x509.oid import ExtensionOID
     san = lambda c: c.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
     assert list(san(new)) == list(san(old)) and new.issuer == _x509(tls / 'ca.crt').subject

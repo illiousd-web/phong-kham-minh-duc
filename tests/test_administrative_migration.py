@@ -1,6 +1,5 @@
 """Upgrade a populated pre-L1 SQLite database, including legacy document strings."""
 import sqlite3
-from pathlib import Path
 
 from app.administrative_migration import migrate_administrative
 from app.m0_migration import migrate_m0

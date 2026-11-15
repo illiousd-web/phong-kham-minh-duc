@@ -6,7 +6,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from playwright.sync_api import sync_playwright,expect
 from .conftest import IDS,PASSWORDS,SERVICE
-from .test_tls_chrome_compat import https_server
+from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.
 from .browser_helpers import settle,go,pick,no_horizontal_scroll
 from app.database import db
 

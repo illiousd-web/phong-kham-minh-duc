@@ -3,17 +3,14 @@ import json
 import re
 import secrets
 import unicodedata
-from datetime import datetime
 from decimal import Decimal, InvalidOperation, DecimalException, localcontext
-from io import BytesIO
 from typing import Literal
 
-from fastapi import Depends, HTTPException, Query, File, UploadFile, Form, Response
+from fastapi import Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, StrictBool
 
 from .administrative import months_old
 from .domain import ensure_open
-from .labels import VN_TZ
 from .forms import format_patient_address
 from .practitioners import SCOPES, printed_name
 

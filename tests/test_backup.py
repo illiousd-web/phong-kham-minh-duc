@@ -1,7 +1,6 @@
 """Backup/verification tests with synthetic database and attachment only."""
 import sqlite3
 import zipfile
-from pathlib import Path
 from scripts import backup_demo
 import pytest
 

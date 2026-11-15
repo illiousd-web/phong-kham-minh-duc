@@ -1,6 +1,6 @@
 """No autofill limit or Decimal rounding may bypass an explicit safety gate."""
 import pytest
-from tests.test_s1_prescription import prescription,create
+from tests.test_s1_prescription import prescription as prescription,create  # Imported pytest fixture.
 
 
 def test_quantity_over_autofill_limit_still_requires_confirmation(prescription):

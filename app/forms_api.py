@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from .resources import export_slot
 from .administrative import redact_document
 from .practitioners import printed_name
-from .forms import generate_docx, generate_pdf, TEMPLATE_BY_TYPE
+from .forms import generate_docx, generate_pdf
 
 
 def mount_forms(app, db, principal, require, audit):

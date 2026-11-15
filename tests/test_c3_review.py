@@ -4,7 +4,6 @@ import json
 import secrets
 import zipfile
 
-import pymupdf
 import pytest
 from openpyxl import Workbook
 

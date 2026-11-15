@@ -5,7 +5,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from playwright.sync_api import sync_playwright,expect
 from .conftest import db,PASSWORDS
-from .test_tls_chrome_compat import https_server
+from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.
 from .browser_helpers import settle,no_horizontal_scroll
 
 @pytest.mark.parametrize('width',[1366,390])

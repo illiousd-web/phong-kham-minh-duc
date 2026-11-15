@@ -1,9 +1,8 @@
 """Optional real-Chromium UI smoke test. Run with `python tests/browser_smoke.py`.
 Requires playwright package and installed Chromium; does not contact the Internet.
 """
-import os,sys,tempfile,time,socket,subprocess,secrets
+import os,sys,tempfile,secrets
 from pathlib import Path
-from urllib.request import urlopen
 from playwright.sync_api import sync_playwright
 
 ROOT=Path(__file__).resolve().parents[1]

@@ -3,11 +3,9 @@
 Các thao tác thay đổi số dư/tồn kho dùng chung db(True) advisory lock của ứng dụng.
 v0.5 gọi quy trình thuốc kiểm soát riêng với phân quyền và phê duyệt độc lập.
 """
-from datetime import date
 from .work_queues import approval_predicate,history_limit
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
-from typing import Literal
 
 CLS = ('lab', 'ultrasound', 'xray', 'ecg')
 

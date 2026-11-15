@@ -1,6 +1,5 @@
 """E2E business rules A/B/C/D. Synthetic patients only."""
 import secrets
-import pytest
 from tests.test_workflows import client, token, prepare_visit
 
 
@@ -72,7 +71,7 @@ def test_b_stock_dispense_charge_once_and_no_double_issue():
 
 def test_b_unpriced_or_missing_stock_has_no_side_effects():
     _,v=_visit();_medical(v)
-    d=token('bs_noi');pharm=token('duoc');cash=token('thungan')
+    d=token('bs_noi');pharm=token('duoc');token('thungan')
     meds=client.get('/api/dispensable-medicines',headers=d).json()
     med=next(x for x in meds if not x['unit_price'])
     rx=client.post('/api/prescriptions',headers=d,json={'visit_id':v,'items':[{'medicine_id':med['id'],'quantity':1}]})
@@ -101,7 +100,7 @@ def test_c_nurse_only_assigned_visit_and_vitals_only():
 
 
 def test_d_completion_freezes_record_and_addenda_review():
-    _,v=_visit();d=token('bs_noi');mgr=token('quanly');n=token('dieuduong')
+    _,v=_visit();d=token('bs_noi');mgr=token('quanly');token('dieuduong')
     assert client.post(f'/api/visits/{v}/complete',headers=d).status_code==409
     _medical(v)
     res=client.post(f'/api/visits/{v}/complete',headers=d)

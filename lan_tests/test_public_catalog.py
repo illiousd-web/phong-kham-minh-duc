@@ -1,4 +1,3 @@
-from .conftest import db
 from tests.test_public_catalog import check_public_lookup
 
 

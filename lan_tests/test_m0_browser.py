@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from playwright.sync_api import expect, sync_playwright
 
 from .conftest import IDS, PASSWORDS, db
-from .test_tls_chrome_compat import https_server
+from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.
 from .browser_helpers import settle, pick, no_horizontal_scroll
 
 

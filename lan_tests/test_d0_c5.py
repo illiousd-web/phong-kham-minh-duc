@@ -14,7 +14,6 @@ def test_d0_main_upgrade_full_c5_and_icd_search_p95(tmp_path):
     from app.m6_migration import migrate_m6
     from app.m5_migration import migrate_m5
     from app.d0 import search_catalog
-    from app.manager_visits import fold_name
     name='clinic_perf_test_'+secrets.token_hex(6);source=urlunsplit(urlsplit(SOURCE)._replace(path='/postgres'));url=urlunsplit(urlsplit(SOURCE)._replace(path='/'+name))
     try:
         generate(source,name,tmp_path/name,CONFIRM,attachments=0)

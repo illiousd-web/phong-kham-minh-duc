@@ -1,7 +1,6 @@
 """Real HTTPS, configured resource-light worker, three isolated concurrent browser sessions."""
 import base64
 import hashlib
-from io import BytesIO
 import os
 from pathlib import Path
 import ssl
@@ -15,7 +14,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from .conftest import ROOT,PASSWORDS,IDS,SERVICE,db
 from .browser_helpers import settle,go,pick,send,submit,no_horizontal_scroll
-from .test_tls_chrome_compat import https_server
+from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.
 
 
 def test_real_https_three_browser_roles_and_pdf():

@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field, field_validator
 
 from .database import PGConnection
 from .domain import ensure_open, invoice, revision
-from .labels import parse_day
 from .manager_visits import fold_name, _utc_start, _day
 
 

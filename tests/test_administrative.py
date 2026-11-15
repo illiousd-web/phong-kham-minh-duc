@@ -27,7 +27,7 @@ def test_scope_warning_and_opt_in_block():
 
 
 def test_certificate_warning_30_day_boundary_in_vietnam():
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
     from app.practitioners import certificate_warning
     now=datetime(2026,11,10,17,tzinfo=timezone.utc) # 11/11 in Vietnam
     assert certificate_warning('2026-12-11',now) is None
