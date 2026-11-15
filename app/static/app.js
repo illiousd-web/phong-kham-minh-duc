@@ -54,7 +54,7 @@ function field(name,id,type='text',placeholder='',required=false){return `<div c
 function selectField(name,id,options){return `<div class="field"><label for="${esc(id)}">${esc(name)}</label><select id="${esc(id)}" name="${esc(id)}">${options.map(([v,t])=>`<option value="${esc(v)}">${esc(t)}</option>`).join('')}</select></div>`}
 function textarea(name,id,placeholder=''){return `<div class="field full"><label for="${esc(id)}">${esc(name)}</label><textarea id="${esc(id)}" name="${esc(id)}" placeholder="${esc(placeholder)}"></textarea></div>`}
 function card(content,title=''){return `<section class="card">${title?`<h2>${esc(title)}</h2>`:''}${content}</section>`}
-function t(rows,headers){return `<div class="tablebox"><table class="table"><thead><tr>${headers.map(x=>`<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.join(''):`<tr><td colspan="${headers.length}"><div class="empty">Chưa có dữ liệu</div></td></tr>`}</tbody></table></div>`}
+function t(rows,headers){return `<div class="tablebox"><table class="table"><thead><tr>${headers.map(x=>`<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.join(''):`<tr><td colspan="${headers.length}">${renderState('empty','Chưa có dữ liệu')}</td></tr>`}</tbody></table></div>`}
 function role(){return selectedRole||auth?.user.roles.find(r=>menus[r])||'reception'}
 const cap=r=>!!auth?.user.roles.includes(r);
 // Nhãn tiếng Việt cho mã trạng thái lưu trong CSDL; không để mã tiếng Anh lọt ra màn hình.
@@ -115,7 +115,21 @@ const btn=(label,action,attrs='',cls='ghost smallbtn')=>`<button type="button" c
 const step=(n,title)=>`<span class="stepno">${n}</span>${esc(title)}`;
 function stepCard(n,title,content,extra=''){return `<section class="card" ${extra}><h2>${step(n,title)}</h2>${content}</section>`}
 function details(summary,content,open=false){return `<details class="card fold" ${open?'open':''}><summary>${esc(summary)}</summary><div class="fold-body">${content}</div></details>`}
-const empty=text=>`<div class="empty">${esc(text)}</div>`;
+function renderState(kind='empty',message='Chưa có dữ liệu') {
+ const loading=kind==='loading',failed=kind==='error';
+ const skeleton=loading?'<div class="r4-skeleton" aria-hidden="true"><i></i><i></i><i></i></div>':'';
+ return `<section class="r4-state r4-state-${kind}" role="${failed?'alert':'status'}" aria-busy="${loading}"><span class="r4-state-icon" aria-hidden="true">${failed?'!':loading?'…':'☷'}</span><h3>${esc(message)}</h3>${skeleton}${failed?'<p>Không tải được dữ liệu. Vui lòng thử lại.</p><button type="button" data-action="r4-reload">Thử lại</button>':''}</section>`;
+}
+function empty(text) {
+ return renderState('empty',text);
+}
+function r4Queue(items,kind,current,emptyText) {
+ if(!items.length)return empty(emptyText);
+ return `<div class="queue r4-queue">${items.map(x=>{
+  return `<button type="button" class="queue-item r4-person${x.id===current?' current':''}" data-action="pick" data-kind="${esc(kind)}" data-id="${x.id}" aria-pressed="${x.id===current}"><span class="r4-number">${x.id}</span><span class="r4-person-text"><b title="${esc(x.name)}">${esc(x.name)}</b><span title="${esc(x.sub)}">${esc(x.sub)}</span></span>${x.amount?`<strong>${esc(x.amount)}</strong>`:''}</button>`;
+ }).join('')}</div>`;
+}
+
 // Hàng chờ: mỗi dòng là một nút bấm lớn, dùng tốt trên điện thoại.
 function queue(items,{kind,current,emptyText}){if(!items.length)return empty(emptyText);
  return `<div class="queue">${items.map(x=>`<button type="button" class="queue-item${x.id===current?' current':''}" data-action="pick" data-kind="${esc(kind)}" data-id="${Number(x.id)}" aria-pressed="${x.id===current}"><span class="queue-main">${x.main}</span><span class="queue-sub">${x.sub||''}</span></button>`).join('')}</div>`}
@@ -162,11 +176,11 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&auth)refr
 scheduleCounts();
 let renderEpoch=0;
 const SCREENS={reception:receptionScreen,prices:pricesScreen,doctor:doctorScreen,nurse:nurseScreen,lab:labScreen,pharmacy:pharmacyScreen,cashier:cashierScreen,manager:managerScreen,'price-management':priceManagementScreen,admin:adminScreen,settings:settingsScreen,password:passwordPage};
-async function render(){if(!auth){renderLogin();return}viewInit();const page=active,epoch=++renderEpoch;$('workspace').setAttribute('aria-busy','true');$('workspace').dataset.page=page;$('workspace').innerHTML=card('Đang tải dữ liệu ...');try{
+async function render(){if(!auth){renderLogin();return}viewInit();const page=active,epoch=++renderEpoch;$('workspace').setAttribute('aria-busy','true');$('workspace').dataset.page=page;$('workspace').innerHTML=renderState('loading','Đang tải danh sách…');try{
  if(!uiLoaded)await loadUi();
  const out=await SCREENS[page]();if(epoch!==renderEpoch)return;
  const html=typeof out==='string'?out:out.html;$('workspace').innerHTML=html;labelTables($('workspace'));if(out&&out.after)out.after();
- }catch(e){if(epoch!==renderEpoch)return;$('workspace').innerHTML=card(`<div class="empty">Không thể tải trang: ${esc(e.message)}</div>`)}finally{if(epoch===renderEpoch){await refreshCounts();if(epoch===renderEpoch)$('workspace').setAttribute('aria-busy','false')}}}
+ }catch(e){if(epoch!==renderEpoch)return;$('workspace').innerHTML=renderState('error','Không thể tải trang: '+e.message)}finally{if(epoch===renderEpoch){await refreshCounts();if(epoch===renderEpoch)$('workspace').setAttribute('aria-busy','false')}}}
 const r2Mark='<svg class="r2-mark" aria-hidden="true" width="240" height="240" viewBox="0 0 100 100"><path fill="#FFFFFF" d="M50 2l9 12 15-4 2 15 14 6-6 14 8 13-13 8 1 15-15 1-8 13-12-9-13 6-5-14-15-3 3-15-11-10 11-10-3-15 15-3 5-14 13 6z"></path></svg>';
 function renderLogin(){document.body.classList.add('login-view');scopeWarnings.clear();priceFile=null;pricePreview=null;priceResult=null;auth=null;uiLoaded=false;for(const k in lastCounts)delete lastCounts[k];$('navigation').innerHTML='';$('page-title').textContent='Đăng nhập';$('user-label').textContent='Chưa đăng nhập';$('logout').classList.add('hidden');$('change-password').classList.add('hidden');$('workspace').setAttribute('aria-busy','false');
  const users=[['letan','Lễ tân'],['bs_noi','Bác sĩ Nội'],['bs_san','Bác sĩ Sản'],['kythuat','Kỹ thuật viên'],['duoc','Nhân viên dược'],['thungan','Thu ngân'],['quanly','Quản lý'],['quantri','Quản trị viên'],['dieuduong','Điều dưỡng']];
@@ -294,11 +308,13 @@ async function labScreen(){
  orderList=await api('/orders');const todo=orderList.filter(o=>o.status==='ordered'),sent=orderList.filter(o=>o.status==='pending_review');
  const editable=[...todo,...sent];if(!editable.some(o=>o.id===sel.order))sel.order=todo[0]?.id??null;
  const o=orderList.find(x=>x.id===sel.order);
- const form=o?`<div class="patient-head"><div><b>${esc(o.name)}</b> <span class="muted">${esc(vi(o.category))}</span></div><div class="muted">${esc(o.patient_name)} · ${esc(o.patient_code)} · chỉ định #${o.id}</div><div>${pill(o.status)}</div></div><button type="button" data-s1-result-history="${o.id}">Xem các phiên bản kết quả</button><form data-form="result" class="fields">${hidden('order_id',o.id)}${hidden('result_version',o.result_version||0)}${textarea('Nội dung kết quả','result_text','Mỗi chỉ số một dòng: Tên | Kết quả | Đơn vị | Tham chiếu | Đánh dấu\nVí dụ: Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nDòng cuối: Kết luận: ...')}<p class="hint wide">Xét nghiệm: mỗi chỉ số một dòng, ngăn bằng dấu |. Siêu âm, X-quang, điện tim: mô tả tự do. Dòng bắt đầu bằng "Kết luận:" được in vào mục Kết luận.</p><div class="wide"><button class="btn">Gửi kết quả cho bác sĩ duyệt</button></div></form><form data-form="attach" class="fields" enctype="multipart/form-data">${hidden('attach_order',o.id)}<div class="field"><label for="attachment">Tệp kết quả PDF/PNG/JPG (tối đa 5 MB)</label><input id="attachment" type="file" name="attachment" accept=".pdf,.png,.jpg,.jpeg" required></div><div class="field"><button class="ghost">Đính kèm tệp</button></div></form>`:empty('Chọn một chỉ định trong hàng chờ.');
- const item=x=>({id:x.id,main:`${esc(x.name)} · ${esc(x.patient_name)}`,sub:`${esc(x.patient_code)} · ${pill(x.status)}${x.file_name?' · có tệp':''}`});
- return {html:card(queue(todo.map(item),{kind:'order',current:sel.order,emptyText:'Không còn chỉ định chờ làm.'}),`Chỉ định chờ làm (${todo.length})`)+
-  card(form,'Nhập kết quả')+(sent.length?details(`Đã gửi, chờ bác sĩ duyệt (${sent.length}) — vẫn sửa được`,queue(sent.map(item),{kind:'order',current:sel.order,emptyText:''})):''),
+ const form=o?`<div class="patient-head"><div><b>${esc(o.name)}</b> <span class="muted">${esc(vi(o.category))}</span></div><div class="muted"><span class="r4-name" title="${esc(o.patient_name)}">${esc(o.patient_name)}</span> · ${esc(o.patient_code)} · chỉ định #${o.id}</div><div>${pill(o.status)}</div></div><button type="button" data-s1-result-history="${o.id}">Xem các phiên bản kết quả</button><form data-form="result" class="fields">${hidden('order_id',o.id)}${hidden('result_version',o.result_version||0)}${textarea('Nội dung kết quả','result_text','Mỗi chỉ số một dòng: Tên | Kết quả | Đơn vị | Tham chiếu | Đánh dấu\nVí dụ: Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nDòng cuối: Kết luận: ...')}<p class="hint wide">Xét nghiệm: mỗi chỉ số một dòng, ngăn bằng dấu |. Siêu âm, X-quang, điện tim: mô tả tự do. Dòng bắt đầu bằng "Kết luận:" được in vào mục Kết luận.</p><div class="wide"><button class="btn">Gửi kết quả cho bác sĩ duyệt</button></div></form><form data-form="attach" class="fields" enctype="multipart/form-data">${hidden('attach_order',o.id)}<div class="field"><label for="attachment">Tệp kết quả PDF/PNG/JPG (tối đa 5 MB)</label><input id="attachment" type="file" name="attachment" accept=".pdf,.png,.jpg,.jpeg" required></div><div class="field"><button class="ghost">Đính kèm tệp</button></div></form>`:empty('Chọn một chỉ định trong hàng chờ.');
+ const items=editable.map(x=>{
+  return {id:x.id,name:x.patient_name,sub:x.name+' · '+vi(x.status)};
+ });
+ return {html:`<div class="r4-layout r4-lab"><aside><h1>Xét nghiệm</h1><div class="r4-tabs"><span>Đang làm ${todo.length}</span><span>Chờ duyệt ${sent.length}</span></div>${r4Queue(items,'order',sel.order,'Không còn chỉ định chờ làm.')}</aside><section class="card r4-editor">${form}</section></div>`,
   after(){if(o&&$('result_text'))$('result_text').value=o.result_text||''}}}
+
 
 // ---------- Điều dưỡng: lượt được giao → sinh hiệu, y lệnh ----------
 async function nurseScreen(){
@@ -365,23 +381,27 @@ async function cashierScreen(){
  const visible=owing.slice((page-1)*100,page*100);
  const pager=`<div class="toolbar-actions"><span>Trang ${page}/${pages} · ${owing.length} lượt</span>${page>1?btn('Trang trước','cash-page',`data-id="${page-1}"`):''}${page<pages?btn('Trang sau','cash-page',`data-id="${page+1}"`):''}</div>`;
  if(!dues.some(d=>d.visit_id===sel.cashVisit))sel.cashVisit=owing[0]?.visit_id??null;
- const head=card(queue(visible.map(d=>({id:d.visit_id,main:`#${d.visit_id} · ${esc(d.patient_name)}`,sub:`${esc(d.patient_code)} · ${d.unpriced_count?`CHƯA CÓ GIÁ (${d.unpriced_count} khoản)`:'còn '+money(d.charged-d.paid)}`})),{kind:'cash',current:sel.cashVisit,emptyText:'Không còn lượt cần thu tiền.'})+pager+
-  `<div class="toolbar-actions">${selectField('Chọn lượt khác','cash_choose',[['','— Chọn —'],...dues.map(d=>[d.visit_id,`#${d.visit_id} – ${d.patient_name} (${d.unpriced_count?'CHƯA CÓ GIÁ':'còn '+money(d.charged-d.paid)})`])])}</div>`,`Lượt còn nợ (${owing.length})`);
+ const head=`<aside class="r4-cash-waiting"><h1>Thu tiền</h1><p>${owing.length} lượt chờ thu</p>`+r4Queue(visible.map(d=>{
+  return {id:d.visit_id,name:d.patient_name,sub:d.patient_code+' · '+(d.unpriced_count?'CHƯA CÓ GIÁ ('+d.unpriced_count+' khoản)':'Còn phải thu'),amount:d.unpriced_count?'CHƯA CÓ GIÁ':money(d.charged-d.paid)};
+ }),'cash',sel.cashVisit,'Không còn lượt cần thu tiền.')+pager+
+  `<div class="toolbar-actions">${selectField('Chọn lượt khác','cash_choose',[['','— Chọn —'],...dues.map(d=>[d.visit_id,`#${d.visit_id} – ${d.patient_name} (${d.unpriced_count?'CHƯA CÓ GIÁ':'còn '+money(d.charged-d.paid)})`])])}</div></aside>`;
  const payHistory=details('Lịch sử thu',t(pays.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.patient_name)}<div class="muted">lượt #${x.visit_id} · ${showDay(x.created_at)}</div></td><td>${money(x.amount)}<div class="muted">${PAYMENT_KIND[x.kind]||''}</div></td><td>${esc(vi(x.method))}</td><td>${receiptButton(x,true)}</td></tr>`),['Mã thu','Bệnh nhân','Số tiền','Hình thức','']));
  const myRequests=details('Đề nghị giảm phí / hoàn tiền đang chờ',t(adj.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.patient_name)}<div class="muted">lượt #${x.visit_id}</div></td><td>${esc(vi(x.kind))} — ${money(x.amount)}</td><td>${pill(x.status)}</td></tr>`),['Mã','Bệnh nhân','Loại','Trạng thái']))+
   details('Đề nghị sửa giá nhập tay đang chờ',t(manualRequests.map(x=>`<tr><td>#${x.id} · lượt #${x.visit_id}</td><td>${esc(x.description)}</td><td>${money(x.previous_amount)} → ${money(x.new_amount)}</td><td>${pill(x.status)}</td></tr>`),['Đề nghị','Nội dung','Giá','Trạng thái']));
  const requestHistory=details('Lịch sử đề nghị đã xử lý',t([...adjHistory,...manualHistory.filter(x=>x.status!=='pending')].map(x=>`<tr><td>#${x.id}</td><td>${esc(x.reason)}</td><td>${pill(x.status)}</td></tr>`),['Mã','Lý do','Trạng thái']));
- if(!sel.cashVisit)return {html:head+myRequests+requestHistory+payHistory};
+ if(!sel.cashVisit)return {html:`<div class="r4-layout r4-cash">${head}<div>${myRequests+requestHistory+payHistory}</div></div>`};
  const vid=sel.cashVisit,d=dues.find(x=>x.visit_id===vid);
  const [lines,state]=await Promise.all([api('/charges/'+vid),api('/visits/'+vid+'/settlement')]);
  const due=Math.max(0,d.charged-d.paid),unpriced=d.unpriced_count>0,mine=pays.filter(p=>p.visit_id===vid);
- const bill=t(lines.map(x=>`<tr><td>${esc(x.label)}<div>${esc(x.description||'')}</div></td><td>${money(x.amount)}</td><td>${x.void_reason?`<span class="status error">Đã hủy – ${esc(x.void_reason)}</span>`:'Còn hiệu lực'}</td></tr>`),['Khoản','Số tiền','Trạng thái'])+stats([[unpriced?'Phải thu đã biết':'Phải thu',money(d.charged)],['Đã thu',money(d.paid)],['Còn phải thu',unpriced?'CHƯA CÓ GIÁ':money(due)],...(state.billing.refund_due?[['Cần hoàn',money(state.billing.refund_due)]]:[])])+manualChargeForms(lines);
+ const bill=`<div class="r4-bill">${lines.map(x=>{
+  return `<div class="r4-bill-line"><span>${esc(x.label)}${x.description?`<small>${esc(x.description)}</small>`:''}${x.void_reason?`<span class="status error">Đã hủy – ${esc(x.void_reason)}</span>`:''}</span><b>${money(x.amount)}</b></div>`;
+ }).join('')}</div>`+stats([[unpriced?'Phải thu đã biết':'Phải thu',money(d.charged)],['Đã thu',money(d.paid)],['Còn phải thu',unpriced?'CHƯA CÓ GIÁ':money(due)],...(state.billing.refund_due?[['Cần hoàn',money(state.billing.refund_due)]]:[])])+manualChargeForms(lines);
  const priced=lines.reduce((s,x)=>s+(x.amount==null?0:Number(x.amount)),0),provisionalBefore=mine.filter(x=>x.kind==='provisional').reduce((s,x)=>s+Number(x.amount),0);
- const pay=(due>0||unpriced)&&state.clinical_status!=='cancelled'?`<form data-form="payment" class="fields" data-unpriced="${unpriced?'1':'0'}" data-priced="${priced}" data-before="${provisionalBefore}">${hidden('visit_id',vid)}<div class="approve-box hidden wide" data-cap-confirm><span data-cap-text></span><label class="check"><input type="checkbox" name="confirm_over_limit" value="1"> <b>Tôi xác nhận thu tạm vượt trần cho lượt này</b></label></div>${unpriced?'<p class="hint wide">Còn khoản CHƯA CÓ GIÁ: chỉ thu tạm; chưa thể xác định tổng tiền hoặc hết nợ.</p>':''}${field(unpriced?'Số tiền thu tạm (VNĐ)':'Số tiền thu (VNĐ)','amount','number','',true)}${selectField('Hình thức','method',[['cash','Tiền mặt'],['transfer','Chuyển khoản (đã đối chiếu)']])}${field('Mã giao dịch (nếu chuyển khoản)','external_ref')}<div class="wide"><button class="btn">${unpriced?'Thu tạm một phần':'Thu tiền'}</button></div></form>`:'<p class="hint">Lượt này không còn khoản phải thu.</p>';
+ const pay=(due>0||unpriced)&&state.clinical_status!=='cancelled'?`<form data-form="payment" class="fields" data-unpriced="${unpriced?'1':'0'}" data-priced="${priced}" data-before="${provisionalBefore}">${hidden('visit_id',vid)}<div class="approve-box hidden wide" data-cap-confirm><span data-cap-text></span><label class="check"><input type="checkbox" name="confirm_over_limit" value="1"> <b>Tôi xác nhận thu tạm vượt trần cho lượt này</b></label></div>${unpriced?'<p class="hint wide">Còn khoản CHƯA CÓ GIÁ: chỉ thu tạm; chưa thể xác định tổng tiền hoặc hết nợ.</p>':''}${field(unpriced?'Số tiền thu tạm (VNĐ)':'Số tiền thu (VNĐ)','amount','number','',true)}<div class="r4-method"><span>Hình thức</span><div class="r4-method-value">${selectField('Hình thức','method',[['cash','Tiền mặt'],['transfer','Chuyển khoản (đã đối chiếu)']])}</div><div role="group" aria-label="Hình thức thanh toán"><button type="button" data-r4-method="cash" aria-pressed="true">Tiền mặt</button><button type="button" data-r4-method="transfer" aria-pressed="false" title="Chuyển khoản đã đối chiếu">Chuyển khoản</button></div></div>${field('Mã giao dịch (nếu chuyển khoản)','external_ref')}<div class="wide"><button class="btn">${unpriced?'Thu tạm một phần':'Thu tiền'}</button></div></form>`:'<p class="hint">Lượt này không còn khoản phải thu.</p>';
  const advance=ui.advance_payment&&!unpriced&&OPEN({status:state.clinical_status})?details('Nhận tiền ứng trước',`<form data-form="advance" class="fields">${hidden('visit_id',vid)}${field('Số tiền ứng trước','amount','number','',true)}${selectField('Hình thức','method',[['cash','Tiền mặt'],['transfer','Chuyển khoản']])}<div class="wide"><button class="btn">Nhận ứng trước</button></div></form>`):'';
  const receipts=t(mine.map(x=>`<tr><td>#${x.id}</td><td>${money(x.amount)}<div class="muted">${PAYMENT_KIND[x.kind]||''} · ${showDay(x.created_at)}</div></td><td>${esc(vi(x.method))}</td><td>${receiptButton(x)}</td></tr>`),['Mã thu','Số tiền','Hình thức','']);
  const adjust=card(`<form data-form="adjustment" class="fields" data-patient="${esc(d.patient_name)}" data-visit="${vid}">${hidden('visit_id',vid)}<div class="wide adjust-for">Cho bệnh nhân <b>${esc(d.patient_name)}</b> · lượt <b>#${vid}</b></div>${selectField('Loại đề nghị','kind',[['discount','Giảm phí'],['refund','Hoàn phần trả thừa']])}${field('Số tiền (VNĐ)','amount','number','',true)}${selectField('Phiếu thu cần hoàn (chỉ khi hoàn tiền)','payment_id',[['','Không áp dụng'],...mine.map(x=>[x.id,`#${x.id}: ${money(x.amount)}`])])}${field('Lý do','reason','text','Tối thiểu 5 ký tự',true)}<div class="approve-box hidden wide" data-adjust-confirm></div><div class="wide"><button class="btn">Xem lại đề nghị</button></div></form>`,'Đề nghị giảm phí / hoàn tiền cho lượt này');
- return {html:head+`<div class="patient-head"><div><b>${esc(d.patient_name)}</b> <span class="muted">${esc(d.patient_code)}</span></div><div class="muted">lượt #${vid}</div><div>${pill(state.clinical_status)}</div></div>`+stepCard(1,'Bảng kê',bill)+stepCard(2,'Thu tiền',pay)+advance+stepCard(3,'In phiếu thu',receipts)+adjust+myRequests+requestHistory+payHistory,
+ return {html:`<div class="r4-layout r4-cash">${head}<div class="r4-cash-record"><section class="r2-hero r4-cash-hero">${r2Mark}<span class="r4-name" title="${esc(d.patient_name)}">${esc(d.patient_name)} · Số ${vid} · Mã NB ${esc(d.patient_code)}</span><span>Cần thu${unpriced?' (chưa đủ giá)':''}</span><h1>${unpriced?'CHƯA CÓ GIÁ':money(due)}</h1><div>${pill(state.clinical_status)}</div></section>`+stepCard(1,'Bảng kê',bill)+stepCard(2,'Thu tiền',pay)+advance+stepCard(3,'In phiếu thu',receipts)+adjust+myRequests+requestHistory+payHistory+'</div></div>',
   after(){const a=document.querySelector('[data-form="payment"] [name="amount"]');if(a)a.value=unpriced?'':due}}}
 
 // ---------- Quản lý: duyệt, lượt khám, danh mục, báo cáo ----------
@@ -636,6 +656,7 @@ async function navigateDoctorTab(target){
   section.scrollIntoView({block:'start'});return;
  }
 async function handleClick(element){const action=element.dataset.action,id=Number(element.dataset.id),approve=element.dataset.value==='approve';let msg='';
+ if(action==='r4-reload'){await render();return;}
  if(action==='close-m0-dialog'){$('m0-dialog')?.close();return;}
  if(action==='catalog-pick'){chooseCatalog(element);return;}
  if(action==='patient-details'){const p=await api('/patients/'+id);showM0Dialog('<h2>Hồ sơ hành chính · '+esc(p.full_name)+'</h2>'+stats([['Giấy tờ',esc(p.document_number||p.citizen_id||'Không có')],...ADMIN_FIELDS.map(([k,l])=>[l,esc(p[k]||'Chưa khai')]),['Địa chỉ cũ',esc(p.address||'Chưa khai')]]));return;}
@@ -824,3 +845,14 @@ document.addEventListener('input',e=>{const f=e.target.closest('[data-form=passw
 
 function placeDoctorExports(){const group=document.querySelector('.r3-exam-export-buttons'),dock=document.querySelector('.r3-exam-dock'),block=document.querySelector('.r3-exam-documents');if(!group||!dock||!block)return;const mobile=matchMedia('(max-width:900px)').matches;block.hidden=!mobile;(mobile?block:dock).append(group)}
 matchMedia('(max-width:900px)').addEventListener('change',placeDoctorExports);
+
+
+document.addEventListener('click',event=>{
+ const button=event.target.closest('[data-r4-method]');
+ if(!button)return;
+ const group=button.closest('.r4-method');
+ group.querySelector('[name=method]').value=button.dataset.r4Method;
+ group.querySelectorAll('[data-r4-method]').forEach(option=>{
+  option.setAttribute('aria-pressed',String(option===button));
+ });
+});

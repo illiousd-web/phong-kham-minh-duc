@@ -16,7 +16,7 @@ const sharedGlobals = {
     "app/static/app.js": ["M5", "M6"],
     "app/static/m5.js": [
         "LABEL", "M6", "SCREENS", "api", "auth", "authHeader", "cap", "card",
-        "esc", "labelTables", "menus", "notify", "parseDay", "render",
+        "esc", "empty", "r2Mark", "labelTables", "menus", "notify", "parseDay", "render",
         "scopeWarnings", "sel", "showDay", "t",
     ],
     "app/static/m6.js": [
