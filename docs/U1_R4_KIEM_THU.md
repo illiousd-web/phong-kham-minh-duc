@@ -44,3 +44,11 @@ Nhánh `feat/u1-r4-xn-thu-ngan`, gốc `main` tại `e02afba`.
 - Thu ngân giữ các phần giá chưa xác định, thu tạm, ứng trước, đề nghị điều chỉnh và lịch sử; không tạo nút in trước khi có chứng từ. Không thêm phép tính Khách đưa/Trả lại hoặc đổi cách tính công nợ.
 - Chờ S2: tín hiệu sao lưu đang diễn ra, quy tắc bảo toàn dữ liệu nhập và lịch thử lại có xác nhận từ máy chủ; phân biệt mất mạng với lỗi máy chủ; tín hiệu ổ gần đầy và trạng thái khóa ghi thực tế. Không hiển thị các lời khẳng định này từ lỗi tải chung.
 - Chưa xác nhận 5 job CI xanh; không hợp nhất.
+
+## Sửa tiếp PR #35 — radio hình thức thu tiền
+
+- Thay hai nút phụ và select ẩn bằng radio native `name="method"`, giá trị `cash`/`transfer`; form payment chỉ có một button thu. Bỏ handler data-r4-method. Nhãn dạng nút chọn, vùng radio cao 48px, có focus bàn phím.
+- Thêm test Chromium 390px trong test_administrative_browser.py: chọn bằng ArrowRight, kiểm focus/chiều cao, thu 1.000 đồng, xác nhận payload và bản ghi CSDL đều là transfer.
+- test_manual_prices.py + test_mot_ngay_kham.py + test_administrative_browser.py: 20 đạt.
+- test_browser_https.py -k "u1r1 and cashier": 1 đạt (1366px), 1 lỗi (390px), 15 không chọn. Lỗi còn lại tại dòng 484: test đòi gradient `15% 10%`, CSS body cashier dùng `15% 15%` như KH_ThuNgan.html:19. Không liên quan locator payment button; giữ nguyên test và nền theo yêu cầu báo nguyên nhân.
+- Không sửa các test đang đỏ. Chỉ cập nhật phần kiểm tra chọn hình thức do R4 đã thêm trong test_c5_queue_pages.py từ nút sang radio; không chạy C5 ngoài danh sách cho phép. Không chạy các tệp test khác; không đổi API/cách tính tiền/workflow. Chưa xác nhận đủ 5 job CI xanh.
