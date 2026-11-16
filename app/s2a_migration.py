@@ -33,6 +33,7 @@ if __name__ == '__main__':
     if not args.sqlite.is_file():
         parser.error('Không có CSDL SQLite để nâng cấp / quay lui')
     with sqlite3.connect(args.sqlite) as connection:
+        connection.execute('PRAGMA recursive_triggers=ON')
         connection.execute('PRAGMA foreign_keys=ON')
         connection.execute('BEGIN IMMEDIATE')
         migrate_s2a(connection, down=args.down)

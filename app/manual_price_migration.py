@@ -99,6 +99,7 @@ def rebuild_sqlite(c, table, column, nullable, categories=False):
 
 def migrate_sqlite_manual_prices(path, *, down=False):
     c = sqlite3.connect(path, timeout=10)
+    c.execute('PRAGMA recursive_triggers=ON')
     try:
         c.execute('PRAGMA foreign_keys=OFF')
         c.execute('BEGIN IMMEDIATE')

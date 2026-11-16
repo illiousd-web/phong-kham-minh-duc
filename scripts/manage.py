@@ -16,7 +16,7 @@ def main():
     sub.add_parser('migrate')
     sub.add_parser('rollback-manual-prices', help='Quay lui migration giá nhập tay nếu chưa có dữ liệu của chức năng này')
     sub.add_parser('rollback-s2a', help='Quay lui S2a khi chưa có thông tin phòng khám hoặc chữ ký')
-    sub.add_parser('rollback-s2c-018', help='Quay lui migration 018 về trigger 017')
+    sub.add_parser('rollback-s2c', help='Quay lui migration 017 khi chưa có bản ký')
     sub.add_parser('rollback-s2b', help='Quay lui S2b khi chưa có dữ liệu kho mới')
     user = sub.add_parser('create-admin')
     user.add_argument('--username', required=True)
@@ -42,11 +42,11 @@ def main():
             migrate_s2a(c, postgres=True, down=True)
         print('Đã quay lui S2a; dữ liệu trước nâng cấp giữ nguyên.')
         return
-    if args.command == 'rollback-s2c-018':
-        from app.s2c_migration_018 import migrate_018
+    if args.command == 'rollback-s2c':
+        from app.s2c_migration import migrate_s2c
         with db(True) as c:
-            migrate_018(c, postgres=True, down=True)
-        print('Đã quay lui migration 018 về trigger 017.')
+            migrate_s2c(c, postgres=True, down=True)
+        print('Đã quay lui migration 017.')
         return
     if args.command == 'rollback-s2b':
         from app.s2b_migration import migrate_s2b

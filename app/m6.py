@@ -348,7 +348,12 @@ def payload(c, rx, code=None, locked_at=None):
         active = components(item['ingredient'])
         item['display_name'] = ((item['brand_name'] or item['name']) if len(active) > 1 else (active[0] if active else item['name']) + (' ('+item['brand_name']+')' if item['brand_name'] else ''))
     items.sort(key=lambda x: not x['toxic'])
-    age = months_old(p['date_of_birth'])
+    from datetime import datetime
+    from .labels import VN_TZ
+    when = datetime.fromisoformat(rx['created_at'].replace('Z', '+00:00'))
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=VN_TZ)
+    age = months_old(p['date_of_birth'], when)
     return {'schema_version': '1.0', 'local_code': code if locked_at is not None else (rx['local_code'] if clinic['clinic_facility_code'] and (rx['local_code'] or '').startswith(clinic['clinic_facility_code']) else None), 'national_code': None,
             'integration_status': 'CHƯA LIÊN THÔNG', 'footer': {'reminder': 'Khám lại xin mang theo đơn này.'}, 'facility': clinic,
             'patient': {'full_name': p['full_name'], 'document_type': p['document_type'],
@@ -585,10 +590,11 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         from .m6_forms import render
         with db('access') as c:
             rx = access(c, rid, u)
-            from .document_signatures import clinical_print_data, valid_signature
+            from .document_signatures import clinical_print_data, valid_signature, signature_notice
             value = clinical_print_data(c, rx)
             from .s2c_forms import from_m6
             value['signature'] = valid_signature(c, 'clinical_rx', rid, models=[from_m6(value,rx['status'])])
+            value['signature_notice'] = signature_notice(c, 'clinical_rx', rid, value['signature'])
             content = render(value, rx['status'], fmt)
             audit(c, u, 'clinical_rx_printed', 'clinical_prescription', rid, fmt)
         mime = 'application/pdf' if fmt == 'pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'

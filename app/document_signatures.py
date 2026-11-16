@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .auth import verify
 from .clinic_profile import read_profile
-from .s2c_forms import from_context, from_m6, laboratory
+from .s2c_forms import from_context, from_m6, laboratory, printed_content
 
 KINDS = Literal['rx', 'order', 'lab', 'clinical_rx', 'lab_report']
 
@@ -27,6 +27,9 @@ def lab_print_data(c, r, o):
     p['clinic_profile'] = read_profile(c)
     visit = dict(c.execute('SELECT * FROM visits WHERE id=?', (o['visit_id'],)).fetchone())
     p['diagnosis'] = diagnosis_text(visit)
+    from .practitioners import printed_name
+    p['performer_name'] = printed_name(c, r['performed_by'])
+    p['approver_name'] = printed_name(c, r['approved_by'])
     successor = c.execute("SELECT id FROM lab_reports WHERE replaces_id=? AND status='approved'", (r['id'],)).fetchone()
     if successor:
         p['superseded_by'] = successor['id']
@@ -37,6 +40,8 @@ def clinical_print_data(c, rx):
     from .m6 import payload
     p = json.loads(rx['snapshot']) if rx['snapshot'] else payload(c, rx)
     p['clinic_profile'] = read_profile(c)
+    from .practitioners import printed_name
+    p['prescriber']['name'] = printed_name(c, rx['doctor_id'])
     patient = c.execute('SELECT p.code FROM patients p JOIN visits v ON v.patient_id=p.id WHERE v.id=?', (rx['visit_id'],)).fetchone()
     p['patient']['code'] = patient['code']
     p['print_number'] = rx['local_code'] or f"MD-RX-{rx['id']:06d}"
@@ -78,7 +83,7 @@ def load_document(c, kind, object_id):
 
 
 def content_hash(models):
-    encoded = json.dumps(models, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+    encoded = json.dumps([printed_content(m) for m in models], ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -87,13 +92,19 @@ def valid_signature(c, kind, object_id, document=None, *, models=None):
     if models is not None:
         d = {**d, 'content_hash': content_hash(models)}
     s = c.execute('SELECT * FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id DESC LIMIT 1', (kind, object_id)).fetchone()
-    if not s or s['invalidated']:
+    if not s:
         return None
     if not hmac.compare_digest(s['content_hash'], d['content_hash']):
         return None
     if not d['allowed'] or s['signed_by'] != d['actor']:
         return None
     return {**dict(s), 'image': bytes(s['image'])}
+
+
+def signature_notice(c, kind, object_id, signature):
+    if signature is None and c.execute('SELECT 1 FROM document_signatures WHERE document_kind=? AND document_id=? LIMIT 1', (kind, object_id)).fetchone():
+        return 'Phiếu đã thay đổi sau khi ký, cần ký lại'
+    return ''
 
 
 def install_document_signatures(app, db, principal, require, audit, now):

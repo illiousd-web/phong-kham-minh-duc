@@ -5,10 +5,11 @@ Nhánh `feat/s2c-mau-in`, gốc `9647e1e`, PR #40. Mẫu trang 29–33; đầu p
 - Sửa bắt buộc PR #40: bỏ từ chối in do vượt A4. PDF/Word dài tự sang trang, giữ nguyên cỡ chữ và đủ nội dung; trang tiếp nối lặp họ tên, mã NB, số phiếu/mã đơn nội bộ; mọi trang có `Trang x/y`. Tiêu đề bảng xét nghiệm lặp; khối ký/ảnh ký chỉ ở trang cuối, cùng dòng nội dung cuối.
 - Giữ kiểm nội dung thông thường một trang A4, ký đúng người, mật khẩu/audit, sửa mất hiệu lực, trẻ dưới 72 tháng thiếu cân nặng, ↑/↓ đậm và xem trước → nạp Excel **78 chỉ số / 82 tham chiếu**.
 - Thêm **7 ca phân trang**: ba nhóm 60 chỉ số, đơn 25 thuốc, lời dặn dài, cách dùng dài, chỉ định dài. Kiểm đủ từng dòng, đuôi, số lần lặp, cỡ chữ, đầu/chân trang và chữ ký cuối; kiểm cả Word chuyển PDF bằng LibreOffice cục bộ. Khôi phục kiểm đủ TAIL_MARKER ở cả ba phiếu trong bài LAN.
-- Migration **018**: thay đổi một chỉ định vô hiệu mọi phiếu chỉ định ký của cùng lượt; xét nghiệm và đơn giới hạn theo tài liệu. Đổi tên/chức danh in chỉ vô hiệu các bản ký có tên người đó, gồm người ký và người liên quan trên phiếu xét nghiệm. Xem/in chỉ kiểm hash, không ghi bất kỳ bản ký nào. Quay lui 018 khôi phục trigger 017 và bị từ chối nếu có lịch sử ký; vai trò ứng dụng chỉ được cập nhật cột vô hiệu.
-- Kiểm cục bộ: 71 bài Python, 38 bài LAN liên quan và 8 bài tài nguyên/C5 đạt; thêm các ca ký thật qua API, ba trường tên, tài khoản khác, yêu cầu đọc cũ hoàn tất sau khi ký bản mới và luồng đọc không ghi, từ chối quay lui. Hai ca lời dặn dài và Word qua LibreOffice được giữ. Ruff, ESLint, checksum và diff-check đạt. Theo yêu cầu không theo dõi GitHub Actions; chưa kiểm máy in thật/Word tại phòng khám.
+- Thiết kế chữ ký mới: chỉ hiện ảnh khi nội dung in hiện tại khớp mã băm bản ký mới nhất, đúng người chịu trách nhiệm và phiếu còn hợp lệ. Nếu không khớp, không hiện ảnh và có thông báo cần ký lại. Luồng xem/in không ghi bảng ký.
+- Một migration **017 sạch**, schema 17; bỏ 018, `invalidated` và mọi trigger vô hiệu nguồn. Bảng ký chặn UPDATE/DELETE; SQLite bật recursive_triggers trên các kết nối để chặn cả REPLACE. Vai trò PostgreSQL bị thu hồi UPDATE/DELETE/TRUNCATE; quay lui từ chối khi có bản ký.
+- Mã băm chỉ dùng các khối thực sự in; tuổi theo ngày khám/lập phiếu/lấy mẫu. Kiểm tại chỗ đạt **73 bài Python**, **38 bài LAN**, **11 bài guard/tuổi/tài nguyên** và kiểm quyền PostgreSQL bổ sung. Các ca API bao gồm thay đổi in/không in, thông báo PDF/Word, ký lại, tên người ký, đọc cũ/ký mới, bản điều chỉnh XN nháp và REPLACE. Ruff, ESLint, checksum và diff-check đạt. Không theo dõi GitHub Actions theo yêu cầu; chưa kiểm máy in thật/Microsoft Word tại cơ sở.
 
-Chi tiết và căn cứ cập nhật assertion: [S2C_MAU_IN.md](S2C_MAU_IN.md). Lần chạy cục bộ dùng dữ liệu giả lập, PostgreSQL 17 và Chromium cục bộ; không thay timeout hoặc bỏ bài kiểm.
+Chi tiết và căn cứ cập nhật assertion: [S2C_MAU_IN.md](S2C_MAU_IN.md). Lần chạy cục bộ dùng dữ liệu giả lập, PostgreSQL 17 và Chromium cục bộ; không nới assertion ngoài phạm vi chữ ký và phiên bản schema.
 
 Số dòng sau sửa; `+ / −` so với `9647e1e`; tệp nhị phân không tính dòng.
 
@@ -16,19 +17,21 @@ Số dòng sau sửa; `+ / −` so với `9647e1e`; tệp nhị phân không tí
 |---|---:|---:|
 | `.github/workflows/clinic-tests.yml` | 596 | 2 / 2 |
 | `.gitignore` | 270 | 2 / 0 |
-| `app/database.py` | 183 | 2 / 0 |
-| `app/document_signatures.py` | 152 | 152 / 0 |
+| `app/database.py` | 184 | 3 / 0 |
+| `app/document_signatures.py` | 163 | 163 / 0 |
 | `app/form_pagination.py` | 205 | 205 / 0 |
-| `app/forms.py` | 497 | 62 / 20 |
-| `app/forms_api.py` | 147 | 19 / 0 |
-| `app/m5.py` | 481 | 19 / 6 |
+| `app/forms.py` | 501 | 67 / 21 |
+| `app/forms_api.py` | 149 | 21 / 0 |
+| `app/m5.py` | 482 | 20 / 6 |
 | `app/m5_forms.py` | 6 | 4 / 70 |
-| `app/m6.py` | 601 | 4 / 4 |
+| `app/m6.py` | 607 | 11 / 5 |
 | `app/m6_forms.py` | 6 | 3 / 81 |
-| `app/main.py` | 1101 | 11 / 0 |
-| `app/s2c_forms.py` | 535 | 535 / 0 |
-| `app/s2c_migration.py` | 81 | 81 / 0 |
-| `app/s2c_migration_018.py` | 96 | 96 / 0 |
+| `app/main.py` | 1102 | 12 / 0 |
+| `app/manual_price_migration.py` | 141 | 1 / 0 |
+| `app/s2a_migration.py` | 39 | 1 / 0 |
+| `app/s2b_migration.py` | 84 | 1 / 0 |
+| `app/s2c_forms.py` | 561 | 561 / 0 |
+| `app/s2c_migration.py` | 32 | 32 / 0 |
 | `app/static/MinhDuc_logo_in.png` | Nhị phân | - / - |
 | `app/static/app.js` | 1321 | 51 / 1 |
 | `app/static/m5.js` | 93 | 1 / 1 |
@@ -44,17 +47,18 @@ Số dòng sau sửa; `+ / −` so với `9647e1e`; tệp nhị phân không tí
 | `app/templates/08_Don_thuoc_A4.docx` | Nhị phân | - / - |
 | `app/templates/08_Don_thuoc_ngoai_tru_A5.docx` | 0 (xóa) | - / - |
 | `data/danh_muc_goc/chi_so_xet_nghiem_minh_duc.xlsx` | ChiSo: 78; ThamChieu: 82 | - / - |
-| `deploy/postgresql-roles.sql` | 60 | 10 / 0 |
-| `docs/S2C_BAO_CAO.md` | 72 | 72 / 0 |
-| `docs/S2C_MAU_IN.md` | 55 | 55 / 0 |
+| `deploy/postgresql-roles.sql` | 59 | 9 / 0 |
+| `docs/S2C_BAO_CAO.md` | 76 | 76 / 0 |
+| `docs/S2C_MAU_IN.md` | 41 | 41 / 0 |
 | `docs/assets-v031.sha256` | 35 | 13 / 9 |
 | `lan_tests/test_lan.py` | 304 | 38 / 3 |
 | `lan_tests/test_mot_ngay_kham.py` | 755 | 2 / 2 |
 | `lan_tests/test_s2a.py` | 134 | 4 / 2 |
-| `lan_tests/test_s2c.py` | 124 | 124 / 0 |
+| `lan_tests/test_s2c.py` | 68 | 68 / 0 |
 | `lan_tests/test_s2c_browser.py` | 71 | 71 / 0 |
 | `lan_tests/test_v050_migration.py` | 150 | 4 / 2 |
-| `migrations/017_s2c_signatures.sql` | 14 | 14 / 0 |
+| `migrations/017_s2c_signatures.sql` | 13 | 13 / 0 |
+| `scripts/backup_demo.py` | 90 | 3 / 0 |
 | `scripts/build_s2c_assets.py` | 198 | 198 / 0 |
 | `scripts/do_hieu_nang.py` | 486 | 4 / 1 |
 | `scripts/manage.py` | 76 | 7 / 0 |
@@ -62,10 +66,10 @@ Số dòng sau sửa; `+ / −` so với `9647e1e`; tệp nhị phân không tí
 | `tests/m5_cases.py` | 131 | 2 / 1 |
 | `tests/m6_cases.py` | 157 | 10 / 5 |
 | `tests/print_pagination_cases.py` | 79 | 79 / 0 |
-| `tests/s2c_cases.py` | 417 | 417 / 0 |
+| `tests/s2c_cases.py` | 334 | 334 / 0 |
 | `tests/test_s1_prescription.py` | 62 | 2 / 1 |
 | `tests/test_s2a.py` | 116 | 4 / 2 |
-| `tests/test_s2c.py` | 387 | 387 / 0 |
+| `tests/test_s2c.py` | 335 | 335 / 0 |
 | `tests/test_s2c_pagination.py` | 94 | 94 / 0 |
 | `tests/test_v041_fixes.py` | 106 | 3 / 1 |
 

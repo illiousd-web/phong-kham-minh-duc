@@ -7,8 +7,7 @@ CREATE TABLE document_signatures (
     signed_at TEXT NOT NULL,
     content_hash TEXT NOT NULL CHECK(length(content_hash)=64),
     image BLOB NOT NULL,
-    username TEXT NOT NULL,
-    invalidated INTEGER NOT NULL DEFAULT 0 CHECK(invalidated IN (0,1))
+    username TEXT NOT NULL
 );
 CREATE INDEX idx_document_signature ON document_signatures(document_kind,document_id,id);
-CREATE INDEX idx_document_signature_visit ON document_signatures(visit_id,invalidated);
+CREATE INDEX idx_document_signature_visit ON document_signatures(visit_id);

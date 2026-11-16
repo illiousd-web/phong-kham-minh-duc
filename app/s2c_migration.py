@@ -1,58 +1,17 @@
-"""S2c v17: append-only signing evidence; source edits invalidate prior signatures."""
+"""Unreleased S2c v17: immutable signing evidence, validated against printed content."""
 from pathlib import Path
-
-# The invalidation is permanent even if content is later changed back.
-# Updating the profile also changes the printed document and requires signing again.
-CHANGES = {
-    'visits': ('UPDATE', 'id'),
-    'patients': ('UPDATE', '(SELECT id FROM visits WHERE patient_id=OLD.id)'),
-    'orders': ('INSERT OR UPDATE OR DELETE', 'visit_id'),
-    'prescriptions': ('UPDATE', 'visit_id'),
-    'clinical_prescriptions': ('UPDATE', 'visit_id'),
-    'clinical_prescription_items': ('INSERT OR UPDATE OR DELETE', '(SELECT visit_id FROM clinical_prescriptions WHERE id={row}.prescription_id)'),
-    'lab_reports': ('INSERT OR UPDATE OR DELETE', '(SELECT visit_id FROM orders WHERE id={row}.order_id)'),
-    'lab_results': ('INSERT OR UPDATE OR DELETE', '(SELECT o.visit_id FROM orders o JOIN lab_reports r ON r.order_id=o.id WHERE r.id={row}.report_id)'),
-    'clinic_profile': ('UPDATE', None),
-}
-
-
-PRINTED_FIELDS = {
-    'visits': ('doctor_id','created_at','chief_complaint','diagnosis','diagnosis_codes','primary_icd10',
-               'follow_up','weight_kg','escort_name','escort_phone'),
-    'patients': ('full_name','code','date_of_birth','sex','phone','document_number','citizen_id',
-                 'address','address_detail','province','commune','occupation'),
-    'prescriptions': ('visit_id','doctor_id','drug_lines','instructions','follow_up','created_at'),
-}
-
-
-def update_condition(table, postgres):
-    fields=PRINTED_FIELDS.get(table)
-    if not fields:
-        return ''
-    different='IS DISTINCT FROM' if postgres else 'IS NOT'
-    terms=[f'OLD.{key} {different} NEW.{key}' for key in fields]
-    if table=='prescriptions':
-        terms.append(f"(OLD.status {different} NEW.status AND (OLD.status='cancelled' OR NEW.status='cancelled'))")
-    return ' WHEN ('+' OR '.join(terms)+')'
 
 
 def migrate_s2c(c, postgres=False, *, down=False):
     applied = bool(c.execute('SELECT 1 FROM schema_migrations WHERE version=17').fetchone())
     if applied == (not down):
-        if not down:
-            from .s2c_migration_018 import migrate_018
-            migrate_018(c, postgres)
         return
     if down:
         if c.execute('SELECT 1 FROM document_signatures LIMIT 1').fetchone():
             raise ValueError('Chưa quay lui S2c: đã có bản ký; khôi phục bản sao lưu trước nâng cấp để giữ lịch sử ký.')
-        from .s2c_migration_018 import migrate_018
-        migrate_018(c, postgres, down=True)
-        for table, (events, _) in CHANGES.items():
-            for event in events.split(' OR '):
-                c.execute(f'DROP TRIGGER s2c_{table}_{event.lower()}'+(f' ON {table}' if postgres else ''))
-                if postgres:
-                    c.execute(f'DROP FUNCTION s2c_{table}_{event.lower()}()')
+        if postgres:
+            c.execute('DROP TRIGGER s2c_signature_guard ON document_signatures')
+            c.execute('DROP FUNCTION s2c_signature_guard()')
         c.execute('DROP TABLE document_signatures')
         c.execute('DELETE FROM schema_migrations WHERE version=17')
         return
@@ -62,20 +21,12 @@ def migrate_s2c(c, postgres=False, *, down=False):
     for statement in ddl.split(';'):
         if statement.strip():
             c.execute(statement)
-    for table, (events, key) in CHANGES.items():
-        for event in events.split(' OR '):
-            row = 'NEW' if event == 'INSERT' else 'OLD'
-            expr = key.format(row=row) if key and key.startswith('(') else (row+'.'+key if key else None)
-            where = ('visit_id IN '+expr if expr and expr.startswith('(') else 'visit_id='+expr) if expr else '1=1'
-            update = 'UPDATE document_signatures SET invalidated=1 WHERE invalidated=0 AND '+where+';'
-            name = f's2c_{table}_{event.lower()}'
-            condition=update_condition(table,postgres) if event=='UPDATE' else ''
-            if postgres:
-                c.connection.execute(f'''CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$
-                    BEGIN {update} RETURN {row}; END $$;''')
-                c.execute(f'CREATE TRIGGER {name} AFTER {event} ON {table} FOR EACH ROW{condition} EXECUTE FUNCTION {name}()')
-            else:
-                c.execute(f'CREATE TRIGGER {name} AFTER {event} ON {table}{condition} BEGIN {update} END')
+    if postgres:
+        c.connection.execute("""CREATE FUNCTION s2c_signature_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'Không thể sửa hoặc xóa bản ký'; END $$;""")
+        c.execute('CREATE TRIGGER s2c_signature_guard BEFORE UPDATE OR DELETE ON document_signatures FOR EACH ROW EXECUTE FUNCTION s2c_signature_guard()')
+    else:
+        c.execute('PRAGMA recursive_triggers=ON')
+        for event in ('UPDATE', 'DELETE'):
+            c.execute(f"CREATE TRIGGER s2c_signature_guard_{event.lower()} BEFORE {event} ON document_signatures BEGIN SELECT RAISE(ABORT,'Không thể sửa hoặc xóa bản ký'); END")
     c.execute('INSERT INTO schema_migrations(version) VALUES(17)')
-    from .s2c_migration_018 import migrate_018
-    migrate_018(c, postgres)

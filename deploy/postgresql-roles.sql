@@ -49,12 +49,11 @@ DO $$ BEGIN
  END IF;
 END $$;
 
--- S2c: chỉ cho phép vô hiệu bản ký, không sửa hoặc xóa bằng vai trò ứng dụng.
+-- S2c: bản ký bất biến, chỉ thêm bản ký mới.
 DO $$ BEGIN
  IF to_regclass('public.document_signatures') IS NOT NULL THEN
   REVOKE UPDATE, DELETE, TRUNCATE ON document_signatures FROM clinic_app;
   EXECUTE (SELECT 'REVOKE UPDATE ('||string_agg(quote_ident(attname),',')||') ON document_signatures FROM clinic_app'
            FROM pg_attribute WHERE attrelid='document_signatures'::regclass AND attnum>0 AND NOT attisdropped);
-  GRANT UPDATE (invalidated) ON document_signatures TO clinic_app;
  END IF;
 END $$;

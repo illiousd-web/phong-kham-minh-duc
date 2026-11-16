@@ -232,10 +232,8 @@ def test_empty_migration_down_up_keeps_source_rows_and_never_imports_ranges(tmp_
     # Work on a disposable copy; never remove signing history from the source database.
     with db() as source, sqlite3.connect(tmp_path/'migration.sqlite3') as c:
         source.backup(c)
-        from app.s2c_migration_018 import migrate_018
         from tests.s2c_cases import empty_signature_evidence_for_rollback
         empty_signature_evidence_for_rollback(c)
-        migrate_018(c, down=True)
         c.execute('DELETE FROM document_signatures')
         c.commit()
         before = [tuple(r) for r in c.execute('SELECT * FROM visits ORDER BY id')]
@@ -273,105 +271,46 @@ def test_child_weight_uses_prescription_date_not_print_date(monkeypatch):
         from_m6(value, 'locked')
 
 
-def test_signature_scoped_invalidation_and_evidence_immutable(actors):
+
+
+@pytest.mark.parametrize('kind', ['rx','clinical_rx','order','lab','lab_report'])
+def test_content_based_signature_api(actors, kind):
+    from tests.s2c_cases import check_content_signatures
+    clients, ids = actors
+    check_content_signatures(clients, ids, db, 1, os.environ['DEMO_PASSWORD'], kind)
+
+
+@pytest.mark.parametrize('kind', ['rx','clinical_rx','order','lab','lab_report'])
+def test_printed_and_unrelated_user_names(actors, kind):
+    from tests.s2c_cases import check_name_content
+    clients, ids = actors
+    check_name_content(clients, ids, db, 1, os.environ['DEMO_PASSWORD'], kind)
+
+
+def test_unprinted_lab_changes(actors):
+    from tests.s2c_cases import check_unprinted_changes
+    clients, ids = actors
+    check_unprinted_changes(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
+
+
+def test_signatures_reject_replace_update_delete(actors):
     import sqlite3
     clients, ids = actors
-    from tests.s2c_cases import check_scoped_signature
-    sid = check_scoped_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
-    with db(True) as c:
-        with pytest.raises(sqlite3.IntegrityError):
-            c.execute('UPDATE document_signatures SET username=? WHERE id=?', ('giả mạo', sid))
-        with pytest.raises(sqlite3.IntegrityError):
-            c.execute('UPDATE document_signatures SET username=username WHERE id=?', (sid,))
-        with pytest.raises(sqlite3.IntegrityError):
-            c.execute('UPDATE document_signatures SET invalidated=0 WHERE id=?', (sid,))
-        with pytest.raises(sqlite3.IntegrityError):
-            c.execute('DELETE FROM document_signatures WHERE id=?', (sid,))
-
-
-def test_018_upgrade_and_downgrade_restores_017_triggers(tmp_path):
-    import sqlite3
-    from app.s2c_migration_018 import migrate_018
-    with db() as source, sqlite3.connect(tmp_path/'upgrade.sqlite3') as c:
-        source.backup(c)
-        if c.execute('SELECT 1 FROM document_signatures LIMIT 1').fetchone():
-            with pytest.raises(ValueError, match='đã có bản ký'):
-                migrate_018(c, down=True)
-        from tests.s2c_cases import empty_signature_evidence_for_rollback
-        empty_signature_evidence_for_rollback(c)
-        evidence = c.execute('SELECT id,invalidated,content_hash,image FROM document_signatures ORDER BY id').fetchall()
-        before = len(evidence)
-        migrate_018(c, down=True)
-        old = c.execute("SELECT sql FROM sqlite_master WHERE name='s2c_orders_insert'").fetchone()[0]
-        assert 'visit_id' in old
-        migrate_018(c)
-        assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 18
-        assert c.execute('SELECT COUNT(*) FROM document_signatures').fetchone()[0] == before
-        assert c.execute('SELECT id,invalidated,content_hash,image FROM document_signatures ORDER BY id').fetchall() == evidence
-        assert 'document_kind' in c.execute("SELECT sql FROM sqlite_master WHERE name='s2c_orders_insert'").fetchone()[0]
-        migrate_018(c, down=True)
-        assert c.execute("SELECT sql FROM sqlite_master WHERE name='s2c_orders_insert'").fetchone()[0] == old
-        migrate_018(c)
-
-
-def test_order_change_invalidates_only_its_own_documents(actors):
-    from tests.s2c_cases import check_order_invalidation_scope
-    clients, ids = actors
-    check_order_invalidation_scope(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
-
-
-def test_permanent_invalidation_api(actors):
-    from tests.s2c_cases import check_permanent_invalidation
-    clients, ids = actors
-    check_permanent_invalidation(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
-
-
-@pytest.mark.parametrize('field', ['printed_name', 'printed_title', 'full_name'])
-def test_printed_user_fields_invalidate_permanently(actors, field):
-    from tests.s2c_cases import check_user_field_invalidation
-    clients, ids = actors
-    check_user_field_invalidation(clients, ids, db, 1, os.environ['DEMO_PASSWORD'], field)
-
-
-def test_mismatched_hash_does_not_error_on_readonly_sqlite(actors, tmp_path):
-    import sqlite3
-    from copy import deepcopy
-    from app.document_signatures import load_document, valid_signature
-    clients, ids = actors
-    doctor, admin = clients['doctor'], clients['admin']
-    assert admin.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
     _, rid, _, _ = document(clients, ids, db, 1, 'rx')
-    endpoint = f'/api/document-signatures/rx/{rid}'
-    state = doctor.get(endpoint).json()
-    assert doctor.post(endpoint, json={'password':os.environ['DEMO_PASSWORD'], 'content_hash':state['content_hash']}).status_code == 200
-    path = tmp_path/'readonly.sqlite3'
-    with db() as source, sqlite3.connect(path) as copy:
-        source.backup(copy)
-    with sqlite3.connect('file:'+str(path)+'?mode=ro', uri=True) as c:
-        c.row_factory = sqlite3.Row
-        current = load_document(c, 'rx', rid)
-        model = deepcopy(current['models'][0])
-        model['diagnosis'] += ' thay đổi giả lập'
-        assert valid_signature(c, 'rx', rid, current, models=[model]) is None
-        assert c.execute('SELECT invalidated FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id DESC LIMIT 1', ('rx', rid)).fetchone()[0] == 0
-
-
-def test_018_rollback_refuses_real_signature(actors):
-    from tests.s2c_cases import check_rollback_refuses_existing_signature
-    clients, ids = actors
-    check_rollback_refuses_existing_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
-
-
-def test_other_user_printed_name_preserves_signature(actors):
-    from tests.s2c_cases import check_user_field_invalidation
-    clients, ids = actors
-    check_user_field_invalidation(clients, ids, db, 1, os.environ['DEMO_PASSWORD'], 'printed_title', 'doctor2')
-
-
-def test_order_delete_invalidates_real_signature(actors):
-    from tests.s2c_cases import check_order_delete_does_not_revive_signature
-    clients, ids = actors
-    check_order_delete_does_not_revive_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
+    assert clients['admin'].put(f'/api/users/{ids["doctor"]}/signature', files={'file':('fake.png',signature_image(),'image/png')}).status_code == 200
+    from tests.s2c_cases import sign_current
+    sign_current(clients['doctor'], 'rx', rid, os.environ['DEMO_PASSWORD'])
+    with db(True) as c:
+        assert c.execute('PRAGMA recursive_triggers').fetchone()[0] == 1
+        assert {row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 's2c_%'")} == {'s2c_signature_guard_update','s2c_signature_guard_delete'}
+        record = c.execute('SELECT * FROM document_signatures ORDER BY id DESC LIMIT 1').fetchone()
+        cols = record.keys()
+        for verb in ('INSERT OR REPLACE','REPLACE'):
+            with pytest.raises(sqlite3.IntegrityError):
+                c.execute(verb+' INTO document_signatures('+','.join(cols)+') VALUES('+','.join('?' for _ in cols)+')', tuple(record))
+        for statement in ('UPDATE document_signatures SET username=username WHERE id=?','DELETE FROM document_signatures WHERE id=?'):
+            with pytest.raises(sqlite3.IntegrityError):
+                c.execute(statement, (record['id'],))
 
 
 def test_stale_read_preserves_new_signature(actors):
@@ -380,8 +319,17 @@ def test_stale_read_preserves_new_signature(actors):
     check_stale_read_cannot_invalidate_new_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
 
 
-@pytest.mark.parametrize('kind', ['lab', 'lab_report'])
-def test_lab_performer_name_invalidates_lab_not_rx(actors, kind):
-    from tests.s2c_cases import check_lab_performer_name_scope
-    clients, ids = actors
-    check_lab_performer_name_scope(clients, ids, db, 1, os.environ['DEMO_PASSWORD'], kind)
+@pytest.mark.parametrize('kind', ['order','hematology'])
+def test_age_uses_form_or_sample_date(kind):
+    from tests.print_pagination_cases import word_text
+    from app.s2c_forms import base
+    person = dict(full_name='Trẻ giả lập', code='NB-GIA-LAP', date_of_birth='2020-01-01', sex='Nam', age_months=73)
+    stamp = '2025-12-01T08:00:00+07:00'
+    if kind == 'order':
+        model = base('order', person, {}, 'Giả lập', '123', stamp)
+        model.update(orders=[], signer_title='BÁC SĨ CHỈ ĐỊNH', signer_name='Giả lập')
+    else:
+        model = laboratory(dict(id=123, patient=person, status='approved', sample_at=stamp,
+                                created_at='2026-02-01T08:00:00+07:00', items=[]), kind)
+    assert '71 tháng' in PdfReader(BytesIO(render(model, 'pdf'))).pages[0].extract_text()
+    assert '71 tháng' in word_text(render(model, 'docx'))

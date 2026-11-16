@@ -97,7 +97,11 @@ def format_patient_address(p):
 def administrative_lines(ctx):
     from .administrative import months_old
     p=ctx['patient'];v=ctx['visit']
-    months=months_old(p.get('date_of_birth'))
+    from .labels import VN_TZ
+    when = datetime.fromisoformat(v['created_at'].replace('Z', '+00:00'))
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=VN_TZ)
+    months=months_old(p.get('date_of_birth'), when)
     lines=[]
     if p.get('address'):lines.append(('Địa chỉ cũ',p['address']))
     if months is not None and months<72:lines.append(('Tuổi',str(months)+' tháng'))

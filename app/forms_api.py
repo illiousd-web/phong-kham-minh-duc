@@ -110,7 +110,7 @@ def mount_forms(app, db, principal, require, audit):
             ctx.update(order_id=o['id'],order_name=o['name'],category=o['category'],
                        order_status=o['status'],result_text=o['result_text'],
                        order_created_at=o['created_at'],approved_by_name=ctx['approved_by_name'],file_name=o['file_name'])
-            from .document_signatures import valid_signature
+            from .document_signatures import valid_signature, signature_notice
             if render_kind in ('order','lab'):
                 ctx['orders']=[dict(x) for x in c.execute('SELECT * FROM orders WHERE visit_id=? ORDER BY id',(o['visit_id'],))]
                 ctx['approved_at']=o['approved_at']
@@ -120,6 +120,7 @@ def mount_forms(app, db, principal, require, audit):
                 ctx['canonical_context']=form_context(c,render_kind,order_id)
                 from .s2c_forms import from_context
                 ctx['canonical_context']['signature']=valid_signature(c,render_kind,order_id,models=[from_context(render_kind,ctx['canonical_context'])])
+                ctx['canonical_context']['signature_notice']=signature_notice(c,render_kind,order_id,ctx['canonical_context']['signature'])
             result=response(render_kind,ctx,format)
             audit(c,u,'demo_form_exported','order',order_id,f'{render_kind}.{format}')
             return result
@@ -135,11 +136,12 @@ def mount_forms(app, db, principal, require, audit):
             if 'doctor' in u['roles'] and ctx['doctor_id']!=u['id'] and 'pharmacy' not in u['roles']:
                 raise HTTPException(403,'Không phải bác sĩ phụ trách')
             ctx.update(rx_id=rx_id,drug_lines=rx['drug_lines'],instructions=rx['instructions'],rx_created_at=rx['created_at'],follow_up=rx['follow_up'])
-            from .document_signatures import valid_signature
+            from .document_signatures import valid_signature, signature_notice
             from .main import form_context
             ctx['canonical_context']=form_context(c,'rx',rx_id)
             from .s2c_forms import from_context
             ctx['canonical_context']['signature']=valid_signature(c,'rx',rx_id,models=[from_context('rx',ctx['canonical_context'])])
+            ctx['canonical_context']['signature_notice']=signature_notice(c,'rx',rx_id,ctx['canonical_context']['signature'])
             result=response('rx',ctx,format)
             audit(c,u,'demo_form_exported','prescription',rx_id,'rx.'+format)
             return result

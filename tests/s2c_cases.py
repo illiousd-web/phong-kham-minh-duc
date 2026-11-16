@@ -136,14 +136,14 @@ def check_signing(clients, ids, db, service, password, kind):
     assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('new.png', other, 'image/png')}).status_code == 200
     with ZipFile(BytesIO(d.get(word_url).content)) as archive:
         assert own in [archive.read(name) for name in archive.namelist() if name.startswith('word/media/')]
-    # A clinical correction invalidates all prints for the encounter, permanently, even after revert.
+    # A correction hides the signature; restoring the same printed content restores the match.
     with db(True) as c:
         prior = c.execute('SELECT diagnosis FROM visits WHERE id=?', (vid,)).fetchone()[0]
         c.execute('UPDATE visits SET diagnosis=? WHERE id=?', ('Đã sửa nội dung giả lập', vid))
     assert image_count(d.get(url)) == 1
     with db(True) as c:
         c.execute('UPDATE visits SET diagnosis=? WHERE id=?', (prior, vid))
-    assert image_count(d.get(url)) == 1
+    assert image_count(d.get(url)) == 2
     # Fresh confirmation is required; every new signature adds its own audit entry.
     again = d.get(endpoint).json()
     assert d.post(endpoint, json={'password': password, 'content_hash': again['content_hash']}).status_code == 200
@@ -203,154 +203,6 @@ def check_scoped_signature(clients, ids, db, service, password):
     return sid
 
 
-def check_order_invalidation_scope(clients, ids, db, service, password):
-    d, t, a = clients['doctor'], clients['technician'], clients['admin']
-    assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
-    vid, first, _, _ = document(clients, ids, db, service, 'order')
-    with db() as c:
-        service_id = c.execute('SELECT service_id FROM orders WHERE id=?', (first,)).fetchone()[0]
-    response = d.post('/api/orders', json={'visit_id':vid, 'category':'lab', 'service_id':service_id, 'request_key':secrets.token_hex(16)})
-    assert response.status_code == 201, response.text
-    second = response.json()['id']
-    for oid in (first, second):
-        result = t.put(f'/api/orders/{oid}/result', json={'version':0, 'result_text':'Glucose | 8 | mmol/L | 3.9 – 6.4 | H'})
-        assert result.status_code == 200, result.text
-        approved = d.post(f'/api/orders/{oid}/approve')
-        assert approved.status_code == 200, approved.text
-    for kind in ('order', 'lab'):
-        for oid in (first, second):
-            endpoint = f'/api/document-signatures/{kind}/{oid}'
-            state = d.get(endpoint)
-            assert state.status_code == 200, state.text
-            signed = d.post(endpoint, json={'password':password, 'content_hash':state.json()['content_hash']})
-            assert signed.status_code == 200, signed.text
-    with db(True) as c:
-        c.execute("UPDATE orders SET name='Đã sửa' WHERE id=?", (first,))
-        for oid in (first, second):
-            for kind in ('order', 'lab'):
-                row = c.execute('SELECT invalidated FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id DESC LIMIT 1', (kind, oid)).fetchone()
-                assert row[0] == (1 if oid == first or kind == 'order' else 0)
-
-
-def empty_signature_evidence_for_rollback(c, postgres=False):
-    """Clear a disposable test copy/transaction while reinstating the guard."""
-    c.execute('DROP TRIGGER s2c_signature_guard_delete'+(' ON document_signatures' if postgres else ''))
-    c.execute('DELETE FROM document_signatures')
-    if postgres:
-        c.execute('CREATE TRIGGER s2c_signature_guard_delete BEFORE DELETE ON document_signatures FOR EACH ROW EXECUTE FUNCTION s2c_signature_guard()')
-    else:
-        c.execute("CREATE TRIGGER s2c_signature_guard_delete BEFORE DELETE ON document_signatures BEGIN SELECT RAISE(ABORT,'Không thể xóa bản ký'); END")
-
-
-def check_permanent_invalidation(clients, ids, db, service, password):
-    d, a = clients['doctor'], clients['admin']
-    assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
-    vid, oid, url, _ = document(clients, ids, db, service, 'order')
-    endpoint = f'/api/document-signatures/order/{oid}'
-    initial = d.get(endpoint).json()['content_hash']
-    assert d.post(endpoint, json={'password': password, 'content_hash': initial}).status_code == 200
-    assert image_count(d.get(url)) == 2
-    with db() as c:
-        service_id = c.execute('SELECT service_id FROM orders WHERE id=?', (oid,)).fetchone()[0]
-    second = d.post('/api/orders', json={'visit_id':vid, 'category':'lab', 'service_id':service_id, 'request_key':secrets.token_hex(16)})
-    assert second.status_code == 201, second.text
-    assert image_count(d.get(url)) == 1
-    request = d.post(f'/api/orders/{second.json()["id"]}/request-cancel', json={'reason':'Hủy chỉ định giả lập'})
-    assert request.status_code == 201, request.text
-    review = clients['manager'].post(f'/api/orders/cancellation-requests/{request.json()["id"]}/review', json={'approve':True})
-    assert review.status_code == 200, review.text
-    assert d.get(endpoint).json()['content_hash'] == initial
-    assert image_count(d.get(url)) == 1
-    vid, rid, url, _ = document(clients, ids, db, service, 'rx')
-    endpoint = f'/api/document-signatures/rx/{rid}'
-    initial = d.get(endpoint).json()['content_hash']
-    assert d.post(endpoint, json={'password':password, 'content_hash':initial}).status_code == 200
-    assert image_count(d.get(url)) == 2
-    all_practitioners = a.get('/api/practitioners').json()['items']
-    original = next(x for x in all_practitioners if x['id'] == ids['doctor'])
-    fields = ('printed_name','printed_title','practice_license','practice_scopes','certificate_provider','certificate_serial','certificate_expiry')
-    payload = {key: original.get(key) for key in fields}
-    try:
-        changed = a.put(f'/api/practitioners/{ids["doctor"]}', json={**payload, 'printed_name':'Bác sĩ giả lập đã đổi'})
-        assert changed.status_code == 200, changed.text
-        assert image_count(d.get(url)) == 1
-    finally:
-        assert a.put(f'/api/practitioners/{ids["doctor"]}', json=payload).status_code == 200
-    assert d.get(endpoint).json()['content_hash'] == initial
-    assert image_count(d.get(url)) == 1
-
-
-def check_user_field_invalidation(clients, ids, db, service, password, field, target_key='doctor'):
-    d, a = clients['doctor'], clients['admin']
-    assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
-    _, rid, url, _ = document(clients, ids, db, service, 'rx')
-    endpoint = f'/api/document-signatures/rx/{rid}'
-    state = d.get(endpoint).json()
-    assert d.post(endpoint, json={'password':password, 'content_hash':state['content_hash']}).status_code == 200
-    assert image_count(d.get(url)) == 2
-    target_id = ids[target_key]
-    if field == 'full_name':
-        with db() as c:
-            old = c.execute('SELECT full_name FROM users WHERE id=?', (target_id,)).fetchone()[0]
-        path = f'/api/accounts/{target_id}'
-        changed, original = {'full_name':'Bác sĩ giả lập đổi tên'}, {'full_name':old}
-    else:
-        row = next(x for x in a.get('/api/practitioners').json()['items'] if x['id'] == target_id)
-        keys = ('printed_name','printed_title','practice_license','practice_scopes','certificate_provider','certificate_serial','certificate_expiry')
-        original = {key:row.get(key) for key in keys}
-        changed = {**original, field:'Chức danh giả lập' if field == 'printed_title' else 'Tên giả lập đã đổi'}
-        path = f'/api/practitioners/{target_id}'
-    try:
-        response = a.put(path, json=changed)
-        assert response.status_code == 200, response.text
-        assert image_count(d.get(url)) == (1 if target_key == 'doctor' else 2)
-    finally:
-        response = a.put(path, json=original)
-        assert response.status_code == 200, response.text
-    assert d.get(endpoint).json()['content_hash'] == state['content_hash']
-    assert image_count(d.get(url)) == (1 if target_key == 'doctor' else 2)
-
-
-def check_rollback_refuses_existing_signature(clients, ids, db, service, password):
-    from app.config import LAN
-    from app.s2c_migration_018 import migrate_018
-    import pytest
-    d, a = clients['doctor'], clients['admin']
-    assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
-    _, rid, url, _ = document(clients, ids, db, service, 'rx')
-    endpoint = f'/api/document-signatures/rx/{rid}'
-    state = d.get(endpoint).json()
-    assert d.post(endpoint, json={'password':password, 'content_hash':state['content_hash']}).status_code == 200
-    with db(True) as c:
-        before = c.execute("SELECT id,invalidated,content_hash FROM document_signatures WHERE document_kind='rx' AND document_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
-        with pytest.raises(ValueError, match='đã có bản ký'):
-            migrate_018(c, postgres=LAN, down=True)
-        assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 18
-        assert c.execute("SELECT id,invalidated,content_hash FROM document_signatures WHERE document_kind='rx' AND document_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone() == before
-    assert image_count(d.get(url)) == 2
-
-
-def check_order_delete_does_not_revive_signature(clients, ids, db, service, password):
-    d, a = clients['doctor'], clients['admin']
-    assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
-    vid, oid, url, _ = document(clients, ids, db, service, 'order')
-    endpoint = f'/api/document-signatures/order/{oid}'
-    initial = d.get(endpoint).json()['content_hash']
-    assert d.post(endpoint, json={'password':password, 'content_hash':initial}).status_code == 200
-    with db(True) as c:
-        c.execute("INSERT INTO orders(visit_id,category,name,requested_by,created_at) VALUES(?,'lab','Chỉ định giả lập xóa',?,'2026-01-01')", (vid, ids['doctor']))
-        added = c.execute('SELECT last_insert_rowid()').fetchone()[0]
-    assert image_count(d.get(url)) == 1
-    changed = d.get(endpoint).json()['content_hash']
-    assert changed != initial
-    assert d.post(endpoint, json={'password':password, 'content_hash':changed}).status_code == 200
-    assert image_count(d.get(url)) == 2
-    with db(True) as c:
-        c.execute('DELETE FROM orders WHERE id=?', (added,))
-    assert d.get(endpoint).json()['content_hash'] == initial
-    assert image_count(d.get(url)) == 1
-
-
 def check_stale_read_cannot_invalidate_new_signature(clients, ids, db, service, password):
     from app.document_signatures import load_document, valid_signature
     d, a = clients['doctor'], clients['admin']
@@ -368,7 +220,7 @@ def check_stale_read_cannot_invalidate_new_signature(clients, ids, db, service, 
     assert current['content_hash'] != old['content_hash']
     assert d.post(endpoint, json={'password':password, 'content_hash':current['content_hash']}).status_code == 200
     with db() as c:
-        before = [tuple(row) if not isinstance(row, dict) else tuple(row.values()) for row in c.execute('SELECT id,content_hash,invalidated FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id', ('rx', rid))]
+        before = [tuple(row) if not isinstance(row, dict) else tuple(row.values()) for row in c.execute('SELECT id,content_hash,image FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id', ('rx', rid))]
     class ViewOnly:
         def __init__(self, connection):
             self.connection = connection
@@ -379,39 +231,104 @@ def check_stale_read_cannot_invalidate_new_signature(clients, ids, db, service, 
         with db(mode) as c:
             assert valid_signature(ViewOnly(c), 'rx', rid, old, models=old['models']) is None
     with db() as c:
-        after = [tuple(row) if not isinstance(row, dict) else tuple(row.values()) for row in c.execute('SELECT id,content_hash,invalidated FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id', ('rx', rid))]
+        after = [tuple(row) if not isinstance(row, dict) else tuple(row.values()) for row in c.execute('SELECT id,content_hash,image FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id', ('rx', rid))]
     assert after == before
     assert d.get(endpoint).json()['signed_by'] == ids['doctor']
     assert image_count(d.get(url)) == 2
 
 
-def check_lab_performer_name_scope(clients, ids, db, service, password, kind):
+
+
+NOTICE = 'Phiếu đã thay đổi sau khi ký, cần ký lại'
+
+
+def sign_current(d, kind, oid, password):
+    endpoint = f'/api/document-signatures/{kind}/{oid}'
+    state = d.get(endpoint)
+    assert state.status_code == 200, state.text
+    result = d.post(endpoint, json={'password':password, 'content_hash':state.json()['content_hash']})
+    assert result.status_code == 200, result.text
+    return state.json()['content_hash']
+
+
+def check_content_signatures(clients, ids, db, service, password, kind):
+    from tests.print_pagination_cases import word_text
     d, a = clients['doctor'], clients['admin']
     assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
-    vid, lab_id, lab_url, _ = document(clients, ids, db, service, kind)
-    with db(True) as c:
-        c.execute('INSERT INTO medicines(name,base_unit,code) VALUES(?,?,?)', ('Thuốc giả lập phạm vi '+secrets.token_hex(6), 'viên', 'SCOPE-'+secrets.token_hex(6)))
-        medicine = c.execute('SELECT last_insert_rowid()').fetchone()[0]
-    rx = d.post('/api/prescriptions', json={'visit_id':vid, 'items':[{'medicine_id':medicine,'quantity':2,'directions':'Giả lập'}]})
-    assert rx.status_code == 201, rx.text
-    with db(True) as c:
-        c.execute('UPDATE medicines SET active=0 WHERE id=?', (medicine,))
-    rid = rx.json()['id']
-    rx_url = f'/api/forms/rx/{rid}'
-    for doc_kind, oid in ((kind, lab_id), ('rx', rid)):
-        endpoint = f'/api/document-signatures/{doc_kind}/{oid}'
-        state = d.get(endpoint).json()
-        assert d.post(endpoint, json={'password':password, 'content_hash':state['content_hash']}).status_code == 200
-    assert image_count(d.get(lab_url)) == 2
-    assert image_count(d.get(rx_url)) == 2
-    with db() as c:
-        old_name = c.execute('SELECT full_name FROM users WHERE id=?', (ids['technician'],)).fetchone()[0]
+    _, oid, url, word_url = document(clients, ids, db, service, kind)
+    sign_current(d, kind, oid, password)
+    assert image_count(d.get(url)) == 2
+    profile = a.get('/api/clinic-profile').json()
     try:
-        response = a.put(f'/api/accounts/{ids["technician"]}', json={'full_name':'Người thực hiện đổi tên giả lập'})
-        assert response.status_code == 200, response.text
-        assert image_count(d.get(lab_url)) == 1
-        assert image_count(d.get(rx_url)) == 2
+        if kind in ('rx','clinical_rx'):
+            assert a.put('/api/clinic-profile', json={**profile,'governing_body':'Cơ quan khác không in trên đơn'}).status_code == 200
+            assert image_count(d.get(url)) == 2
+        changed = {**profile,'address':'Địa chỉ in mới giả lập'}
+        assert a.put('/api/clinic-profile', json=changed).status_code == 200
+        pdf = d.get(url)
+        assert image_count(pdf) == 1
+        assert NOTICE in PdfReader(BytesIO(pdf.content)).pages[0].extract_text()
+        assert NOTICE in word_text(d.get(word_url).content)
+        assert a.put('/api/clinic-profile', json=profile).status_code == 200
+        assert image_count(d.get(url)) == 2  # The printed content is identical again.
+        assert a.put('/api/clinic-profile', json=changed).status_code == 200
+        sign_current(d, kind, oid, password)
+        assert image_count(d.get(url)) == 2
+        assert NOTICE not in PdfReader(BytesIO(d.get(url).content)).pages[0].extract_text()
     finally:
-        assert a.put(f'/api/accounts/{ids["technician"]}', json={'full_name':old_name}).status_code == 200
-    assert image_count(d.get(lab_url)) == 1
-    assert image_count(d.get(rx_url)) == 2
+        assert a.put('/api/clinic-profile', json=profile).status_code == 200
+
+
+def check_unprinted_changes(clients, ids, db, service, password):
+    d, a = clients['doctor'], clients['admin']
+    assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
+    _, rid, url, _ = document(clients, ids, db, service, 'lab_report')
+    sign_current(d, 'lab_report', rid, password)
+    with db() as c:
+        version = c.execute('SELECT version FROM lab_reports WHERE id=?', (rid,)).fetchone()[0]
+    adjustment = clients['technician'].post(f'/api/lab/reports/{rid}/adjust', json={'version':version, 'reason':'Bản điều chỉnh giả lập còn nháp'})
+    assert adjustment.status_code == 201, adjustment.text
+    assert image_count(d.get(url)) == 2
+    vid, oid, order_url, _ = document(clients, ids, db, service, 'order')
+    with db() as c:
+        service_id = c.execute('SELECT service_id FROM orders WHERE id=?', (oid,)).fetchone()[0]
+    other = d.post('/api/orders', json={'visit_id':vid, 'category':'lab','service_id':service_id,'request_key':secrets.token_hex(16)})
+    assert other.status_code == 201, other.text
+    sign_current(d, 'order', oid, password)
+    edited = clients['technician'].put(f'/api/orders/{other.json()["id"]}/result', json={'version':0,'result_text':'Kết quả khác giả lập'})
+    assert edited.status_code == 200, edited.text
+    assert image_count(d.get(order_url)) == 2
+    # This helper creates/edits another result on the same visit as a signed Rx.
+    check_scoped_signature(clients, ids, db, service, password)
+
+
+def check_name_content(clients, ids, db, service, password, kind):
+    from tests.print_pagination_cases import word_text
+    d, a = clients['doctor'], clients['admin']
+    assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
+    _, oid, url, word_url = document(clients, ids, db, service, kind)
+    sign_current(d, kind, oid, password)
+    with db() as c:
+        unrelated = c.execute('SELECT full_name FROM users WHERE id=?', (ids['doctor2'],)).fetchone()[0]
+    try:
+        assert a.put(f'/api/accounts/{ids["doctor2"]}', json={'full_name':'Tên người không liên quan'}).status_code == 200
+        assert image_count(d.get(url)) == 2
+    finally:
+        assert a.put(f'/api/accounts/{ids["doctor2"]}', json={'full_name':unrelated}).status_code == 200
+    row = next(x for x in a.get('/api/practitioners').json()['items'] if x['id'] == ids['doctor'])
+    keys = ('printed_name','printed_title','practice_license','practice_scopes','certificate_provider','certificate_serial','certificate_expiry')
+    before = {key:row.get(key) for key in keys}
+    try:
+        assert a.put(f'/api/practitioners/{ids["doctor"]}', json={**before,'printed_name':'Tên bác sĩ mới in trên phiếu'}).status_code == 200
+        assert image_count(d.get(url)) == 1
+        assert NOTICE in word_text(d.get(word_url).content)
+    finally:
+        assert a.put(f'/api/practitioners/{ids["doctor"]}', json=before).status_code == 200
+    assert image_count(d.get(url)) == 2
+
+
+def empty_signature_evidence_for_rollback(c):
+    """Only used on a disposable SQLite copy to exercise an empty downgrade."""
+    c.execute('DROP TRIGGER s2c_signature_guard_delete')
+    c.execute('DELETE FROM document_signatures')
+    c.execute("CREATE TRIGGER s2c_signature_guard_delete BEFORE DELETE ON document_signatures BEGIN SELECT RAISE(ABORT,'Không thể sửa hoặc xóa bản ký'); END")

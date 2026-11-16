@@ -1011,9 +1011,10 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
             if (o or {}).get('status')!='approved':
                 raise HTTPException(409,'Kết quả chưa được duyệt mô phỏng')
         if kind in ('rx','order','lab'):
-            from .document_signatures import valid_signature
+            from .document_signatures import valid_signature, signature_notice
             from .s2c_forms import from_context
             context['signature'] = valid_signature(c, kind, object_id, models=[from_context(kind,context)])
+            context['signature_notice'] = signature_notice(c, kind, object_id, context['signature'])
         # Data is fetched solely from the authorized record, never client-submitted text.
         audit(c,u,'draft_form_exported','visit',v['id'],f'{kind}.{fmt}')
     try:

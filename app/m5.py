@@ -467,11 +467,12 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
         with db('access') as c:
             r,o=report_access(c,u,rid,require)
             if r['status']!='approved' and 'technician' not in u['roles']:raise HTTPException(403,'Chỉ in phiếu đã duyệt')
-            from .document_signatures import lab_print_data, valid_signature
+            from .document_signatures import lab_print_data, valid_signature, signature_notice
             payload=lab_print_data(c,r,o)
             from .s2c_forms import laboratory
             models=[laboratory(payload,g) for g in GROUPS if any(x['group_name']==g for x in payload['items'])]
             payload['signature']=valid_signature(c,'lab_report',rid,models=models) if r['status']=='approved' else None
+            payload['signature_notice']=signature_notice(c,'lab_report',rid,payload['signature'])
             if not any(x['group_name']==group for x in payload['items']):raise HTTPException(404,'Nhóm không có chỉ định trên phiếu')
             audit(c,u,'lab_printed','lab_report',rid,'Nhóm '+GROUPS[group]+'; '+fmt)
         raw=render(payload,group,fmt)

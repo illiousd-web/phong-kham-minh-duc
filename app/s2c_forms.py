@@ -73,15 +73,16 @@ def base(kind, patient, profile, diagnosis, number='', stamp=None):
     return {'kind': kind, 'profile': profile, 'number': str(number), 'patient_code': patient.get('code', ''),
             'stamp': stamp, 'diagnosis': diagnosis or '', 'rows': [], 'notes': [], 'signature': None,
             'fields': [('Họ tên', patient['full_name'], 'Giới tính' if kind == 'rx' else 'Tuổi',
-                        patient.get('sex', '') if kind == 'rx' else age_text(patient)),
+                        patient.get('sex', '') if kind == 'rx' else age_text(patient, stamp)),
                        ('Địa chỉ', format_patient_address(patient), 'Số BHYT', patient.get('health_insurance_number', ''))]}
 
 
-def age_text(patient):
+def age_text(patient, stamp=None):
     from .administrative import months_old
-    months = patient.get('age_months')
-    if months is None:
-        months = months_old(patient.get('date_of_birth'))
+    when = datetime.fromisoformat(stamp.replace('Z', '+00:00')) if stamp else None
+    if when is not None and when.tzinfo is None:
+        when = when.replace(tzinfo=VN_TZ)
+    months = months_old(patient.get('date_of_birth'), when) if when is not None else patient.get('age_months')
     return (str(months)+' tháng' if months < 72 else str(months//12)) if months is not None else ''
 
 
@@ -118,6 +119,7 @@ def from_m6(p, status):
                      p['prescriber']['name'], p['locked_at'] or p['created_at'], person['weight_kg'],
                      person['escort_name'], person['contact_phone'], status, notice, age_at=p['created_at'])
     m['notes'].append('CHƯA LIÊN THÔNG')
+    m['signature_notice'] = p.get('signature_notice')
     m['signature'] = p.get('signature')
     m['print_number'] = p.get('print_number') or p.get('local_code') or ''
     return m
@@ -138,7 +140,7 @@ def from_context(kind, ctx):
     elif kind == 'order':
         o = ctx['order']
         m = base('order', p, ctx.get('clinic_profile', {}), diagnosis, o['id'], o['created_at'])
-        m['fields'] = [('Họ tên', p['full_name'], 'Tuổi', age_text(p)+'   Nam/Nữ: '+p.get('sex', '')),
+        m['fields'] = [('Họ tên', p['full_name'], 'Tuổi', age_text(p, o['created_at'])+'   Nam/Nữ: '+p.get('sex', '')),
                        ('Địa chỉ', format_patient_address(p), 'Nghề nghiệp', p.get('occupation', '')),
                        ('Số BHYT', p.get('health_insurance_number', ''), 'Mã NB', p.get('code', '')),
                        ('Lý do khám', v.get('chief_complaint', ''), '', ''), ('Chẩn đoán sơ bộ', diagnosis, '', '')]
@@ -156,18 +158,19 @@ def from_context(kind, ctx):
                         'approver_name': o.get('approved_by_name', ''), 'performer_name': o.get('result_by_name', ''),
                         'items': [{'name': x[0], 'display_value': x[1], 'unit': x[2], 'reference_text': x[3], 'flag': x[4], 'group_name': group} for x in rows]
                         or [{'name': o['name'], 'display_value': o.get('result_text', ''), 'unit': '', 'reference_text': '', 'flag': '', 'group_name': group}],
-                        'clinic_profile': ctx.get('clinic_profile', {}), 'diagnosis': diagnosis}, group)
+                        'clinic_profile': ctx.get('clinic_profile', {}), 'diagnosis': diagnosis, 'created_at':o['created_at']}, group)
+    m['signature_notice'] = ctx.get('signature_notice')
     m['signature'] = ctx.get('signature')
     return m
 
 
 def laboratory(p, group):
     m = base(group, p['patient'], p.get('clinic_profile', {}), p.get('diagnosis'), 'XN-'+str(p['id']), p.get('approved_at'))
-    m['fields'][0] = ('Họ tên', p['patient']['full_name'], 'Tuổi', age_text(p['patient'])+'   Nam/Nữ: '+p['patient'].get('sex', ''))
+    m['fields'][0] = ('Họ tên', p['patient']['full_name'], 'Tuổi', age_text(p['patient'], p.get('sample_at') or p.get('created_at') or p.get('approved_at'))+'   Nam/Nữ: '+p['patient'].get('sex', ''))
     m['fields'] += [('Khoa/Phòng', p.get('ordering_department', ''), 'Buồng/giường', 'Không áp dụng (ngoại trú)'),
                     ('Chẩn đoán', p.get('diagnosis', ''), '', '')]
     m.update(signer_title='TRƯỞNG KHOA XÉT NGHIỆM', signer_name=p.get('approver_name', ''),
-             sample_at=p.get('sample_at'), result_at=p.get('result_at'), signature=p.get('signature'))
+             sample_at=p.get('sample_at'), result_at=p.get('result_at'), signature=p.get('signature'), signature_notice=p.get('signature_notice'))
     m['rows'] = [[x['name']+(' ('+x['abbreviation']+')' if x.get('abbreviation') else '')+('\nGhi chú: '+x['note'] if x.get('note') else ''),
                   (x['reference_text']+' '+x['unit']).strip(), str(x.get('display_value', x.get('value', ''))), x['flag']]
                  for x in p['items'] if x['group_name'] == group]
@@ -278,6 +281,8 @@ def pdf(m):
         story += [Spacer(1, 7), par('☐ Thường     ☐ Cấp cứu', center)]
     if m.get('notice'):
         story.append(par(m['notice'], center))
+    if m.get('signature_notice'):
+        story.append(par(m['signature_notice'], center))
     fields=[]
     for a,b,c,d in m['fields']:
         fields.append([par('<b>'+pdf_safe(a)+'</b>',markup=True),par(b),par('<b>'+pdf_safe(c)+'</b>',markup=True),par(d)])
@@ -410,6 +415,8 @@ def word(m):
         paragraph('☐ Thường     ☐ Cấp cứu').alignment = 1
     if m.get('notice'):
         paragraph(m['notice']).alignment = 1
+    if m.get('signature_notice'):
+        paragraph(m['signature_notice']).alignment = 1
     table = doc.add_table(rows=0, cols=4)
     table.autofit = False
     for column,width in zip(table.columns,(104,180,82,129)):
@@ -533,3 +540,22 @@ def word(m):
     out = BytesIO()
     doc.save(out)
     return out.getvalue()
+
+
+def printed_content(m):
+    """Only visible blocks shared by the PDF and Word renderers (excluding the signature)."""
+    kind = m['kind']
+    profile_keys = ('name','address','phone','email') if kind == 'rx' else ('governing_body','name','address','phone','email')
+    heading = 'ĐƠN THUỐC' if kind == 'rx' else ('PHIẾU CHỈ ĐỊNH NỘI KHOA' if kind == 'order' else LABS[kind][0])
+    content = dict(kind=kind, heading=heading, watermark=WATERMARK, profile={key:m['profile'].get(key) or '' for key in profile_keys},
+                   fields=[[str(value or '') for value in row] for row in m['fields']], patient_code=m['patient_code'] or '',
+                   number=m.get('print_number') or m['number'], stamp=time_text(m['stamp']),
+                   signer_title=m['signer_title'], signer_name=m['signer_name'] or '', notes=m['notes'],
+                   notice=m.get('notice') or '')
+    if kind == 'order':
+        content['orders'] = order_checks(m)
+    elif kind == 'rx':
+        content.update(rows=m['rows'], advice=m['advice'])
+    else:
+        content.update(form=LABS[kind], rows=lab_grid(m), sample=time_text(m['sample_at']), result=time_text(m['result_at']))
+    return content
