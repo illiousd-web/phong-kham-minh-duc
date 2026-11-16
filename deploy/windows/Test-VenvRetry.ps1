@@ -1,4 +1,4 @@
-# Kiểm thử giao dịch phục hồi bằng thư mục và lỗi khóa giả lập.
+﻿# Kiểm thử giao dịch phục hồi bằng thư mục và lỗi khóa giả lập.
 $ErrorActionPreference = 'Stop'
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'MinhDuc.Install.psm1'),[ref]$tokens,[ref]$errors)

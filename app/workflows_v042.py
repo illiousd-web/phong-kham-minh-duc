@@ -3,7 +3,6 @@
 Các thao tác thay đổi số dư/tồn kho dùng chung db(True) advisory lock của ứng dụng.
 v0.5 gọi quy trình thuốc kiểm soát riêng với phân quyền và phê duyệt độc lập.
 """
-from datetime import date
 from .work_queues import approval_predicate,history_limit
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -145,9 +144,9 @@ def install_workflows(app, db, principal, require, audit, visit_access, now):
         require(u,'doctor','pharmacy','manager','admin')
         with db() as c:
             # Bác sĩ chỉ cần biết thuốc nào có thể kê; giá do quản lý thiết lập.
-            sql='SELECT m.id,m.code,m.name,m.base_unit,m.controlled,mp.unit_price FROM medicines m LEFT JOIN medicine_prices mp ON mp.medicine_id=m.id WHERE m.active=1 AND EXISTS (SELECT 1 FROM stock_lots l WHERE l.medicine_id=m.id AND l.quantity>0 AND l.quarantined=0 AND l.expiry_date>=?)'
+            sql='SELECT m.id,m.code,m.name,m.base_unit,m.controlled,mp.unit_price FROM medicines m LEFT JOIN medicine_prices mp ON mp.medicine_id=m.id WHERE m.active=1'
             if not {'controlled_prescriber','controlled_pharmacy','controlled_reviewer'}.intersection(u['roles']):sql+=' AND m.controlled=0'
-            rows=[dict(x) for x in c.execute(sql+' ORDER BY m.name', (date.today().isoformat(),))]
+            rows=[dict(x) for x in c.execute(sql+' ORDER BY m.name')]
             for m in rows:m['units']=[dict(x) for x in c.execute('SELECT * FROM medicine_units WHERE medicine_id=? AND active=1 ORDER BY id',(m['id'],))]
             return rows
 
