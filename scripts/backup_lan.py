@@ -253,6 +253,10 @@ def restore(source, key_path, url, uploads, settings=None):
             # Stage files first; do not expose restored state before both pieces exist.
             staged=root/'attachments'
             pg_tool('pg_restore',['--single-transaction','--exit-on-error','--no-owner','--no-acl','--dbname',unquote(urlsplit(url).path.lstrip('/')),str(root/'database.dump')],url)
+            # Restore S2b's private ACL before publishing files or restarting the app.
+            # Do not migrate old backups or alter fingerprint/grant policy to mask a mismatch.
+            from app.s2b_migration import restore_s2b_function_acl
+            restore_s2b_function_acl(c)
             if uploads.exists():
                 uploads.rmdir()
             os.replace(staged,uploads)

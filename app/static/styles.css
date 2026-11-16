@@ -644,3 +644,40 @@ body[data-screen=manager] .toolbar,body[data-screen=admin] .toolbar,body[data-sc
 .signature-image{display:block;max-width:100%;max-height:180px;object-fit:contain;background:#FFF}
 #signature-file-name{overflow-wrap:anywhere}
 [data-form=user-signature] .price-file-picker .ghost{min-height:44px;display:flex;align-items:center}
+
+/* S2b: U_KhoThuoc_v2, tableaux dùng chung cho tồn lô và báo cáo. */
+.s2b-layout.r5-stock-layout{display:flex;flex-direction:column;gap:16px;min-width:0}
+.s2b-layout>section{width:100%;min-width:0;box-sizing:border-box;margin:0}
+.s2b-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:16px 0}
+.s2b-stats>div{border-radius:24px;padding:16px 18px;background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.85);min-width:0}
+.s2b-stats span,.s2b-stats i{display:block;font-size:13px;color:#1F3A31;font-style:normal}
+.s2b-stats b{display:block;font-size:30px;font-weight:900;margin:4px 0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.s2b-stats>div:nth-child(2) b,.s2b-stats>div:nth-child(3) b{color:#B42318}
+.s2b-stats>div:last-child b{color:#008249}
+.s2b-table-wrap{overflow:auto;max-height:440px;max-width:100%;border-radius:20px;border:1px solid rgba(255,255,255,.85);background:rgba(255,255,255,.55);isolation:isolate}
+table.table.s2b-table{table-layout:fixed;border-collapse:separate;border-spacing:0;min-width:100%;font-size:14px;margin:0}
+table.table.s2b-table th,table.table.s2b-table td{padding:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;text-align:left;border:0;border-bottom:1px solid #E1EAE5;background:rgba(255,255,255,.45);border-radius:0;height:auto}
+table.table.s2b-table th{text-transform:none;letter-spacing:.3px;position:sticky;top:0;z-index:3;font-size:13px;background:#F1FAF6;border-bottom:2px solid #C9D6CF;font-weight:800}
+table.table.s2b-table th:first-child,table.table.s2b-table td:first-child{position:sticky;left:0;background:#E8F7EE;z-index:2}
+table.table.s2b-table th:first-child{z-index:4;background:#F1FAF6}
+table.table.s2b-table .r{text-align:right;font-variant-numeric:tabular-nums;overflow:visible;text-overflow:clip}
+table.table.s2b-table .c{text-align:center}
+.s2b-grip{position:absolute;right:0;top:8px;bottom:8px;width:10px;cursor:col-resize;border-right:2px solid #9DB7AA;touch-action:none;z-index:5}
+.s2b-grip:focus{outline:2px solid #008249}
+.s2b-form .fields{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.s2b-form.r5-stock-form .fields>.field:first-child,.s2b-form.r5-stock-form .fields>.field:has([name=quantity]),.s2b-form.r5-stock-form .fields>.field:has([name=purpose]){grid-column:auto}
+.s2b-form.r5-stock-form .wide>button{width:auto}
+.s2b-form output{font-size:16px;font-weight:700;min-height:24px}
+.s2b-documents{display:flex;align-items:end;gap:12px;margin-top:12px;flex-wrap:wrap}
+.s2b-documents label{display:flex;flex-direction:column;gap:4px;font-size:13px;min-width:0;max-width:100%}
+.s2b-documents select{max-width:100%}
+@media(max-width:900px){.s2b-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.s2b-form .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.s2b-stats b{font-size:24px}}
+@media(max-width:480px){.s2b-layout .multi-actions{flex-wrap:wrap}.s2b-form .fields{grid-template-columns:minmax(0,1fr)}.s2b-layout button,.s2b-standalone button{min-width:88px;min-height:44px;white-space:normal}.s2b-documents{align-items:stretch;flex-direction:column}}
+@media print{.s2b-layout,.s2b-stats,.s2b-table-wrap{backdrop-filter:none!important}.s2b-table-wrap{overflow:visible;max-height:none}.s2b-grip{display:none}}
+/* Bảng S2b giữ cấu trúc bảng ở 390px, không chuyển thành thẻ của CSS cũ. */
+table.table.s2b-table{display:table}
+table.table.s2b-table thead{display:table-header-group}
+table.table.s2b-table tbody{display:table-row-group}
+table.table.s2b-table tr{display:table-row;overflow:visible;margin:0;padding:0;border:0}
+table.table.s2b-table th,table.table.s2b-table td{display:table-cell;width:auto;overflow-wrap:normal;border-radius:0!important}
+table.table.s2b-table td[data-label]::before{display:none!important}

@@ -5,7 +5,7 @@ const moneyFormat=new Intl.NumberFormat('vi-VN');
 const money=n=>n===null?'CHƯA CÓ GIÁ':moneyFormat.format(Number(n||0))+' đ';
 const servicePrice=s=>s.price_at_collection?'Giá nhập khi thu':money(s.price);
 function requestId(){if(globalThis.crypto?.randomUUID)return globalThis.crypto.randomUUID();if(globalThis.crypto?.getRandomValues){const b=new Uint8Array(16);crypto.getRandomValues(b);return [...b].map(v=>v.toString(16).padStart(2,'0')).join('');}return 'demo-'+Date.now()+'-'+Math.random().toString(36).slice(2);}
-const roles={controlled_prescriber:'Bác sĩ thuốc kiểm soát',controlled_pharmacy:'Dược kiểm soát',controlled_reviewer:'Duyệt kiểm soát',admin:'Quản trị',manager:'Quản lý',reception:'Lễ tân',doctor:'Bác sĩ',technician:'Kỹ thuật viên',nurse:'Điều dưỡng',pharmacy:'Dược',cashier:'Thu ngân'};
+const roles={stock_owner:'Chủ kho thuốc',controlled_prescriber:'Bác sĩ thuốc kiểm soát',controlled_pharmacy:'Dược kiểm soát',controlled_reviewer:'Duyệt kiểm soát',admin:'Quản trị',manager:'Quản lý',reception:'Lễ tân',doctor:'Bác sĩ',technician:'Kỹ thuật viên',nurse:'Điều dưỡng',pharmacy:'Dược',cashier:'Thu ngân'};
 // Mỗi vai trò chỉ thấy menu công việc của mình; mỗi menu là một màn hình bắt đầu bằng hàng chờ.
 const menus={
  reception:[['reception','Tiếp đón'],['prices','Bảng giá']],
@@ -15,8 +15,13 @@ const menus={
  pharmacy:[['pharmacy','Nhà thuốc']],
  cashier:[['cashier','Thu ngân']],
  manager:[['manager','Quản lý']],
+ stock_owner:[['stock','Kho thuốc']],
  admin:[['admin','Quản trị'],['price-management','Quản lý'],['settings','Cài đặt']]
 };
+// M6/M5 đăng ký menu trong các script defer sau app.js; thêm kho sau các mục đó, trước boot.
+document.addEventListener('DOMContentLoaded',()=>{
+ menus.admin.push(['stock','Kho thuốc']);
+},{once:true});
 let serverMode='demo',selectedRole=null,auditOffset=0;
 const pendingOrderKeys=new Map();
 const scopeWarnings=new Map();
@@ -67,6 +72,7 @@ Object.assign(LABEL,{patient_catalog_seeded:'Nạp danh mục có sẵn',patient
 Object.assign(LABEL,{clinical_rx_replaced:'Vô hiệu đơn cũ do thay thế',clinical_rx_allergy_acknowledged:'Xác nhận vẫn kê khi đã biết dị ứng',clinical_rx_created:'Tạo đơn thuốc nháp',clinical_rx_updated:'Sửa đơn thuốc nháp',clinical_rx_locked:'Khóa đơn thuốc',clinical_rx_cancelled:'Hủy đơn thuốc',clinical_rx_printed:'In / in lại đơn thuốc',clinical_rx_json_exported:'Xuất dữ liệu đơn thuốc',clinical_prescription:'Đơn thuốc',prescription_settings:'Cài đặt đơn thuốc',prescription_settings_changed:'Đổi thông tin cơ sở kê đơn',drug:'Thuốc',drug_updated:'Rà soát thuốc',drug_merged:'Gộp danh mục thuốc',drugs_imported:'Nhập danh mục thuốc'});
 LABEL.results_ready='Đã có kết quả';
 LABEL.patient_allergies_updated='Sửa dị ứng thuốc';
+Object.assign(LABEL,{stock_legacy_cost_added:'Bổ sung giá lô chưa có giá',stock_minimum_changed:'Đặt tồn tối thiểu',stock_received_demo:'Lưu phiếu nhập kho',stock_issued_demo:'Lưu phiếu xuất kho',stock_lot:'Lô kho',medicine:'Thuốc/vật tư'});
 LABEL.patient_history_viewed='Xem lịch sử khám';
 const vi=code=>code==null?'—':(LABEL[code]||String(code));
 const TONE={waiting:'warn',ordered:'warn',pending_review:'warn',pending:'warn',rejected:'error',cancelled:'error'};
@@ -176,7 +182,7 @@ function scheduleCounts(){clearInterval(countTimer);countTimer=setInterval(()=>{
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&auth)refreshCounts()});
 scheduleCounts();
 let renderEpoch=0;
-const SCREENS={reception:receptionScreen,prices:pricesScreen,doctor:doctorScreen,nurse:nurseScreen,lab:labScreen,pharmacy:pharmacyScreen,cashier:cashierScreen,manager:managerScreen,'price-management':priceManagementScreen,admin:adminScreen,settings:settingsScreen,password:passwordPage};
+const SCREENS={stock:stockScreen,reception:receptionScreen,prices:pricesScreen,doctor:doctorScreen,nurse:nurseScreen,lab:labScreen,pharmacy:pharmacyScreen,cashier:cashierScreen,manager:managerScreen,'price-management':priceManagementScreen,admin:adminScreen,settings:settingsScreen,password:passwordPage};
 async function render(){if(!auth){renderLogin();return}viewInit();const page=active,epoch=++renderEpoch;$('workspace').setAttribute('aria-busy','true');$('workspace').dataset.page=page;$('workspace').innerHTML=renderState('loading','Đang tải danh sách…');try{
  if(!uiLoaded)await loadUi();
  const out=await SCREENS[page]();if(epoch!==renderEpoch)return;
@@ -339,6 +345,142 @@ async function nurseScreen(){
  return {html:`<div class="r5-nurse">${top}<div class="r5-nurse-layout"><aside>${head}</aside><div class="r5-nurse-record">`+stepCard(1,'Sinh hiệu · '+v.patient_name,`<div class="r5-patient-meta">${esc(v.patient_code||'')} · lượt #${v.id} · ${pill(v.status)}</div>`+vitals)+stepCard(2,`Y lệnh (${pending.length} chưa làm)`,tasks)+stepCard(3,'Ghi nhận chăm sóc',notes)+stepCard(4,'Chỉ định dịch vụ',nursingOrders)+'</div></div></div>',
   after(){setVitals(v.vitals)}}}
 
+// Kho S2b: dùng chung phép chiếu dữ liệu từ máy chủ cho màn hình, Excel và bản in.
+const stockState={filter:'',query:'',receipt:null,issue:null};
+function stockMoneyAllowed() {
+ return cap('admin')||cap('stock_owner');
+}
+function stockMoney(value) {
+ return value===null?'chưa có giá':moneyFormat.format(typeof value==='string'?BigInt(value):value)+' đ';
+}
+function stockSummaryMoney(value) {
+ if(value===null)return 'chưa có giá';
+ const n=BigInt(value),absolute=n<0n?-n:n;
+ for(const [scale,label] of [[1000000000000000n,'triệu tỷ'],[1000000000000n,'nghìn tỷ'],[1000000000n,'tỷ'],[1000000n,'triệu']]){
+  if(absolute<scale)continue;
+  const rounded=(absolute*10n+scale/2n)/scale;
+  return (n<0n?'-':'')+moneyFormat.format(rounded/10n)+(rounded%10n?','+String(rounded%10n):'')+' '+label+' đ';
+ }
+ return stockMoney(value);
+}
+function stockCell(value,kind='') {
+ return `<td class="${kind}" title="${esc(value)}">${esc(value)}</td>`;
+}
+function stockTable(key,columns,rows) {
+ return `<div class="s2b-table-wrap" tabindex="0" aria-label="Bảng cuộn ngang và dọc"><table class="s2b-table table" data-stock-table="${key}"><colgroup>${columns.map(([,width])=>`<col data-stock-width="${width}">`).join('')}</colgroup><thead><tr>${columns.map(([title,,kind=''])=>`<th class="${kind}" title="${esc(title)}">${esc(title)}<span class="s2b-grip" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Đổi độ rộng cột ${esc(title)}"></span></th>`).join('')}</tr></thead><tbody>${rows.length?rows.join(''):`<tr><td colspan="${columns.length}">Chưa có dữ liệu</td></tr>`}</tbody></table></div><p class="hint">Tên dài có dấu …; rê chuột để xem đủ. Kéo vạch tiêu đề để nới cột; bảng hẹp thì vuốt ngang.</p>`;
+}
+function bindStockTables(root) {
+ root.querySelectorAll('[data-stock-table]').forEach(table=>{
+  const cols=[...table.querySelectorAll('col')],headers=[...table.querySelectorAll('th')];
+  const key='minhduc.stock.columns.v1.'+table.dataset.stockTable;
+  const minimum=cols.map((col,index)=>{
+   const cells=[headers[index],...[...table.rows].slice(1).map(row=>row.cells[index]).filter(Boolean)];
+   if(!headers[index].classList.contains('r'))return 88;
+   return Math.max(110,...cells.map(cell=>{
+    const span=document.createElement('span');
+    span.textContent=cell.textContent;
+    const style=getComputedStyle(cell);
+    for(const property of ['fontFamily','fontSize','fontWeight','fontStyle','fontVariantNumeric','letterSpacing'])span.style[property]=style[property];
+    span.style.whiteSpace='nowrap';span.style.display='inline-block';
+    document.body.appendChild(span);const width=Math.ceil(span.getBoundingClientRect().width)+38;span.remove();return width;
+   }));
+  });
+  const apply=widths=>{
+   cols.forEach((col,index)=>col.style.width=Math.max(minimum[index],Number(widths[index])||Number(col.dataset.stockWidth))+'px');
+   table.style.width=cols.reduce((sum,col)=>sum+parseFloat(col.style.width),0)+'px';
+  };
+  try{apply(JSON.parse(localStorage.getItem(key)||'[]'));}catch{apply([]);}
+  const save=()=>{
+   try{localStorage.setItem(key,JSON.stringify(cols.map(col=>parseFloat(col.style.width))));}catch{/* Bộ nhớ có thể bị khóa. */}
+  };
+  headers.forEach((header,index)=>{
+   const grip=header.querySelector('.s2b-grip');
+   grip.addEventListener('pointerdown',event=>{
+    event.preventDefault();const start=event.clientX,width=parseFloat(cols[index].style.width);
+    grip.setPointerCapture(event.pointerId);
+    const move=next=>{
+     const widths=cols.map(col=>parseFloat(col.style.width));widths[index]=width+next.clientX-start;apply(widths);
+    };
+    const end=()=>{
+     grip.removeEventListener('pointermove',move);grip.removeEventListener('pointerup',end);grip.removeEventListener('pointercancel',end);save();
+    };
+    grip.addEventListener('pointermove',move);grip.addEventListener('pointerup',end);grip.addEventListener('pointercancel',end);
+   });
+   grip.addEventListener('keydown',event=>{
+    if(!['ArrowLeft','ArrowRight'].includes(event.key))return;
+    event.preventDefault();const widths=cols.map(col=>parseFloat(col.style.width));widths[index]+=event.key==='ArrowRight'?20:-20;apply(widths);save();
+   });
+  });
+ });
+}
+function stockStatus(row) {
+ if(row.quarantined)return 'Cách ly';
+ if(row.expiry_date<new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Ho_Chi_Minh'}))return 'Hết hạn';
+ if(row.below_minimum)return 'Dưới tối thiểu';
+ if(row.expiring)return 'Sắp hết hạn';
+ return 'Bán được';
+}
+async function stockPanel(stockList,meds) {
+ const financial=stockMoneyAllowed(),write=cap('pharmacy');
+ const [summary,report,receipts,issues]=await Promise.all([api('/stock/summary'),api('/reports/stock'+stockState.query),api('/stock/documents/receipts'),api('/stock/documents/issues')]);
+ const visibleRows=stockList.filter(x=>(ui.controlled_drugs||!x.controlled)&&(!stockState.filter||x[stockState.filter==='expiring'?'expiring':'below_minimum']));
+ const columns=[['Thuốc',290],['Số lô',135],['Hạn dùng',140,'c'],['Tồn',145,'r']];
+ if(financial)columns.push(['Giá nhập',160,'r']);
+ columns.push(['Giá bán',160,'r']);
+ if(financial)columns.push(['Giá trị tồn',190,'r']);
+ columns.push(['Trạng thái',180,'c']);
+ const rows=visibleRows.map(row=>'<tr>'+stockCell(row.name)+stockCell(row.lot_number)+stockCell(showDay(row.expiry_date),'c')+stockCell(row.quantity+' '+row.base_unit,'r')+(financial?stockCell(stockMoney(row.unit_cost),'r'):'')+stockCell(stockMoney(row.sale_price),'r')+(financial?stockCell(stockMoney(row.inventory_value),'r'):'')+`<td class="c" title="${stockStatus(row)}"><span class="status ${row.quarantined?'error':row.expiring||row.below_minimum?'warn':''}">${stockStatus(row)}</span></td></tr>`);
+ const cards=[];
+ if(financial)cards.push(['Giá trị tồn kho',stockSummaryMoney(summary.inventory_value),summary.unknown_cost_lots?summary.unknown_cost_lots+' lô chưa có giá':'theo giá nhập',stockMoney(summary.inventory_value)]);
+ cards.push(['Lô sắp hết hạn',summary.expiring_lots,'trong 60 ngày'],['Dưới tồn tối thiểu',summary.below_minimum,'mặt hàng']);
+ if(financial)cards.push(['Lãi gộp tháng '+new Intl.DateTimeFormat('vi-VN',{month:'numeric',timeZone:'Asia/Ho_Chi_Minh'}).format(new Date()),stockSummaryMoney(summary.gross_profit),'doanh thu thuốc − giá vốn',stockMoney(summary.gross_profit)]);
+ const statsHtml=`<div class="s2b-stats">${cards.map(([label,value,hint,full=value])=>`<div><span>${label}</span><b title="${esc(full)}">${esc(value)}</b><i>${esc(hint)}</i></div>`).join('')}</div>`;
+ const inventory=card(stockTable('lots-'+financial,columns,rows)+`<div class="multi-actions">${btn('Lọc: sắp hết hạn','s2b-filter','data-value="expiring"')}${btn('Lọc: dưới tồn tối thiểu','s2b-filter','data-value="below_minimum"')}${stockState.filter?btn('Bỏ lọc','s2b-filter','data-value=""'):''}${btn('Xuất Excel','s2b-export-stock')}</div>`,'Tồn kho theo lô · có giá nhập, giá bán');
+ const plain=meds.filter(m=>!m.controlled),options=plain.map(m=>[m.id,m.name]);
+ const printButtons=(kind,list)=>list.length?`<div class="s2b-documents"><label>Phiếu đã lưu (không sửa)<select data-s2b-document="${kind}">${list.map(row=>`<option value="${row.id}" ${stockState[kind==='receipts'?'receipt':'issue']===row.id?'selected':''}>${esc(row.document_no)} · ${showDay(row.created_at)}</option>`).join('')}</select></label>${btn(kind==='receipts'?'In phiếu nhập kho':'In phiếu xuất kho','s2b-print-document',`data-kind="${kind}"`)}</div>`:'<p class="hint">Lưu phiếu để in.</p>';
+ const receipt=`<section class="card r5-stock-form s2b-form" id="r5-receipt"><h2>${step('+','Nhập lô mới (phiếu nhập kho)')}</h2>${write?`<form data-form="stock-receipt" class="fields">${field('Nhà cung cấp','supplier')}${field('Số hóa đơn','invoice_no')}${dateField('Ngày hóa đơn','invoice_date')}${selectField('Mặt hàng','medicine_id',options)}${field('Số lô','lot_number','text','LO-001',true)}${dateField('Hạn sử dụng','expiry_date',true)}${field('Số lượng (đơn vị cơ sở)','quantity','number','',true)}${financial?field('Giá nhập / đơn vị cơ sở (trước VAT)','unit_cost','number')+field('VAT (%)','vat_rate','number')+'<div class="field"><label>Thành tiền (gồm VAT)</label><output data-s2b-total>chưa có giá</output></div>':''}<div class="wide"><button class="btn">Lưu phiếu nhập</button></div></form>`:''}${printButtons('receipts',receipts)}</section>`;
+ const expired=stockList.filter(l=>!l.controlled&&!l.quarantined&&l.quantity>0&&l.expiry_date<new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Ho_Chi_Minh'}));
+ const issue=`<section class="card r5-stock-form s2b-form" id="r5-issue"><h2>Xuất kho</h2>${write?`<form data-form="stock-issue" class="fields">${selectField('Mặt hàng','medicine_id',options)}${field('Số lượng (đơn vị cơ sở)','quantity','number','',true)}${selectField('Loại xuất','reason',[['internal','Sử dụng nội bộ'],['supplier_return','Trả nhà cung cấp'],['expired_disposal','Hủy hết hạn']])}${field('Lý do xuất kho','purpose','text','Sử dụng nội bộ',true)}${field('Người nhận','recipient','text','',true)}${selectField('Lô hủy hết hạn (chỉ dùng khi hủy)','lot_id',[['','Chọn lô đã hết hạn'],...expired.map(l=>[l.id,l.name+' · '+l.lot_number])])}<div class="wide"><button class="btn">Lưu phiếu xuất</button></div></form>`:''}${printButtons('issues',issues)}</section>`;
+ const reportCols=[['Thuốc',290],['Tồn đầu',130,'r'],['Nhập',130,'r'],['Xuất',130,'r'],['Tồn cuối',130,'r']];
+ if(financial)reportCols.push(['Giá vốn bán',190,'r'],['Xuất nội bộ',190,'r'],['Trả NCC',190,'r'],['Hủy hết hạn',190,'r']);
+ reportCols.push(['Trả lại (giảm doanh thu)',240,'r'],['Doanh thu thuần',190,'r']);
+ if(financial)reportCols.push(['Lãi gộp',190,'r']);
+ const reportRows=report.rows.map(row=>'<tr>'+stockCell(row.name)+['opening','received','issued','closing'].map(key=>stockCell(row[key],'r')).join('')+(financial?['cogs_sold','cost_internal','cost_supplier_return','cost_expired'].map(key=>stockCell(stockMoney(row[key]),'r')).join(''):'')+stockCell(stockMoney(row.returns_revenue),'r')+stockCell(stockMoney(row.revenue),'r')+(financial?stockCell(stockMoney(row.gross_profit),'r'):'')+'</tr>');
+ const reporting=`<section class="card s2b-form" id="r5-report"><h2>Báo cáo xuất nhập tồn · ${showDay(report.date_from)}–${showDay(report.date_to)}</h2><form data-form="s2b-period" class="fields">${selectField('Chọn kỳ','period',[['month','Tháng'],['quarter','Quý'],['range','Từ ngày–đến ngày']])}${field('Tháng (yyyy-mm)','month','month')}${selectField('Quý','quarter',[[1,'Quý I'],[2,'Quý II'],[3,'Quý III'],[4,'Quý IV']])}${field('Năm','year','number','yyyy')}${dateField('Từ ngày','date_from')}${dateField('Đến ngày','date_to')}<div class="wide"><button class="btn">Xem báo cáo</button></div></form>${stockTable('report-'+financial,reportCols,reportRows)}<div class="multi-actions">${btn('In báo cáo','s2b-report-export','data-format="pdf"')}${btn('Xuất Excel','s2b-report-export','data-format="xlsx"')}</div><p class="notice">Giá nhập, giá vốn, giá trị tồn và lãi chỉ dành cho Quản trị / Chủ kho thuốc. Lô chưa biết giá không được tính bằng 0.</p></section>`;
+ const unknown=stockList.filter(l=>l.unit_cost===null);
+ const legacy=financial&&unknown.length?`<section class="card s2b-form"><h2>Bổ sung giá lô cũ · chưa có giá</h2><form data-form="s2b-legacy-cost" class="fields">${selectField('Lô cũ','lot_id',unknown.map(l=>[l.id,l.name+' · '+l.lot_number]))}${field('Giá nhập / đơn vị cơ sở','unit_cost','number','',true)}${field('Căn cứ bổ sung giá','reason','text','',true)}<div class="wide"><button class="btn">Bổ sung giá và ghi nhật ký</button><p class="hint">Giá vốn của giao dịch đã lưu được giữ nguyên.</p></div></form></section>`:'';
+ const minimum=financial?`<form data-form="s2b-minimum" class="fields">${selectField('Đặt tồn tối thiểu cho thuốc','medicine_id',meds.map(m=>[m.id,m.name]))}${field('Tồn tối thiểu (trống = không cảnh báo)','min_stock','number')}<div class="wide"><button class="ghost">Lưu tồn tối thiểu</button></div></form>`:'';
+ const medicine=`<section class="card r5-stock-form s2b-form" id="r5-medicine"><h2>Thêm thuốc/vật tư</h2>${write?`<form data-form="medicine" class="fields">${field('Thêm thuốc/vật tư mới','name','text','',true)}${field('Đơn vị cơ sở','base_unit','text','viên / cái',true)}${financial?field('Tồn tối thiểu (trống = không cảnh báo)','min_stock','number'):''}<div class="wide"><button class="ghost">Thêm vào danh mục</button></div></form>`:''}${minimum}</section>`;
+ return `${statsHtml}<div class="r5-stock-layout s2b-layout">${inventory}${receipt}${issue}${reporting}${medicine}${legacy}</div>`;
+}
+function bindStock(root) {
+ bindStockTables(root);
+ const periodForm=root.querySelector('[data-form=s2b-period]'),query=new URLSearchParams(stockState.query);
+ if(periodForm){
+  periodForm.elements.namedItem('period').value=query.has('date_from')?'range':query.has('quarter')?'quarter':'month';
+  for(const name of ['month','quarter','year','date_from','date_to']){
+   if(query.has(name))periodForm.elements.namedItem(name).value=name.startsWith('date_')?showDay(query.get(name)):query.get(name);
+  }
+ }
+ const receipt=root.querySelector('[data-form=stock-receipt]');
+ if(receipt?.querySelector('[name=vat_rate]'))receipt.elements.namedItem('vat_rate').step='0.01';
+ if(receipt?.querySelector('[name=unit_cost]'))receipt.addEventListener('input',()=>{
+  const get=name=>receipt.elements.namedItem(name).value;
+  const total=get('unit_cost')===''?null:Math.round(Number(get('quantity'))*Number(get('unit_cost'))*(1+Number(get('vat_rate'))/100));
+  receipt.querySelector('[data-s2b-total]').textContent=stockMoney(total);
+ });
+}
+async function stockScreen() {
+ const [rows,meds]=await Promise.all([api('/stock'),api('/medicines')]);
+ return {html:`<div class="s2b-standalone">${await stockPanel(rows,meds)}</div>`,after(){bindStock($('workspace'));}};
+}
+async function stockDownload(path,filename) {
+ const response=await fetch('/api'+path,{headers:authHeader()});
+ if(!response.ok){const data=await response.json();throw new Error(data.detail||'Không xuất được phiếu kho');}
+ const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');
+ a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);
+}
+
 // ---------- Nhà thuốc: đơn chờ cấp → cấp → in ----------
 function pharmacyAllergies(value) {
  const text=String(value||'').trim();
@@ -359,29 +501,25 @@ async function pharmacyScreen(){
   returnHtml=card(t(items.map(i=>`<tr><td>${esc(i.name)}</td><td>${esc(i.lot_number)}</td><td>${i.quantity}</td><td>${i.returned}</td></tr>`),['Thuốc','Lô','Đã cấp','Đã trả'])+
   (left.length?`<form data-form="return" class="fields">${hidden('dispensation_id',sel.dispense)}${selectField('Dòng thuốc trả','item_id',left.map(i=>[i.id,`${i.name}, lô ${i.lot_number}, còn ${i.quantity-i.returned}`]))}${field('Số lượng trả (đơn vị cơ sở)','quantity','number','',true)}${field('Lý do trả','reason','text','',true)}<div class="wide"><button class="btn">Gửi phiếu trả chờ quản lý duyệt</button><p class="hint">Thuốc trả vào lô cách ly, không tự hoàn tiền.</p></div></form>`:'<p class="hint">Đã trả hết.</p>'),`Trả thuốc — phiếu cấp #${sel.dispense}`)}
  const recent=disp.slice(0,15);
- const plain=meds.filter(x=>!x.controlled);
  const visibleStock=stockList.filter(x=>ui.controlled_drugs||!x.controlled);
  const today=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Ho_Chi_Minh'});
  const soon=x=>{
-  return x.expiry_date>=today&&new Date(x.expiry_date+'T00:00:00+07:00')-new Date(today+'T00:00:00+07:00')<=60*86400000;
+  return x.expiring;
  };
- const stockTable=card(t(visibleStock.map(x=>`<tr><td><b>${esc(x.name)}</b>${x.controlled?' <span class="status warn">Kiểm soát</span>':''}</td><td>${esc(x.lot_number)}</td><td>${showDay(x.expiry_date)}</td><td><b>${esc(x.quantity)} ${esc(x.base_unit)}</b></td><td>${x.quarantined?'<span class="status error">Cách ly</span>':x.expiry_date<today?'<span class="status error">Hết hạn</span>':soon(x)?'<span class="status warn">Sắp hết hạn</span>':'<span class="status">Bán được</span>'}</td></tr>`),['Thuốc','Số lô','Hạn dùng','Tồn','Trạng thái']),'Tồn kho theo lô · xuất theo hạn dùng (FEFO)');
- const receipt=`<section class="card r5-stock-form" id="r5-receipt"><h2>${step('+','Nhập lô mới')}</h2><form data-form="stock-receipt" class="fields">${selectField('Mặt hàng','medicine_id',plain.map(x=>[x.id,x.name]))}${field('Số lô','lot_number','text','LO-001',true)}${dateField('Hạn sử dụng','expiry_date',true)}${field('Số lượng (đơn vị cơ sở)','quantity','number','',true)}<div class="wide"><button class="btn">Nhập lô</button></div></form></section>`;
- const issue=`<section class="card r5-stock-form" id="r5-issue"><h2>Xuất dùng nội bộ</h2><form data-form="stock-issue" class="fields">${selectField('Xuất dùng nội bộ','medicine_id',plain.map(x=>[x.id,x.name]))}${field('Số lượng (đơn vị cơ sở)','quantity','number','',true)}${field('Mục đích','purpose','text','Sử dụng nội bộ',true)}<div class="wide"><button class="ghost">Xuất theo hạn dùng (FEFO)</button></div></form></section>`;
- const medicine=`<section class="card r5-stock-form" id="r5-medicine"><h2>Thêm thuốc/vật tư</h2><form data-form="medicine" class="fields">${field('Thêm thuốc/vật tư mới','name','text','',true)}${field('Đơn vị cơ sở','base_unit','text','viên / cái',true)}<div class="wide"><button class="ghost">Thêm vào danh mục</button></div></form></section>`;
- const stockHtml=`<div class="r5-stock-layout"><div>${stockTable}</div><div>${receipt}${issue}${medicine}</div></div>`;
+ const stockHtml=await stockPanel(stockList,meds);
  let controlled='';
  if(ui.controlled_drugs&&cap('controlled_pharmacy')){const cm=meds.filter(m=>m.controlled);const ledger=await api('/controlled-ledger');
   controlled=details('Thuốc kiểm soát đặc biệt',`<form data-form="controlled-receipt" class="fields">${selectField('Thuốc kiểm soát','medicine_id',cm.map(m=>[m.id,m.name]))}${field('Số lô','lot_number','text','',true)}${dateField('Hạn dùng','expiry_date')}${field('Số lượng cơ sở','quantity','number','',true)}${field('Tham chiếu sổ','register_ref','text','',true)}${field('Lý do nhập','reason','text','',true)}<div class="wide"><button class="btn">Đề nghị nhập (quản lý duyệt)</button></div></form>`+t(ledger.map(l=>`<tr><td>${l.id}</td><td>${esc(l.event)}</td><td>${l.quantity}</td><td>${esc(l.register_ref)}</td><td>${showDay(l.created_at)}</td></tr>`),['Dòng sổ','Nghiệp vụ','Số lượng','Tham chiếu','Thời gian']))}
  const search=`<input class="r5-search" type="search" data-r5-search placeholder="Tìm người bệnh, số đơn" aria-label="Tìm người bệnh, số đơn trên trang này" value="${esc(sel.rxQuery||'')}">`;
  const dispensedToday=disp.filter(x=>new Date(x.dispensed_at).toLocaleDateString('en-CA',{timeZone:'Asia/Ho_Chi_Minh'})===today).length;
  const top=`<div class="r5-top"><div class="r5-hero-wrap">${r5Hero('Nhà thuốc','Cấp thuốc theo đơn · xuất theo hạn dùng gần nhất trước (FEFO).',`<span class="r5-mobile-summary">${waiting.length} đơn trên trang · ${visibleStock.filter(soon).length} lô sắp hết hạn</span>`)}${search}</div><div>${r2Stats([['waiting','Đơn chờ cấp (trang này)',waiting.length],['dispensed','Đã cấp hôm nay',disp.length>=100?'≥ '+dispensedToday:dispensedToday],['expiring','Lô sắp hết hạn',visibleStock.filter(soon).length]])}<p class="r5-stat-note">Lô sắp hết hạn trong 60 ngày</p></div></div>`;
- const nav=`<nav class="r4-tabs r5-tabs" aria-label="Công việc nhà thuốc">${[['r5-dispensing','Cấp thuốc'],['r5-recent','Đã cấp gần đây'],['r5-stock','Kho thuốc'],['r5-receipt','Nhập lô'],['r5-issue','Xuất dùng nội bộ'],['r5-medicine','Thêm thuốc/vật tư']].map(([target,label])=>`<button type="button" data-r5-jump="${target}" aria-pressed="${(sel.rxSection||'r5-dispensing')===target}">${label}</button>`).join('')}</nav>`;
+ const nav=`<nav class="r4-tabs r5-tabs" aria-label="Công việc nhà thuốc">${[['r5-dispensing','Cấp thuốc'],['r5-recent','Đã cấp gần đây'],['r5-stock','Kho thuốc'],['r5-receipt','Nhập lô'],['r5-issue','Xuất kho'],['r5-report','Báo cáo xuất nhập tồn'],['r5-medicine','Thêm thuốc/vật tư']].map(([target,label])=>`<button type="button" data-r5-jump="${target}" aria-pressed="${(sel.rxSection||'r5-dispensing')===target}">${label}</button>`).join('')}</nav>`;
  return {html:`<div class="r5-pharmacy">${top}${nav}<div class="r5-dispensing" id="r5-dispensing"><aside class="card r5-rx-queue"><h2>Đơn chờ cấp</h2>${r4Queue(waiting.map(x=>({id:x.id,name:x.patient_name,sub:x.patient_code+' · đơn #'+x.id+' · '+(x.items.length?x.items.length+' thuốc':'đơn văn bản'),warning:pharmacyAllergies(x.patient_allergies)?'Dị ứng':''})),'pharmacy-rx',sel.pharmacyRx,'Không còn đơn chờ cấp.')}<div data-r5-no-match hidden>${empty('Không tìm thấy đơn trên trang này.')}</div>${pager}</aside><div><div data-r5-choose-rx hidden>${empty('Chọn một đơn trong kết quả tìm kiếm')}</div>${rxDetail}</div></div><div id="r5-recent">`+
   card(t(recent.map(d=>`<tr><td>#${d.id}</td><td>${esc(d.patient_name)}<div class="muted">${showDay(d.dispensed_at)}</div></td><td><div class="multi-actions">${formButtons('rx',d.prescription_id)}${btn(sel.dispense===d.id?'Đang mở':'Trả thuốc','pick',`data-kind="dispense" data-id="${d.id}"`)}</div></td></tr>`),['Phiếu cấp','Bệnh nhân','In / trả']),'Đã cấp gần đây')+returnHtml+
-  `</div><details class="r5-stock" id="r5-stock"><summary>Kho thuốc</summary>${stockHtml}</details>${controlled}</div>`,
+  `</div><details class="r5-stock" id="r5-stock" ${sel.rxSection?.startsWith('r5-')&&!['r5-dispensing','r5-recent'].includes(sel.rxSection)?'open':''}><summary>Kho thuốc</summary>${stockHtml}</details>${controlled}</div>`,
   after(){
    const root=document.querySelector('.r5-pharmacy'),input=root.querySelector('[data-r5-search]');
+   bindStock(root);
    if(disp.length>=100)root.querySelector('[data-r2-stat=dispensed]').title='Đếm trong 100 phiếu gần nhất';
    const filter=()=>{
     sel.rxQuery=input.value;const q=r5SearchText(input.value.trim());let shown=0;
@@ -693,6 +831,10 @@ async function managerScreen(){
 
 // ---------- Quản trị và cài đặt ----------
 function auditDetails(entry){
+ if(entry.event==='stock_legacy_cost_added'){
+  try{const data=JSON.parse(entry.details);return 'Giá nhập: '+stockMoney(data.old)+' → '+stockMoney(data.new)+'; căn cứ: '+data.reason;}catch{return 'Bổ sung giá lô chưa có giá';}
+ }
+ if(entry.event==='stock_minimum_changed')return entry.details==='None'?'Không cảnh báo tồn tối thiểu':'Tồn tối thiểu: '+entry.details;
  if(entry.event==='clinic_profile_changed'){
   try{
    const data=JSON.parse(entry.details),changes=[];
@@ -738,9 +880,10 @@ async function adminScreen(){
   after(){if(u&&$('account_choose'))$('account_choose').value=String(u.id)}}}
 // Ô chọn vai trò: không chọn sẵn gì khi tạo mới; khi sửa thì đánh dấu đúng quyền hiện có.
 function roleChecks(current,prefix){
- const base=Object.entries(roles).filter(([r])=>!r.startsWith('controlled_')),extra=Object.entries(roles).filter(([r])=>r.startsWith('controlled_'));
+ const base=Object.entries(roles).filter(([r])=>!r.startsWith('controlled_')&&r!=='stock_owner'),extra=Object.entries(roles).filter(([r])=>r.startsWith('controlled_'));
  const box=([r,n])=>`<label class="check"><input type="checkbox" name="roles" value="${r}" ${current.includes(r)?'checked':''}> ${esc(n)}</label>`;
  return `<fieldset class="field full roles"><legend>Vai trò (chọn ít nhất một)</legend>${base.map(box).join('')}</fieldset>`+
+  `<fieldset class="field full roles"><legend>Quyền phụ kho thuốc</legend>${box(['stock_owner',roles.stock_owner])}</fieldset>`+
   (ui.controlled_drugs?`<fieldset class="field full roles"><legend>Quyền phụ thuốc kiểm soát</legend>${extra.map(box).join('')}</fieldset>`:'')+
   `<div class="approve-box hidden wide" data-admin-confirm><label class="check"><input type="checkbox" name="confirm_admin" value="1"> <b>Tôi xác nhận <span data-admin-verb>cấp</span> quyền Quản trị</b> (toàn quyền tài khoản, cài đặt, nhật ký).</label></div>`}
 // Cấp hoặc bỏ quyền Quản trị phải đánh dấu ô xác nhận ngay trong trang.
@@ -798,7 +941,7 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  if((kind==='service'||kind==='service-update')&&value('price_at_collection')!=='1'&&!value('price'))throw new Error('Giá cố định không được để trống; nhập 0 nếu giá bằng 0 hoặc chọn Giá nhập khi thu');
  if(kind==='service'){await api('/catalog/services',{method:'POST',body:{name:value('name'),price:value('price_at_collection')==='1'?null:num('price'),price_at_collection:value('price_at_collection')==='1',category:value('category')}});msg='Đã thêm dịch vụ';}
  else if(kind==='medicine-price'){await api('/medicines/'+num('medicine_id')+'/price',{method:'PUT',body:{unit_price:num('unit_price')}});msg='Đã đặt giá thuốc';}
- else if(kind==='medicine'){await api('/catalog/medicines',{method:'POST',body:{name:value('name'),base_unit:value('base_unit')}});msg='Đã thêm thuốc/vật tư';}
+ else if(kind==='medicine'){await api('/catalog/medicines',{method:'POST',body:{name:value('name'),base_unit:value('base_unit'),...(f.has('min_stock')?{min_stock:value('min_stock')===''?null:num('min_stock')}: {})}});msg='Đã thêm thuốc/vật tư';}
  else if(kind==='account'){const picked=f.getAll('roles').map(String);if(!picked.length)throw new Error('Chọn ít nhất một vai trò cho tài khoản mới');
   if(adminChange(form)&&!f.get('confirm_admin'))throw new Error('Đánh dấu ô xác nhận cấp quyền Quản trị trước khi tạo');
   await api('/accounts',{method:'POST',body:{username:value('username'),full_name:value('full_name'),password:value('password'),roles:picked}});msg='Đã tạo tài khoản riêng';}
@@ -833,8 +976,28 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  else if(kind==='nursing-task'){await keyed(kind,'/visits/'+num('visit_id')+'/nursing-tasks',{nurse_id:num('nurse_id'),content:value('content')});msg='Đã giao y lệnh';}
  else if(kind==='care-note'){await keyed(kind,'/visits/'+num('visit_id')+'/care-notes',{content:value('content')});msg='Đã lưu ghi nhận chăm sóc';}
  else if(kind==='addendum'){await api('/visits/'+num('visit_id')+'/addenda',{method:'POST',body:{reason:value('reason'),content:value('content')}});msg='Đã gửi phụ lục chờ quản lý duyệt';}
- else if(kind==='stock-receipt'){await api('/stock/receipts',{method:'POST',body:{medicine_id:num('medicine_id'),lot_number:value('lot_number'),expiry_date:parseDay(value('expiry_date'),'Hạn sử dụng'),quantity:num('quantity')}});msg='Đã nhập lô vào kho';}
- else if(kind==='stock-issue'){await api('/stock/issues',{method:'POST',body:{medicine_id:num('medicine_id'),quantity:num('quantity'),purpose:value('purpose')}});msg='Đã xuất lô theo hạn dùng';}
+ else if(kind==='stock-receipt'){
+  const body={medicine_id:num('medicine_id'),lot_number:value('lot_number'),expiry_date:parseDay(value('expiry_date'),'Hạn sử dụng'),quantity:num('quantity'),supplier:value('supplier'),invoice_no:value('invoice_no'),invoice_date:parseDay(value('invoice_date'))};
+  if(stockMoneyAllowed()){body.unit_cost=value('unit_cost')===''?null:num('unit_cost');body.vat_rate=value('vat_rate')===''?null:num('vat_rate');}
+  const result=await api('/stock/receipts',{method:'POST',body});stockState.receipt=result.id;sel.rxSection='r5-receipt';msg='Đã lưu phiếu nhập '+result.document_no;
+ }
+ else if(kind==='stock-issue'){
+  const result=await api('/stock/issues',{method:'POST',body:{medicine_id:num('medicine_id'),quantity:num('quantity'),purpose:value('purpose'),reason:value('reason'),recipient:value('recipient'),lot_id:value('lot_id')?num('lot_id'):null}});
+  stockState.issue=result.id;sel.rxSection='r5-issue';msg='Đã lưu phiếu xuất '+result.document_no;
+ }
+ else if(kind==='s2b-legacy-cost'){
+  await api('/stock/lots/'+num('lot_id')+'/cost',{method:'PUT',body:{unit_cost:num('unit_cost'),reason:value('reason')}});msg='Đã bổ sung giá lô cũ và ghi nhật ký';
+ }
+ else if(kind==='s2b-minimum'){
+  await api('/medicines/'+num('medicine_id')+'/min-stock',{method:'PUT',body:{min_stock:value('min_stock')===''?null:num('min_stock')}});msg='Đã đặt tồn tối thiểu';
+ }
+ else if(kind==='s2b-period'){
+  const query=new URLSearchParams();
+  if(value('period')==='range'){query.set('date_from',parseDay(value('date_from'))||'');query.set('date_to',parseDay(value('date_to'))||'');}
+  else if(value('period')==='quarter'){query.set('quarter',value('quarter'));query.set('year',value('year')||String(new Date().getFullYear()));}
+  else if(value('month'))query.set('month',value('month'));
+  stockState.query='?'+query.toString();sel.rxSection='r5-report';await render();return;
+ }
  else if(kind==='payment'){if(r5PaymentChange(form))throw new Error('Khách đưa chưa đủ');const over=capCheck(form);if(over&&!f.get('confirm_over_limit'))throw new Error('Thu tạm vượt trần: đánh dấu ô xác nhận trong trang rồi thu lại');
   let res;try{res=await keyed(kind,'/payments',{visit_id:num('visit_id'),amount:num('amount'),method:value('method'),external_ref:value('external_ref')||null,confirm_over_limit:!!f.get('confirm_over_limit')},'idempotency_key');}
   catch(e){if(/vượt trần/.test(e.message)){form.dataset.forceCap='1';capCheck(form)}throw e}
@@ -904,6 +1067,20 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
  if(action==='audit-prev'||action==='audit-next'){auditOffset=Math.max(0,auditOffset+(action==='audit-next'?100:-100));await render();return}
  if(action==='rx-page'){sel.rxOffset=id;await render();return}
  if(action==='cash-page'){sel.cashPage=id;await render();return}
+ if(action==='s2b-filter'){
+  stockState.filter=element.dataset.value;sel.rxSection='r5-stock';await render();return;
+ }
+ if(action==='s2b-export-stock'){
+  await stockDownload('/stock/export.xlsx?stock_filter='+stockState.filter,'Ton_kho.xlsx');return;
+ }
+ if(action==='s2b-print-document'){
+  const kind=element.dataset.kind,select=document.querySelector('[data-s2b-document="'+kind+'"]');
+  await stockDownload('/stock/documents/'+kind+'/'+select.value+'/print',kind==='receipts'?'Phieu_nhap_01VT.pdf':'Phieu_xuat_02VT.pdf');return;
+ }
+ if(action==='s2b-report-export'){
+  const fmt=element.dataset.format;
+  await stockDownload('/reports/stock/export'+(stockState.query||'?')+(stockState.query?'&':'')+'fmt='+fmt,'Xuat_nhap_ton.'+fmt);return;
+ }
  if(action==='export-receipt'){await downloadPdfReceipt(id);return}
  if(action==='export-form'){await exportMedicalForm(element.dataset.kind,element.dataset.id,element.dataset.format||'pdf');return}
  if(action==='file'){const r=await fetch('/api/orders/'+id+'/attachment',{headers:authHeader()});if(!r.ok)throw new Error('Không tải được tệp');const url=URL.createObjectURL(await r.blob());let a=document.createElement('a');a.href=url;a.download='ket_qua_mo_phong';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);return}
