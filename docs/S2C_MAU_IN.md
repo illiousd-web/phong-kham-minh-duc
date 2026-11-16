@@ -14,19 +14,21 @@ Nguồn mẫu: `docs/ui-mau/BoMau_33_ban_repo.pdf`, trang 29–33. Nhánh `feat/
 
 Bác sĩ phụ trách hoặc người duyệt nhập lại mật khẩu khi ký. Mỗi bản ký lưu người ký, thời điểm, mã băm, bản sao ảnh và tên tài khoản; mỗi lần ký có audit.
 
-Mã băm lấy từ các khối dữ liệu thực sự được dựng thành bản in qua `printed_content`: đầu phiếu được dùng theo loại mẫu, trường người bệnh, thuốc/chỉ định/chỉ số, lời dặn, ghi chú, ngày giờ hiển thị và tên người ký. Không băm toàn bộ profile, bản ghi nguồn hoặc trạng thái nội bộ. Ví dụ `governing_body` không in trên đơn thuốc nên không tham gia mã băm đơn. Thông báo kiểm chữ ký và ảnh chữ ký không tham gia mã băm nội dung.
+Mã băm lấy từ các khối dữ liệu thực sự được dựng thành bản in qua `printed_content`: đầu phiếu được dùng theo loại mẫu, trường người bệnh, thuốc/chỉ định/chỉ số, lời dặn, ghi chú, ngày giờ hiển thị và tên người ký. Mã băm còn gồm SHA-256 của logo và tệp mẫu Word tương ứng với loại phiếu; thay một trong hai sẽ cần ký lại cho tới khi tài sản trở về bản cũ. Không băm toàn bộ profile, bản ghi nguồn hoặc trạng thái nội bộ. Ví dụ `governing_body` không in trên đơn thuốc nên không tham gia mã băm đơn. Thông báo kiểm chữ ký và ảnh chữ ký không tham gia mã băm nội dung.
 
 Chỉ hiện ảnh của bản ký mới nhất khi mã băm khớp nội dung in hiện tại, người ký vẫn là người chịu trách nhiệm và phiếu còn hợp lệ (`allowed`). Nếu có bản ký nhưng điều kiện không khớp, ô ký trống và PDF/Word hiện: **Phiếu đã thay đổi sau khi ký, cần ký lại**. Phiếu chưa từng ký để trống ô ký. Dưới ảnh hợp lệ có giờ Việt Nam và tài khoản ký.
 
 Khi nội dung trở về đúng nội dung của bản ký mới nhất, chữ ký đó được hiển thị lại nếu người chịu trách nhiệm và tính hợp lệ vẫn khớp. Người dùng cũng có thể ký lại nội dung mới. Luồng xem/in chỉ đọc, không cập nhật hay xóa `document_signatures`; yêu cầu đọc cũ hoàn tất sau khi ký bản mới không tác động bản ký mới.
 
+Bản ký thử đã tạo trước khi bổ sung checksum tài sản dùng công thức băm cũ, do đó cần ký lại sau khi nâng cấp.
+
 Kết quả của chỉ định khác, tên người không liên quan và bản điều chỉnh xét nghiệm còn nháp không làm mất chữ ký nếu các khối in không đổi. Tên người ký dùng trên bản in hiện tại được đối chiếu cả cho đơn M6 và báo cáo M5.
 
 ## Migration 017 và bất biến
 
-017/018 chưa phát hành được gộp thành **một migration 017 sạch**, schema version 17; bỏ migration 018, cột `invalidated` và toàn bộ trigger vô hiệu trên các bảng nguồn. Không tự chuyển đổi lịch sử thử nghiệm của thiết kế 017/018 cũ; kiểm thử nâng cấp dùng schema trước S2c.
+017/018 chưa phát hành được gộp thành **một migration 017 sạch**, schema version 17; bỏ migration 018, cột `invalidated` và toàn bộ trigger vô hiệu trên các bảng nguồn. Không tự chuyển đổi lịch sử thử nghiệm của thiết kế 017/018 cũ. Khi phát hiện version 18 hoặc cột `invalidated`, nâng cấp từ chối với thông báo “CSDL đã chạy bản thử S2c cũ, cần khôi phục bản sao lưu trước S2c”.
 
-SQLite bật `PRAGMA recursive_triggers=ON` trên các kết nối ứng dụng và công cụ SQLite. Trigger bảng ký chặn mọi UPDATE và DELETE, kể cả DELETE ngầm của `INSERT OR REPLACE`/`REPLACE INTO`. PostgreSQL chặn UPDATE/DELETE bằng trigger; `clinic_app` bị thu hồi UPDATE, DELETE, TRUNCATE, gồm quyền UPDATE từng cột còn sót. Chỉ thêm bản ký mới.
+SQLite bật `PRAGMA recursive_triggers=ON` trên các kết nối ứng dụng và công cụ SQLite. Trigger bảng ký chặn mọi UPDATE và DELETE; trigger BEFORE INSERT từ chối ID đã tồn tại, kể cả `INSERT OR REPLACE`/`REPLACE INTO` từ kết nối SQLite trực tiếp khi recursive_triggers tắt. CSDL đã ở version 17 sạch được bổ sung guard khi khởi động. PostgreSQL chặn UPDATE/DELETE bằng trigger; `clinic_app` bị thu hồi UPDATE, DELETE, TRUNCATE, gồm quyền UPDATE từng cột còn sót. Chỉ thêm bản ký mới.
 
 Quay lui bằng `scripts.manage rollback-s2c` với kết nối chủ sở hữu bị từ chối nếu đã có bản ký. Khi chưa có lịch sử ký, quay lui gỡ riêng bảng/guard S2c. C5 và các kiểm tra phiên bản dùng schema 17.
 

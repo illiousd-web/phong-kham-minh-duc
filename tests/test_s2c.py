@@ -333,3 +333,85 @@ def test_age_uses_form_or_sample_date(kind):
                                 created_at='2026-02-01T08:00:00+07:00', items=[]), kind)
     assert '71 tháng' in PdfReader(BytesIO(render(model, 'pdf'))).pages[0].extract_text()
     assert '71 tháng' in word_text(render(model, 'docx'))
+
+
+def test_raw_sqlite_rejects_replace_without_recursive_triggers(actors):
+    import sqlite3
+    from app.database import DB
+    from tests.s2c_cases import sign_current
+    clients, ids = actors
+    _, rid, _, _ = document(clients, ids, db, 1, 'rx')
+    assert clients['admin'].put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
+    sign_current(clients['doctor'], 'rx', rid, os.environ['DEMO_PASSWORD'])
+    with sqlite3.connect(DB) as c:
+        c.execute('PRAGMA recursive_triggers=OFF')
+        assert c.execute('PRAGMA recursive_triggers').fetchone()[0] == 0
+        cursor = c.execute('SELECT * FROM document_signatures ORDER BY id DESC LIMIT 1')
+        record = cursor.fetchone()
+        cols = [column[0] for column in cursor.description]
+        for verb in ('INSERT OR REPLACE', 'REPLACE'):
+            with pytest.raises(sqlite3.IntegrityError, match='Không thể thay thế bản ký'):
+                c.execute(verb+' INTO document_signatures('+','.join(cols)+') VALUES('+','.join('?' for _ in cols)+')', record)
+        for statement in ('UPDATE document_signatures SET username=username WHERE id=?', 'DELETE FROM document_signatures WHERE id=?'):
+            with pytest.raises(sqlite3.IntegrityError, match='Không thể sửa hoặc xóa bản ký'):
+                c.execute(statement, (record[0],))
+        assert c.execute('SELECT * FROM document_signatures WHERE id=?', (record[0],)).fetchone() == record
+
+
+@pytest.mark.parametrize('legacy', ['version', 'column'])
+def test_migration_rejects_legacy_s2c_sqlite(legacy):
+    import sqlite3
+    from app.s2c_migration import migrate_s2c
+    with sqlite3.connect(':memory:') as c:
+        c.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)')
+        c.execute('INSERT INTO schema_migrations VALUES(17)')
+        if legacy == 'version':
+            c.execute('INSERT INTO schema_migrations VALUES(18)')
+        else:
+            c.execute('CREATE TABLE document_signatures(id INTEGER PRIMARY KEY, invalidated INTEGER)')
+        with pytest.raises(ValueError, match='CSDL đã chạy bản thử S2c cũ, cần khôi phục bản sao lưu trước S2c'):
+            migrate_s2c(c)
+
+
+def test_signature_binds_logo_and_selected_template(actors, tmp_path, monkeypatch):
+    import shutil
+    import app.s2c_forms as forms
+    from tests.s2c_cases import sign_current
+    clients, ids = actors
+    templates = tmp_path/'templates'
+    shutil.copytree(forms.TEMPLATE_DIR, templates)
+    logo = tmp_path/'logo.png'
+    logo.write_bytes(forms.LOGO.read_bytes())
+    monkeypatch.setattr(forms, 'TEMPLATE_DIR', templates)
+    monkeypatch.setattr(forms, 'LOGO', logo)
+    _, rid, url, _ = document(clients, ids, db, 1, 'rx')
+    assert clients['admin'].put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
+    sign_current(clients['doctor'], 'rx', rid, os.environ['DEMO_PASSWORD'])
+    assert image_count(clients['doctor'].get(url)) == 2
+    logo_original = logo.read_bytes()
+    logo.write_bytes(signature_image('red'))
+    changed = clients['doctor'].get(url)
+    assert image_count(changed) == 1
+    assert 'Phiếu đã thay đổi sau khi ký, cần ký lại' in PdfReader(BytesIO(changed.content)).pages[0].extract_text()
+    logo.write_bytes(logo_original)
+    assert image_count(clients['doctor'].get(url)) == 2
+    other = templates/forms.TEMPLATES['order']
+    other.write_bytes(other.read_bytes()+b'changed')
+    assert image_count(clients['doctor'].get(url)) == 2
+    template = templates/forms.TEMPLATES['rx']
+    original = template.read_bytes()
+    template.write_bytes(original+b'changed')
+    assert image_count(clients['doctor'].get(url)) == 1
+    template.write_bytes(original)
+    assert image_count(clients['doctor'].get(url)) == 2
+
+
+def test_migration_installs_replace_guard_on_existing_v17():
+    import sqlite3
+    from app.s2c_migration import migrate_s2c
+    with sqlite3.connect(':memory:') as c:
+        c.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)')
+        migrate_s2c(c)
+        c.execute('DROP TRIGGER document_signatures_no_replace')
+        migrate_s2c(c)
+        assert c.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='document_signatures_no_replace'").fetchone()

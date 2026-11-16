@@ -3,8 +3,18 @@ from pathlib import Path
 
 
 def migrate_s2c(c, postgres=False, *, down=False):
+    if not down:
+        legacy_version = c.execute('SELECT 1 FROM schema_migrations WHERE version=18').fetchone()
+        if postgres:
+            legacy_column = c.execute("SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='document_signatures' AND column_name='invalidated'").fetchone()
+        else:
+            legacy_column = any(row[1] == 'invalidated' for row in c.execute('PRAGMA table_info(document_signatures)'))
+        if legacy_version or legacy_column:
+            raise ValueError('CSDL đã chạy bản thử S2c cũ, cần khôi phục bản sao lưu trước S2c')
     applied = bool(c.execute('SELECT 1 FROM schema_migrations WHERE version=17').fetchone())
     if applied == (not down):
+        if applied and not postgres:
+            _sqlite_insert_guard(c)
         return
     if down:
         if c.execute('SELECT 1 FROM document_signatures LIMIT 1').fetchone():
@@ -29,4 +39,12 @@ def migrate_s2c(c, postgres=False, *, down=False):
         c.execute('PRAGMA recursive_triggers=ON')
         for event in ('UPDATE', 'DELETE'):
             c.execute(f"CREATE TRIGGER s2c_signature_guard_{event.lower()} BEFORE {event} ON document_signatures BEGIN SELECT RAISE(ABORT,'Không thể sửa hoặc xóa bản ký'); END")
+        _sqlite_insert_guard(c)
     c.execute('INSERT INTO schema_migrations(version) VALUES(17)')
+
+
+def _sqlite_insert_guard(c):
+    c.execute("""CREATE TRIGGER IF NOT EXISTS document_signatures_no_replace
+        BEFORE INSERT ON document_signatures
+        WHEN EXISTS (SELECT 1 FROM document_signatures WHERE id=NEW.id)
+        BEGIN SELECT RAISE(ABORT,'Không thể thay thế bản ký'); END""")

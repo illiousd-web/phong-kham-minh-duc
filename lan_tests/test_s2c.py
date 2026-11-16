@@ -48,14 +48,14 @@ def test_immutable_runtime_role_and_owner(clients):
                 if runtime:
                     c.execute('SET ROLE clinic_app')
                 for statement in ('UPDATE document_signatures SET username=username WHERE id=%s','DELETE FROM document_signatures WHERE id=%s',
-                                  'INSERT INTO document_signatures SELECT * FROM document_signatures WHERE id=%s ON CONFLICT(id) DO UPDATE SET username=EXCLUDED.username',
-                                  'INSERT OR REPLACE INTO document_signatures SELECT * FROM document_signatures WHERE id=%s',
-                                  'REPLACE INTO document_signatures SELECT * FROM document_signatures WHERE id=%s'):
-                    with pytest.raises(psycopg.Error):
+                                  'INSERT INTO document_signatures SELECT * FROM document_signatures WHERE id=%s ON CONFLICT(id) DO UPDATE SET username=EXCLUDED.username'):
+                    with pytest.raises(psycopg.Error) as error:
                         c.execute(statement, (sid,))
+                    assert error.value.sqlstate in ('42501', 'P0001')
                 if runtime:
-                    with pytest.raises(psycopg.Error):
+                    with pytest.raises(psycopg.Error) as error:
                         c.execute('TRUNCATE document_signatures')
+                    assert error.value.sqlstate == '42501'
         finally:
             c.execute('RESET ROLE')
             if not existed:
@@ -66,3 +66,18 @@ def test_immutable_runtime_role_and_owner(clients):
         with pytest.raises(ValueError, match='đã có bản ký'):
             migrate_s2c(c, postgres=True, down=True)
         assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 17
+
+
+@pytest.mark.parametrize('legacy', ['version', 'column'])
+def test_migration_rejects_legacy_s2c_postgres(legacy):
+    import psycopg
+    from app.database import PGConnection
+    from app.s2c_migration import migrate_s2c
+    with psycopg.connect(URL) as connection:
+        if legacy == 'version':
+            connection.execute('INSERT INTO schema_migrations(version) VALUES(18)')
+        else:
+            connection.execute('ALTER TABLE document_signatures ADD COLUMN invalidated INTEGER')
+        with pytest.raises(ValueError, match='CSDL đã chạy bản thử S2c cũ, cần khôi phục bản sao lưu trước S2c'):
+            migrate_s2c(PGConnection(connection), postgres=True)
+        connection.rollback()

@@ -2,6 +2,7 @@
 from copy import deepcopy
 from datetime import datetime
 from io import BytesIO
+import hashlib
 from math import ceil
 import re
 
@@ -547,7 +548,9 @@ def printed_content(m):
     kind = m['kind']
     profile_keys = ('name','address','phone','email') if kind == 'rx' else ('governing_body','name','address','phone','email')
     heading = 'ĐƠN THUỐC' if kind == 'rx' else ('PHIẾU CHỈ ĐỊNH NỘI KHOA' if kind == 'order' else LABS[kind][0])
-    content = dict(kind=kind, heading=heading, watermark=WATERMARK, profile={key:m['profile'].get(key) or '' for key in profile_keys},
+    assets = {'logo': hashlib.sha256(LOGO.read_bytes()).hexdigest(),
+              'template': hashlib.sha256((TEMPLATE_DIR/TEMPLATES[kind]).read_bytes()).hexdigest()}
+    content = dict(kind=kind, heading=heading, watermark=WATERMARK, assets=assets, profile={key:m['profile'].get(key) or '' for key in profile_keys},
                    fields=[[str(value or '') for value in row] for row in m['fields']], patient_code=m['patient_code'] or '',
                    number=m.get('print_number') or m['number'], stamp=time_text(m['stamp']),
                    signer_title=m['signer_title'], signer_name=m['signer_name'] or '', notes=m['notes'],
