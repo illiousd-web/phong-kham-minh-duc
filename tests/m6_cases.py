@@ -10,10 +10,12 @@ def check_m6(clients, ids, db, service):
     d, r, a, pharmacy = [clients[k] for k in ('doctor','reception','admin','pharmacy')]
     suffix = secrets.token_hex(4)
     old_settings = a.get('/api/prescription-settings').json()
+    old_profile = a.get('/api/clinic-profile').json()
     old_practitioner = next(p for p in a.get('/api/practitioners').json()['items'] if p['id']==ids['doctor'])
     from app.practitioners import COLUMNS
     prior = {k:old_practitioner[k] for k in COLUMNS}
     try:
+        assert a.put('/api/clinic-profile',json={'name':'Cơ sở giả lập','address':'Địa chỉ cơ sở giả lập','phone':'0900000000'}).status_code==200
         assert a.put('/api/prescription-settings',json={'clinic_facility_code':'ZZ001','clinic_name':'Cơ sở giả lập','clinic_address':'Địa chỉ cơ sở giả lập','clinic_phone':'0900000000'}).status_code==200
         assert r.put('/api/prescription-settings',json={}).status_code==403
         assert a.put('/api/practitioners/'+str(ids['doctor']),json={'printed_name':'Người kê giả lập','printed_title':'BS','practice_license':'GP-GIA-LAP','practice_scopes':['Nội']}).status_code==200
@@ -32,8 +34,9 @@ def check_m6(clients, ids, db, service):
         detail=d.get(url).json(); assert detail['items'][0]['quantity']=='14'
         assert len(detail['local_code'])==14 and detail['local_code'].startswith('ZZ001')
         draft=d.get(url+'/form?fmt=docx');assert draft.status_code==200
-        draft_doc=Document(io.BytesIO(draft.content));assert draft_doc.paragraphs[0].text.startswith('Mã đơn thuốc:');draft_text=' '.join(x.text for x in draft_doc.paragraphs)
-        assert detail['local_code'] in draft_text and 'NHÁP – CHƯA CÓ GIÁ TRỊ' in draft_text
+        draft_doc=Document(io.BytesIO(draft.content));assert draft_doc.paragraphs[0].text=='ĐƠN THUỐC';draft_text=' '.join(x.text for x in draft_doc.paragraphs)
+        # Page 33: national prescription code stays blank; local code is retained in JSON.
+        assert detail['local_code'] not in draft_text and 'NHÁP – CHƯA CÓ GIÁ TRỊ' in draft_text
         assert 'CHƯA CÓ MÃ CƠ SỞ' not in draft_text
         did=detail['items'][0]['drug_id']
         drug=next(x for x in a.get('/api/drugs').json() if x['id']==did)
@@ -93,16 +96,17 @@ def check_m6(clients, ids, db, service):
         assert all(k in value for k in ('patient','facility','prescriber','encounter','items','advice'))
         assert pharmacy.get(url).status_code==200 and 'snapshot' not in pharmacy.get(url).json()
         assert r.get(url+'/json').status_code==403
-        expected=['ZZ001','Cơ sở giả lập','Địa chỉ cơ sở giả lập','0900000000','000000000123','01/01/1990','Nữ','Mã số BHYT','Nhà cũ giả lập','Chẩn đoán giả lập M6','Hoạt chất giả lập A','Sinh hoạt giả lập','Tái khám giả lập','Mua thuốc giả lập','Bác sỹ/Y sỹ khám bệnh','Người kê giả lập','Khám lại xin mang theo đơn này.','CHƯA LIÊN THÔNG']
+        expected=['Mã đơn thuốc:','Cơ sở giả lập','Địa chỉ cơ sở giả lập','0900000000','000000000123','01/01/1990','Nữ','Mã số BHYT','Nhà cũ giả lập','Chẩn đoán giả lập M6','Hoạt chất giả lập A','Sinh hoạt giả lập','Tái khám giả lập','Mua thuốc giả lập','BÁC SĨ KHÁM BỆNH','Người kê giả lập','Khám lại xin mang theo đơn này.','CHƯA LIÊN THÔNG']
         for fmt in ('docx','pdf'):
             res=r.get(url+'/form?fmt='+fmt);assert res.status_code==200,res.text
             if fmt=='docx':
-                doc=Document(io.BytesIO(res.content));text=' '.join(p.text for p in doc.paragraphs)+' '+' '.join(c.text for t in doc.tables for row in t.rows for c in row.cells)
+                doc=Document(io.BytesIO(res.content));text=' '.join(c.text for sec in doc.sections for header in (sec.header, sec.first_page_header) for t in header.tables for row in t.rows for c in row.cells)+' '+' '.join(p.text for p in doc.paragraphs)+' '+' '.join(c.text for t in doc.tables for row in t.rows for c in row.cells)
             else:
                 with pymupdf.open(stream=res.content,filetype='pdf') as pdf:text=' '.join(p.get_text() for p in pdf)
             text=' '.join(text.split())
             for word in expected:assert word in text,(fmt,word,text)
-            assert text.index(code)<text.index('Cơ sở giả lập')<text.index('Người giả lập M6')
+            assert code not in text
+            assert text.index('Cơ sở giả lập')<text.index('Người giả lập M6')
         # Merge equivalent catalog entries only; snapshot/JSON stays identical.
         with db(True) as c:
             original=c.execute('SELECT * FROM drugs WHERE id=?',(did,)).fetchone()
@@ -148,5 +152,6 @@ def check_m6(clients, ids, db, service):
         from app.prescription_gateway import FakePrescriptionGateway
         fake=FakePrescriptionGateway();assert fake.submit(value)['national_code'] is None and fake.received==[value]
     finally:
+        a.put('/api/clinic-profile',json=old_profile)
         a.put('/api/prescription-settings',json=old_settings)
         a.put('/api/practitioners/'+str(ids['doctor']),json=prior)

@@ -33,9 +33,11 @@ def create(out:Path|None=None)->Path:
     with tempfile.TemporaryDirectory(prefix='md-backup-') as td:
         snap=Path(td)/'database.sqlite3'
         src=sqlite3.connect(DB);dest=sqlite3.connect(snap)
+        src.execute('PRAGMA recursive_triggers=ON');dest.execute('PRAGMA recursive_triggers=ON')
         try:src.backup(dest)
         finally:dest.close();src.close()
         chk=sqlite3.connect(snap)
+        chk.execute('PRAGMA recursive_triggers=ON')
         try:
             if chk.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise RuntimeError('Bản sao lưu SQLite không đạt integrity_check')
         finally:chk.close()
@@ -65,6 +67,7 @@ def verify(path:Path)->dict:
             sql=Path(td)/'snapshot.sqlite3'
             sql.write_bytes(z.read('database.sqlite3'))
             c=sqlite3.connect(sql)
+            c.execute('PRAGMA recursive_triggers=ON')
             try:
                 if c.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise RuntimeError('SQLite trong sao lưu không nhất quán')
                 tables=c.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]

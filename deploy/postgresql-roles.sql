@@ -48,3 +48,12 @@ DO $$ BEGIN
   GRANT UPDATE(approved_by,approved_at,snapshot) ON order_result_versions TO clinic_app;
  END IF;
 END $$;
+
+-- S2c: bản ký bất biến, chỉ thêm bản ký mới.
+DO $$ BEGIN
+ IF to_regclass('public.document_signatures') IS NOT NULL THEN
+  REVOKE UPDATE, DELETE, TRUNCATE ON document_signatures FROM clinic_app;
+  EXECUTE (SELECT 'REVOKE UPDATE ('||string_agg(quote_ident(attname),',')||') ON document_signatures FROM clinic_app'
+           FROM pg_attribute WHERE attrelid='document_signatures'::regclass AND attnum>0 AND NOT attisdropped);
+ END IF;
+END $$;

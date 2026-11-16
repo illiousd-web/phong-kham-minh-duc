@@ -286,7 +286,7 @@ class Day:
             with pharm.expect_download() as download:
                 pharm.locator(f'[data-kind="rx"][data-id="{rid}"][data-format="pdf"]').first.click()
             download.value.save_as(str(path))
-            pdf_text(path, 'ĐƠN THUỐC NGOẠI TRÚ', v['name'])
+            pdf_text(path, 'ĐƠN THUỐC', v['name'])
         else:
             dispensed = self.call('pharmacy', 'POST', f'/api/prescriptions/{rid}/dispense', status=201)
         self.audit('rx_dispensed', 'prescription', rid, 'pharmacy')
@@ -747,7 +747,7 @@ def test_nhat_ky_du_thao_tac_dung_nguoi_va_quyen_api(day):
 def test_ba_luot_trinh_duyet_va_sau_pdf(day):
     assert [v['ui'] for v in day.visits] == [True] * 3 + [False] * 27
     for v in day.visits[:3]:
-        pdf_text(EVIDENCE / f'{v["index"]}-don-thuoc.pdf', 'ĐƠN THUỐC NGOẠI TRÚ', v['name'])
+        pdf_text(EVIDENCE / f'{v["index"]}-don-thuoc.pdf', 'ĐƠN THUỐC', v['name'])
         for payment in v['payments']:
             pdf_text(EVIDENCE / f'{v["index"]}-phieu-{payment["id"]}.pdf',
                      'PHIẾU THU TẠM' if payment['kind'] == 'provisional' else 'PHIẾU THU', v['name'])

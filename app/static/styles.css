@@ -681,3 +681,9 @@ table.table.s2b-table tbody{display:table-row-group}
 table.table.s2b-table tr{display:table-row;overflow:visible;margin:0;padding:0;border:0}
 table.table.s2b-table th,table.table.s2b-table td{display:table-cell;width:auto;overflow-wrap:normal;border-radius:0!important}
 table.table.s2b-table td[data-label]::before{display:none!important}
+
+.s2c-sign-dialog{width:min(480px,calc(100% - 24px));max-width:calc(100% - 24px);box-sizing:border-box;padding:20px;border:1px solid #6F8F7E;border-radius:12px;color:#0B1F17;background:#fff;font-size:14px}
+.s2c-sign-dialog .field{display:flex;flex-direction:column;gap:8px}
+.s2c-sign-dialog input{box-sizing:border-box;width:100%;border:1px solid #6F8F7E;min-height:44px}
+.s2c-sign-dialog button{min-height:44px;min-width:88px}
+.s2c-sign-dialog [role=alert]{color:#B42318}

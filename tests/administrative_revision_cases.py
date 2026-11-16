@@ -101,18 +101,21 @@ def check_structured_address_print_position(clients, ids, db, service_id):
                         assert any('Nghề giả lập địa chỉ' in row.cells[0].text for row in doc.tables[0].rows)
                         assert not any('Nghề giả lập địa chỉ' in p.text for p in doc.paragraphs)
                     else:
-                        paragraphs = [p.text for p in doc.paragraphs]
-                        address_at = next(i for i, x in enumerate(paragraphs) if x.startswith('Nơi thường trú / tạm trú / ở hiện tại:'))
-                        assert paragraphs[address_at] == 'Nơi thường trú / tạm trú / ở hiện tại: '+address
-                        metadata_at = next(i for i, x in enumerate(paragraphs) if x.startswith('Nghề nghiệp:'))
-                        diagnosis_at = next(i for i, x in enumerate(paragraphs) if x.startswith('Chẩn đoán:'))
-                        assert address_at < metadata_at < diagnosis_at
+                        # Page 33 puts address in the patient table, before diagnosis/medicines.
+                        rows=doc.tables[0].rows
+                        address_at=next(i for i,row in enumerate(rows) if row.cells[0].text=='Địa chỉ')
+                        diagnosis_at=next(i for i,row in enumerate(rows) if row.cells[0].text=='Chẩn đoán')
+                        assert rows[address_at].cells[1].text==address
+                        assert address_at<diagnosis_at
+                        body=list(doc._element.body)
+                        medicine_heading=next(p for p in doc.paragraphs if p.text=='THUỐC ĐIỀU TRỊ')
+                        assert body.index(doc.tables[0]._tbl)<body.index(medicine_heading._p)
                 else:
                     with pymupdf.open(stream=response.content, filetype='pdf') as pdf:
                         text = ' '.join(' '.join(page.get_text().split()) for page in pdf)
-                    assert 'Địa chỉ: '+address in text
+                    assert ('Địa chỉ '+address if kind=='rx' else 'Địa chỉ: '+address) in text
                     assert 'Địa chỉ: —' not in text
-                    if kind == 'rx': assert text.index(address) < text.index('Danh sách thuốc')
+                    if kind == 'rx': assert text.index(address) < text.index('THUỐC ĐIỀU TRỊ')
     finally:
         # Keep the reference for the printed prescription, but do not expose
         # this stockless fixture to later pharmacy workflows in the shared DB.

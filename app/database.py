@@ -119,6 +119,7 @@ def db(write=False):
         return
     DB.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB, timeout=10)
+    con.execute('PRAGMA recursive_triggers=ON')
     con.row_factory = sqlite3.Row
     con.execute('PRAGMA foreign_keys=ON')
     con.execute('PRAGMA busy_timeout=10000')
@@ -179,3 +180,5 @@ def migrate():
         migrate_s2a(PGConnection(con), postgres=True)
         from .s2b_migration import migrate_s2b
         migrate_s2b(PGConnection(con), postgres=True)
+        from .s2c_migration import migrate_s2c
+        migrate_s2c(PGConnection(con), postgres=True)

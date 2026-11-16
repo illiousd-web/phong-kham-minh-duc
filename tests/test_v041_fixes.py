@@ -67,8 +67,10 @@ def test_printed_forms_use_vietnamese_status_and_lab_table():
     assert client.post(f'/api/orders/{order}/approve', headers=doc).status_code == 200
     lab = pdf_text(client.get(f'/api/forms/lab/{order}?fmt=pdf', headers=doc))
     for expected in ('Glucose', '9,2', 'mmol/L', '3,9–5,6', 'Ure', 'Mẫu lấy lúc đói',
-                     'Tăng glucose máu', 'NGƯỜI THỰC HIỆN', 'NGƯỜI DUYỆT', 'Kỹ thuật viên', 'BS Nội', 'Đã duyệt'):
+                     'Tăng glucose máu', 'Người thực hiện', 'Người duyệt', 'TRƯỞNG KHOA XÉT NGHIỆM', 'Kỹ thuật viên', 'BS Nội'):
         assert expected in lab, expected
+    # Pages 29–31 have one signature block, and no status column on an approved form.
+    assert 'NHÁP – CHƯA DUYỆT' not in lab
     old_print = pdf_text(client.get(f'/api/print/result/{order}', headers=doc))
     assert 'Glucose' in old_print and 'Kỹ thuật viên' in old_print
     texts = [lab, old_print,

@@ -48,8 +48,12 @@ def test_a_invalid_cls_price_mapping_is_rejected():
 def test_b_stock_dispense_charge_once_and_no_double_issue():
     _,v=_visit(); _medical(v)
     doc=token('bs_noi');pharm=token('duoc');mgr=token('quanly');cash=token('thungan')
-    meds=client.get('/api/dispensable-medicines',headers=doc).json()
-    med=next(x for x in meds if x['name'].startswith('Thuoc') or x['name'].startswith('Thuốc'))
+    tag=secrets.token_hex(8)
+    created=client.post('/api/catalog/medicines',headers=mgr,json={'name':'Thuốc giả lập '+tag,'base_unit':'viên'})
+    assert created.status_code==201,created.text
+    med={'id':created.json()['id'],'name':'Thuốc giả lập '+tag}
+    receipt=client.post('/api/stock/receipts',headers=pharm,json={'medicine_id':med['id'],'lot_number':'TEST-'+tag,'expiry_date':'2099-12-31','quantity':10})
+    assert receipt.status_code==201,receipt.text
     pre=client.get('/api/stock',headers=pharm).json()
     before=sum(r['quantity'] for r in pre if r['name']==med['name'])
     assert client.put(f"/api/medicines/{med['id']}/price",headers=pharm,json={'unit_price':12000}).status_code==403

@@ -117,9 +117,11 @@ def test_c5_profile_upgrade_reaches_s2a_and_preserves_full_cohort(tmp_path):
         before = database_state(target)
         with psycopg.connect(target, row_factory=record_factory) as connection:
             migrate_profile_schema(PGConnection(connection))
-            assert connection.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 16
+            assert connection.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 17
             assert connection.execute('SELECT name,governing_body,address,phone,email FROM clinic_profile').fetchone() == dict.fromkeys(PROFILE, '')
             assert connection.execute('SELECT COUNT(*) FROM user_signatures').fetchone()[0] == 0
+            assert connection.execute('SELECT COUNT(*) FROM document_signatures').fetchone()[0] == 0
+            assert connection.execute('SELECT COUNT(*) FROM lab_reference_ranges').fetchone()[0] == 0
         after = database_state(target)
         assert after['money'] == before['money'] and after['stock'] == before['stock']
         assert after['tables']['visits'] == before['tables']['visits'] == 22000
@@ -127,6 +129,6 @@ def test_c5_profile_upgrade_reaches_s2a_and_preserves_full_cohort(tmp_path):
         for table, count in before['tables'].items():
             if table not in ('schema_migrations', 'audit_log'):
                 assert after['tables'][table] == count, table
-        assert after['tables']['schema_migrations'] == before['tables']['schema_migrations'] + 12
+        assert after['tables']['schema_migrations'] == before['tables']['schema_migrations'] + 13
     finally:
         _drop(name)

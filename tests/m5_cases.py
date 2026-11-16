@@ -81,7 +81,8 @@ def check_m5(clients,ids,db,service):
             else:
                 with pymupdf.open(stream=res.content,filetype='pdf') as pdf:text=' '.join(page.get_text() for page in pdf)
             text=' '.join(text.split())
-            for word in ['Tên chỉ số','Kết quả','Cờ','Khoảng tham chiếu','Đơn vị','Người thực hiện','Người duyệt','Nhận xét giả lập','2026']:
+            # PDF pages 29–31: three columns; units sit in Trị số bình thường and flags in Kết quả.
+            for word in ['Xét nghiệm','Kết quả','Trị số bình thường','Người thực hiện','Người duyệt','Nhận xét giả lập','2026']:
                 assert word in text,(fmt,group,word,text)
             if group=='hematology':assert '21,50' in text and '10,00 – 20,00' in text and test['name'] in text and other['name'] not in text
     assert r.get(url+'/form?group=other').status_code==404
