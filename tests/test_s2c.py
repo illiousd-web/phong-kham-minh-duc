@@ -415,3 +415,123 @@ def test_migration_installs_replace_guard_on_existing_v17():
         c.execute('DROP TRIGGER document_signatures_no_replace')
         migrate_s2c(c)
         assert c.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='document_signatures_no_replace'").fetchone()
+
+
+def test_rx_signature_belongs_to_prescriber_not_visit_doctor(actors):
+    clients, ids = actors
+    for role, color in [('doctor', 'blue'), ('doctor2', 'red')]:
+        assert clients['admin'].put(f'/api/users/{ids[role]}/signature', files={'file': ('fake.png', signature_image(color), 'image/png')}).status_code == 200
+    vid, oid, url, word_url = document(clients, ids, db, 1, 'rx')
+    with db(True) as c:
+        c.execute('UPDATE prescriptions SET doctor_id=? WHERE id=?', (ids['doctor2'], oid))
+    endpoint=f'/api/document-signatures/rx/{oid}'
+    state=clients['doctor2'].get(endpoint)
+    assert state.status_code == 200, state.text
+    body={'password':os.environ['DEMO_PASSWORD'], 'content_hash':state.json()['content_hash']}
+    assert clients['doctor'].post(endpoint, json=body).status_code == 403
+    signed=clients['doctor2'].post(endpoint, json=body)
+    assert signed.status_code == 200, signed.text
+    assert signed.json()['signed_by'] == ids['doctor2']
+    with ZipFile(BytesIO(clients['doctor'].get(word_url).content)) as archive:
+        media=[archive.read(name) for name in archive.namelist() if name.startswith('word/media/')]
+        assert signature_image('red') in media and signature_image('blue') not in media
+    assert image_count(clients['doctor'].get(url)) == 2
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+def test_watermark_setting_on_all_form_types(actors, monkeypatch, enabled):
+    import app.forms as forms
+    import app.s2c_forms as s2c
+    text='BẢN THỬ NGHIỆM - KHÔNG DÙNG CHO NGƯỜI BỆNH THẬT'
+    value=text if enabled else ''
+    monkeypatch.setattr(forms, 'WATERMARK', value)
+    monkeypatch.setattr(s2c, 'WATERMARK', value)
+    from tests.test_workflows import prepare_visit
+    _, vid=prepare_visit()
+    with db() as c:
+        ctx=form_context(c, 'intake', vid)
+    ctx.update(order={'id':1, 'category':'lab', 'name':'Dịch vụ giả lập', 'status':'approved', 'created_at':ctx['visit']['created_at']},
+               rx={'id':1, 'drug_lines':'Thuốc giả lập | 1 | Giả lập', 'created_at':ctx['visit']['created_at']})
+    for kind in forms.TEMPLATE_BY_TYPE:
+        pdf=PdfReader(BytesIO(forms.generate_pdf(kind, ctx)))
+        pdf_text=' '.join(page.extract_text() for page in pdf.pages)
+        with ZipFile(BytesIO(forms.generate_docx(kind, ctx))) as archive:
+            xml=' '.join(archive.read(name).decode() for name in archive.namelist() if name.startswith('word/') and name.endswith('.xml'))
+        assert (text in pdf_text) == enabled, kind
+        assert (text in xml) == enabled, kind
+
+
+def test_rx_missing_prescriber_never_uses_visit_doctor(actors, monkeypatch):
+    import app.main as main
+    from app.document_signatures import load_document, signature_notice, valid_signature
+    clients, ids = actors
+    assert clients['admin'].put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
+    vid, oid, url, _ = document(clients, ids, db, 1, 'rx')
+    endpoint=f'/api/document-signatures/rx/{oid}'
+    state=clients['doctor'].get(endpoint)
+    assert state.status_code == 200
+    assert clients['doctor'].post(endpoint, json={'password':os.environ['DEMO_PASSWORD'], 'content_hash':state.json()['content_hash']}).status_code == 200
+    original=main.form_context
+    def missing_prescriber(c, kind, object_id):
+        ctx=original(c, kind, object_id)
+        if kind == 'rx' and object_id == oid:
+            ctx['rx']['doctor_id']=None
+            ctx['doctor_name']=''
+        return ctx
+    monkeypatch.setattr(main, 'form_context', missing_prescriber)
+    with db() as c:
+        doc=load_document(c, 'rx', oid)
+        assert doc['actor'] is None
+        signature=valid_signature(c, 'rx', oid, doc)
+        assert signature is None
+        notice=signature_notice(c, 'rx', oid, signature)
+        assert 'cần ký lại' in notice
+        model=doc['models'][0]
+        model['signature']=signature
+        model['signature_notice']=notice
+        pdf=PdfReader(BytesIO(render(model, 'pdf')))
+        assert len(pdf.pages[0].images)==1
+        assert 'cần ký lại' in pdf.pages[0].extract_text()
+    assert clients['doctor'].post(endpoint, json={'password':os.environ['DEMO_PASSWORD'], 'content_hash':doc['content_hash']}).status_code == 403
+
+
+def test_watermark_disabled_additional_print_types(actors, monkeypatch):
+    import app.forms as forms
+    import app.s2c_forms as s2c
+    from app.print_forms import pdf_document
+    from app.stock_exports import document_pdf, report_export
+    phrase='BẢN THỬ NGHIỆM - KHÔNG DÙNG CHO NGƯỜI BỆNH THẬT'
+    monkeypatch.setattr(forms, 'WATERMARK', '')
+    monkeypatch.setattr(s2c, 'WATERMARK', '')
+    def check_pdf(data):
+        reader=PdfReader(BytesIO(data))
+        assert phrase not in ' '.join(page.extract_text() for page in reader.pages)
+    for kind in ('intake', 'clinical', 'order', 'result', 'rx', 'follow_up', 'receipt'):
+        check_pdf(pdf_document(kind, {}))
+    profile={'name':'Đơn vị giả lập', 'address':'Địa chỉ giả lập'}
+    stock={'created_at':'2026-01-01', 'document_no':'TEST', 'invoice_no':'', 'invoice_date':'2026-01-01',
+           'supplier':'', 'recipient':'', 'purpose':'', 'items':[], 'creator':'Người giả lập'}
+    for kind in ('receipts', 'issues'):
+        check_pdf(document_pdf(kind, stock, profile))
+    check_pdf(report_export({'date_from':'2026-01-01','date_to':'2026-01-31','rows':[]}, 'pdf', profile))
+    clients, ids=actors
+    for kind in ('clinical_rx', 'lab_report'):
+        _, _, pdf_url, word_url=document(clients, ids, db, 1, kind)
+        response=clients['doctor'].get(pdf_url)
+        assert response.status_code == 200, response.text
+        check_pdf(response.content)
+        word=clients['doctor'].get(word_url)
+        assert word.status_code == 200, word.text
+        with ZipFile(BytesIO(word.content)) as archive:
+            xml=' '.join(archive.read(name).decode() for name in archive.namelist() if name.startswith('word/') and name.endswith('.xml'))
+        assert phrase not in xml
+
+
+@pytest.mark.parametrize(('setting', 'expected'), [('0', ''), ('1', 'BẢN THỬ NGHIỆM - KHÔNG DÙNG CHO NGƯỜI BỆNH THẬT')])
+def test_watermark_reads_environment(setting, expected):
+    import subprocess
+    import sys
+    env={**os.environ, 'IN_DONG_THU_NGHIEM':setting}
+    result=subprocess.run([sys.executable, '-c', 'from app.forms import WATERMARK; print(WATERMARK)'],
+                          env=env, check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == expected

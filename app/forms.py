@@ -24,7 +24,9 @@ from reportlab.lib.utils import ImageReader
 TEMPLATE_DIR = Path(__file__).resolve().parent / 'templates'
 LOGO = Path(__file__).resolve().parent / 'static' / 'images' / 'logo_minh_duc.png'
 CLINIC = 'PHÒNG KHÁM ĐA KHOA MINH ĐỨC'
-WATERMARK = 'BẢN THỬ NGHIỆM - KHÔNG DÙNG CHO NGƯỜI BỆNH THẬT'
+from .config import IN_DONG_THU_NGHIEM
+
+WATERMARK = 'BẢN THỬ NGHIỆM - KHÔNG DÙNG CHO NGƯỜI BỆNH THẬT' if IN_DONG_THU_NGHIEM else ''
 TEMPLATE_BY_TYPE = {
  'intake':'01_Phieu_tiep_don_A4.docx',
  'visit':'02_Phieu_kham_ngoai_tru_A4.docx',

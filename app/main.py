@@ -983,7 +983,9 @@ def form_context(c, kind: str, object_id: int):
         context['order']=order
     if kind=='visit':context['addenda']=[dict(x) for x in c.execute("SELECT a.*,u.full_name AS author_name FROM visit_addenda a JOIN users u ON u.id=a.created_by WHERE a.visit_id=? AND a.status='approved' ORDER BY a.id",(visit_id,))]
     for appendix in context.get('addenda',[]):appendix['author_name']=printed_name(c,appendix['created_by'])
-    if rx:context['rx']=rx
+    if rx:
+        context['rx']=rx
+        context['doctor_name']=printed_name(c,rx.get('doctor_id'))
     if kind=='followup':
         r=c.execute('SELECT * FROM prescriptions WHERE visit_id=?',(visit_id,)).fetchone()
         if r:context['rx']=dict(r)

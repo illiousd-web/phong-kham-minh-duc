@@ -11,7 +11,17 @@ if ($RealVenvLock) {
     $moved='C:\MinhDuc\.venv-lock-proof-'+[guid]::NewGuid().ToString('N')
     $ready=Join-Path $env:TEMP ('minhduc-rust-'+[guid]::NewGuid().ToString('N')+'.txt')
     $child=$null
+    $config=Join-Path $live 'pyvenv.cfg'
+    $originalConfig=Get-Content -LiteralPath $config -Raw
+    $fakeBase=Join-Path (Split-Path $live -Parent) ('.python-test-'+[guid]::NewGuid().ToString('N'))
     try {
+        # Sao chép Python nền vào thư mục cài trong CI; không nhận diện Python bên ngoài.
+        $homeLine=($originalConfig -split "`r?`n" | Where-Object {$_ -match '^home\s*='} | Select-Object -First 1)
+        if (-not $homeLine) { throw 'Không tìm thấy home trong pyvenv.cfg.' }
+        $pythonHome=($homeLine -split '=',2)[1].Trim()
+        Copy-Item -LiteralPath $pythonHome -Destination $fakeBase -Recurse -Force -ErrorAction Stop
+        $changedConfig=$originalConfig.Replace($homeLine, ('home = '+$fakeBase))
+        Set-Content -LiteralPath $config -Value $changedConfig -NoNewline -Encoding Ascii
         $code="import cryptography.hazmat.bindings._rust as rust, pathlib, time, os, json; pathlib.Path(r'$ready').write_text(json.dumps(dict(pid=os.getpid(),path=str(rust.__file__)))); time.sleep(600)"
         $child=Start-Process -FilePath (Join-Path $live 'Scripts\python.exe') -ArgumentList @('-c',('"'+$code+'"')) -PassThru -ErrorAction Stop
         $timer=[Diagnostics.Stopwatch]::StartNew()
@@ -34,6 +44,8 @@ if ($RealVenvLock) {
     } finally {
         if(Test-Path -LiteralPath $moved){Rename-Item -LiteralPath $moved -NewName '.venv' -ErrorAction Stop}
         if($child -and -not $child.HasExited){Stop-Process -InputObject $child -Force -ErrorAction Stop}
+        Set-Content -LiteralPath $config -Value $originalConfig -NoNewline -Encoding Ascii
+        Remove-Item -LiteralPath $fakeBase -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $ready -Force -ErrorAction SilentlyContinue
     }
     exit 0
@@ -47,7 +59,7 @@ foreach ($name in @('Test-MinhDucProcessIdentity','Get-MinhDucVenvProcessTree','
 }
 $venv=Join-Path ([IO.Path]::GetTempPath()) 'fake-clinic/.venv'
 $exe=Join-Path $venv 'Scripts/python.exe'
-$other=Join-Path ($venv+'-other') 'Scripts/python.exe'
+$other=Join-Path ([IO.Path]::GetTempPath()) 'other-clinic/python.exe'
 function Start-Sleep { param($Seconds,$Milliseconds) $script:delays.Add(@{Seconds=$Seconds;Milliseconds=$Milliseconds}) }
 function Get-CimInstance {
     param($ClassName,$Filter,$ErrorAction)
@@ -244,12 +256,12 @@ Write-Output 'PASS: one pre-update snapshot capture, no recapture; exact legacy 
     $script:treeAlive=@{101=$true;404=$true;405=$true;202=$true}
     $script:treeStopped=New-Object 'System.Collections.Generic.List[int]'
     $script:treeLog=New-Object 'System.Collections.Generic.List[string]'
-    $base=Join-Path ([IO.Path]::GetTempPath()) 'base-python/python.exe'
+    $base=Join-Path (Split-Path $venv -Parent) 'base-python/python.exe'
     $rows=@(
         [pscustomobject]@{Name='python.exe';ProcessId=101;ParentProcessId=1;ExecutablePath=$exe;CommandLine='python.exe -m scripts.run_lan';CreationDate=1},
         [pscustomobject]@{Name='python.exe';ProcessId=404;ParentProcessId=101;ExecutablePath=$base;CommandLine='python.exe worker.py --password never-log-this';CreationDate=2},
         [pscustomobject]@{Name='pythonw.exe';ProcessId=405;ParentProcessId=404;ExecutablePath=$base;CommandLine='pythonw.exe helper.py';CreationDate=3},
-        [pscustomobject]@{Name='python.exe';ProcessId=202;ParentProcessId=1;ExecutablePath=$base;CommandLine='python.exe unrelated.py';CreationDate=1}
+        [pscustomobject]@{Name='python.exe';ProcessId=202;ParentProcessId=1;ExecutablePath=$other;CommandLine='python.exe unrelated.py';CreationDate=1}
     )
     function Get-CimInstance {param($ClassName,$Filter,$ErrorAction) $rows | Where-Object {$script:treeAlive[[int]$_.ProcessId]} }
     function Get-Process {param($Id,$ErrorAction)
@@ -277,11 +289,11 @@ Write-Output 'PASS: one pre-update snapshot capture, no recapture; exact legacy 
 Write-Output 'PASS: base Python outside venv and recursive child detected/stopped; unrelated Python untouched; orphan tracked; sensitive arguments hidden'
 
 & {
-    $base=Join-Path ([IO.Path]::GetTempPath()) 'base/pythonw.exe'
+    $base=Join-Path (Split-Path $venv -Parent) 'base/pythonw.exe'
     $code=Split-Path $venv -Parent
     $rows=@(
         [pscustomobject]@{Name='pythonw.exe';ProcessId=501;ParentProcessId=1;ExecutablePath=$base;CommandLine='pythonw.exe -m scripts.with_env "C:\ProgramData\MinhDuc\clinic.env" scripts.run_lan';CreationDate=1},
-        [pscustomobject]@{Name='python.exe';ProcessId=502;ParentProcessId=1;ExecutablePath=$base;CommandLine='python.exe --output C:\MinhDuc\reports\x.csv';CreationDate=1}
+        [pscustomobject]@{Name='python.exe';ProcessId=502;ParentProcessId=1;ExecutablePath=$other;CommandLine='python.exe --output C:\MinhDuc\reports\x.csv';CreationDate=1}
     )
     function Get-CimInstance {param($ClassName,$Filter,$ErrorAction) $rows}
     $found=@(Get-MinhDucVenvProcessTree -Venv $venv -Known @{})

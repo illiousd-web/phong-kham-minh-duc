@@ -113,10 +113,8 @@ function Invoke-QuayVe {
         if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả môi trường Python.' }
         if ($State.venv_moved) {
             if (-not (Test-Path -LiteralPath $OldVenv -PathType Container)) { throw 'Thiếu môi trường Python cũ.' }
-            Invoke-MinhDucAccessRetry {
-                if (Test-Path -LiteralPath $P.Venv) { Remove-Item -LiteralPath $P.Venv -Recurse -Force -ErrorAction Stop }
-                Rename-Item -LiteralPath $OldVenv -NewName '.venv' -ErrorAction Stop
-            }
+            Wait-MinhDucVenvPythonExit -Venv $P.Venv
+            Restore-MinhDucOldVenv -Venv $P.Venv -OldVenv $OldVenv
             if (Test-Path -LiteralPath $OldVenv) { throw 'Chưa chuyển xong môi trường Python cũ.' }
         }
         if (-not (Test-Path -LiteralPath $P.VenvPython -PathType Leaf)) { throw 'Không có trình Python của bản cũ.' }
