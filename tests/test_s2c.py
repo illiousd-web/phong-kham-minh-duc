@@ -150,6 +150,10 @@ def test_order_boxes_follow_real_orders_only_and_preserve_arbitrary_names():
     assert any(x.startswith('☒ 2. Siêu âm') for x in checks[1:])
     assert any(x.startswith('☐ 3. X-quang') for x in checks[1:])
     assert 'Glucose, CTM giả lập' in checks[-1]
+    checks=order_checks(dict(orders=[dict(category='lab',name='Fasting glucose culture giả lập'),dict(category='procedure',name='Nội soi dạ dày giả lập')]))
+    assert '☐ GOT, GPT' in checks[0][1] and '☐ Ure, Creatinin' in checks[0][1]
+    assert any(x.startswith('☐ 4. Nội soi tai mũi họng') for x in checks[1:])
+    assert any(x.startswith('☒ 6. Dịch vụ khác') for x in checks[1:])
 
 
 def test_opt_in_excel_same_headers_exact_numbers_sexes_and_preview_import(actors):

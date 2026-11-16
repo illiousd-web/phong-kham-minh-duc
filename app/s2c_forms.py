@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import datetime
 from io import BytesIO
 from math import ceil
+import re
 
 from docx import Document
 from docx.shared import Pt, RGBColor
@@ -199,13 +200,16 @@ def order_checks(m):
               ('HBsAg', ('hbsag',)), ('Test HP', ('test hp', 'h. pylori')), ('CRP', ('crp',)), ('Glucose', ('glucose',)),
               ('HCV', ('hcv',)), ('β-HCG', ('hcg',)), ('Acid uric', ('acid uric',)), ('HDL / LDL', ('hdl', 'ldl')),
               ('HIV', ('hiv',)), ('Nước tiểu 10 thông số', ('nuoc tieu',))]
-    labs = [('☒ ' if any(token in names for token in keys) else '☐ ')+label for label, keys in groups]
+    labs = [('☒ ' if any(re.search(r'(?<![a-z0-9])'+re.escape(token)+r'(?![a-z0-9])',names) for token in keys) else '☐ ')+label for label, keys in groups]
     result = [('1. Xét nghiệm', labs)]
+    def service_group(order):
+        name=fold(order['name'])
+        if 'noi soi' in name:
+            return 'ent' if 'tai mui hong' in name or 'tmh' in name else 'other'
+        return order['category'] if order['category'] in ('lab','ultrasound','xray','ecg','ent') else 'other'
     for index, label, category in [(2, 'Siêu âm', 'ultrasound'), (3, 'X-quang', 'xray'),
                                     (4, 'Nội soi tai mũi họng', 'ent'), (5, 'Điện tim', 'ecg'), (6, 'Dịch vụ khác', 'other')]:
-        selected = [x['name'] for x in orders if (x['category'] == category or
-                    (category == 'ent' and 'noi soi' in fold(x['name'])) or
-                    (category == 'other' and x['category'] not in ('lab', 'ultrasound', 'xray', 'ecg', 'ent') and 'noi soi' not in fold(x['name'])))]
+        selected=[x['name'] for x in orders if service_group(x)==category]
         result.append(('☒ ' if selected else '☐ ')+str(index)+'. '+label+(': '+', '.join(selected) if selected else ''))
     # Preserve arbitrary ordered lab names too; checkboxes alone cannot describe every catalog service.
     result.append('Chỉ định xét nghiệm: '+', '.join(x['name'] for x in orders if x['category'] == 'lab'))

@@ -8,6 +8,7 @@ Nhánh `feat/s2c-mau-in`, tạo từ `9647e1e`. Mẫu PDF trang 29–33; đầu 
 - **27 bài LAN đạt**: `test_s2c`, `test_s2c_browser`, `test_m5_browser`, `test_m6_browser`, `test_mot_ngay_kham`, `test_v050_browser`. Có Chromium thật ở 1366/390px. Hồi quy màn bác sĩ `test_m0_browser` và các bài `u1b/u1c` cũng đã đạt trong lượt kiểm liên quan.
 - **22 bài mới**: 15 Python + 5 PostgreSQL + 2 Chromium; kiểm một trang A4, đúng ảnh/người ký, mật khẩu, audit, sửa mất hiệu lực, trẻ thiếu cân nặng, ↑/↓ đậm và Excel.
 - Sau chỉnh độ rộng nhãn và đầu đơn trang 33: 4 bài bố cục và 20 bài S2a/S2c đạt. PDF trực tiếp và Word chuyển sang PDF với ảnh ký: các mẫu đã kiểm đều một trang A4.
+- Rà thêm ô chỉ định: kiểm tra không khớp từ con (fasting/culture) và không đánh dấu TMH cho nội soi dạ dày; bài kiểm riêng đạt.
 - Ruff, ESLint, `git diff --check`, checksum tài sản: đạt. Năm job CI còn chờ kết quả trên PR; chưa kiểm máy in thật/Word trên Windows.
 
 Chi tiết vận hành và căn cứ cập nhật assertion: [S2C_MAU_IN.md](S2C_MAU_IN.md).
@@ -26,7 +27,7 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `app/m6.py` | 601 | 4 / 4 |
 | `app/m6_forms.py` | 6 | 3 / 81 |
 | `app/main.py` | 1101 | 11 / 0 |
-| `app/s2c_forms.py` | 467 | 467 / 0 |
+| `app/s2c_forms.py` | 471 | 471 / 0 |
 | `app/s2c_migration.py` | 53 | 53 / 0 |
 | `app/static/MinhDuc_logo_in.png` | Nhị phân | - / - |
 | `app/static/app.js` | 1321 | 51 / 1 |
@@ -43,6 +44,7 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `app/templates/08_Don_thuoc_A4.docx` | Nhị phân | - / - |
 | `app/templates/08_Don_thuoc_ngoai_tru_A5.docx` | 0 (xóa) | - / - |
 | `data/danh_muc_goc/chi_so_xet_nghiem_minh_duc.xlsx` | ChiSo: 78; ThamChieu: 82 (không tính đầu cột) | - / - |
+| `docs/S2C_BAO_CAO.md` | 62 | 61 / 0 |
 | `docs/S2C_MAU_IN.md` | 49 | 49 / 0 |
 | `docs/assets-v031.sha256` | 35 | 13 / 9 |
 | `lan_tests/test_mot_ngay_kham.py` | 755 | 2 / 2 |
@@ -55,7 +57,6 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `tests/m6_cases.py` | 157 | 10 / 5 |
 | `tests/s2c_cases.py` | 145 | 145 / 0 |
 | `tests/test_s2a.py` | 116 | 3 / 1 |
-| `tests/test_s2c.py` | 238 | 238 / 0 |
-| `docs/S2C_BAO_CAO.md` | 61 | mới |
+| `tests/test_s2c.py` | 242 | 242 / 0 |
 
 Chờ S2d.
