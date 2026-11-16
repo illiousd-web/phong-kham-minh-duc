@@ -50,3 +50,5 @@ Có thể dựng lại tài sản bằng `python -m scripts.build_s2c_assets` tr
 - `tests/administrative_revision_cases.py`: trang 33 đặt địa chỉ trong bảng người bệnh, trước chẩn đoán/thuốc; vẫn kiểm nguyên địa chỉ và vị trí, không còn yêu cầu dòng nghề nghiệp vốn không nằm trong mẫu đơn mới.
 - `tests/test_s1_prescription.py`: đọc cả đoạn và bảng theo trang 33; giữ nguyên assertion liều `0,75 viên`.
 - `tests/test_v041_fixes.py`: trang 29–31 chỉ có khối ký Trưởng khoa xét nghiệm; tên người thực hiện/duyệt vẫn được kiểm, và phiếu đã duyệt không có dấu nháp.
+- `lan_tests/test_lan.py`: yêu cầu một trang ở trang 29–31 thay quy tắc in nhiều trang cũ; phiếu quá dài phải báo 422 và vẫn giữ nguyên toàn bộ kết quả trong CSDL. Phiếu khám dài vẫn in đủ đuôi; đơn vừa A4 vẫn giữ lời dặn và kiểm đúng một trang.
+- `lan_tests/test_s2a.py`, `lan_tests/test_v050_migration.py`: nâng kiểm phiên bản chính xác từ 16 lên 17 theo migration S2c; giữ toàn bộ kiểm dữ liệu cũ/khôi phục và kiểm thêm bảng ký, tham chiếu đều rỗng sau nâng cấp.

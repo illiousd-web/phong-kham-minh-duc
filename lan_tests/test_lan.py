@@ -229,7 +229,16 @@ def test_long_exports_preserve_tail_and_intake_hides_clinical(clients,visit):
     for kind,item,marker in [('visit',visit,'HISTORY_TAIL_MARKER'),('lab',oid,'RESULT_TAIL_MARKER'),('rx',rid,'INSTRUCTION_TAIL_MARKER')]:
         for fmt in ('pdf','docx'):
             response=doc.get(f'/api/forms/{kind}/{item}?fmt={fmt}')
+            if kind=='lab':
+                # Pages 29–31 are one A4 page: reject overflow, retain the full saved result.
+                assert response.status_code==422,response.text
+                assert 'một trang A4' in response.json()['detail']
+                with db() as c:
+                    assert c.execute('SELECT result_text FROM orders WHERE id=?',(oid,)).fetchone()[0]==result
+                continue
             assert response.status_code==200,response.text
+            if kind=='rx' and fmt=='pdf':
+                assert len(PdfReader(BytesIO(response.content)).pages)==1
             if fmt=='pdf':text=' '.join(p.extract_text() or '' for p in PdfReader(BytesIO(response.content)).pages)
             else:
                 word=Document(BytesIO(response.content))
