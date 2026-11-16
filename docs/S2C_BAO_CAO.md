@@ -62,7 +62,7 @@ Số dòng sau sửa; `+ / −` so với `9647e1e`; tệp nhị phân không tí
 | `tests/test_s1_prescription.py` | 62 | 2 / 1 |
 | `tests/test_s2a.py` | 116 | 4 / 2 |
 | `tests/test_s2c.py` | 247 | 247 / 0 |
-| `tests/test_s2c_pagination.py` | 78 | 78 / 0 |
+| `tests/test_s2c_pagination.py` | 84 | 84 / 0 |
 | `tests/test_v041_fixes.py` | 106 | 3 / 1 |
 
 Chờ S2d.

@@ -47,7 +47,7 @@ def build_pdf(output, story, *, font, pagesize, left, right, first_top, later_to
 
 
 def stack(flowables, width):
-    table = Table([[list(flowables)]], colWidths=[width])
+    table = Table([[list(flowables)]], colWidths=[width], hAlign='LEFT')
     table.setStyle(TableStyle([(key, (0, 0), (-1, -1), 0) for key in
                                ('LEFTPADDING', 'RIGHTPADDING', 'TOPPADDING', 'BOTTOMPADDING')]))
     return table

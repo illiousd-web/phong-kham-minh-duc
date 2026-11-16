@@ -65,6 +65,12 @@ def test_long_prints_pdf_and_word_preserve_every_row_and_sign_only_last_page(kin
             normalized = ' '.join(body.split())
             if kind == 'advice':
                 assert normalized.count('Lời dặn dài giả lập') == 600
+                with pymupdf.open(stream=pdf, filetype='pdf') as doc:
+                    for page in doc:
+                        lines = [line for block in page.get_text('dict')['blocks'] if 'lines' in block
+                                 for line in block['lines'] if any('Lời dặn dài' in s['text'] for s in line['spans'])]
+                        if lines:
+                            assert all(line['bbox'][0] < 80 for line in lines)
             if kind == 'cell':
                 assert normalized.count('Cách dùng giả lập') == 600
             if lab or kind == 'rx':
