@@ -233,6 +233,8 @@ def test_empty_migration_down_up_keeps_source_rows_and_never_imports_ranges(tmp_
     with db() as source, sqlite3.connect(tmp_path/'migration.sqlite3') as c:
         source.backup(c)
         from app.s2c_migration_018 import migrate_018
+        from tests.s2c_cases import empty_signature_evidence_for_rollback
+        empty_signature_evidence_for_rollback(c)
         migrate_018(c, down=True)
         c.execute('DELETE FROM document_signatures')
         c.commit()
@@ -292,6 +294,11 @@ def test_018_upgrade_and_downgrade_restores_017_triggers(tmp_path):
     from app.s2c_migration_018 import migrate_018
     with db() as source, sqlite3.connect(tmp_path/'upgrade.sqlite3') as c:
         source.backup(c)
+        if c.execute('SELECT 1 FROM document_signatures LIMIT 1').fetchone():
+            with pytest.raises(ValueError, match='đã có bản ký'):
+                migrate_018(c, down=True)
+        from tests.s2c_cases import empty_signature_evidence_for_rollback
+        empty_signature_evidence_for_rollback(c)
         evidence = c.execute('SELECT id,invalidated,content_hash,image FROM document_signatures ORDER BY id').fetchall()
         before = len(evidence)
         migrate_018(c, down=True)
@@ -310,4 +317,64 @@ def test_018_upgrade_and_downgrade_restores_017_triggers(tmp_path):
 def test_order_change_invalidates_only_its_own_documents(actors):
     from tests.s2c_cases import check_order_invalidation_scope
     clients, ids = actors
-    check_order_invalidation_scope(clients, ids, db, 1)
+    check_order_invalidation_scope(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
+
+
+def test_permanent_invalidation_api(actors):
+    from tests.s2c_cases import check_permanent_invalidation
+    clients, ids = actors
+    check_permanent_invalidation(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
+
+
+def test_mismatched_hash_invalidates_in_access_transaction(actors):
+    from tests.s2c_cases import check_mismatched_hash_invalidates_in_access_transaction
+    clients, ids = actors
+    check_mismatched_hash_invalidates_in_access_transaction(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
+
+
+@pytest.mark.parametrize('field', ['printed_name', 'printed_title', 'full_name'])
+def test_printed_user_fields_invalidate_permanently(actors, field):
+    from tests.s2c_cases import check_user_field_invalidation
+    clients, ids = actors
+    check_user_field_invalidation(clients, ids, db, 1, os.environ['DEMO_PASSWORD'], field)
+
+
+def test_mismatched_hash_does_not_error_on_readonly_sqlite(actors, tmp_path):
+    import sqlite3
+    from copy import deepcopy
+    from app.document_signatures import load_document, valid_signature
+    clients, ids = actors
+    doctor, admin = clients['doctor'], clients['admin']
+    assert admin.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', signature_image(), 'image/png')}).status_code == 200
+    _, rid, _, _ = document(clients, ids, db, 1, 'rx')
+    endpoint = f'/api/document-signatures/rx/{rid}'
+    state = doctor.get(endpoint).json()
+    assert doctor.post(endpoint, json={'password':os.environ['DEMO_PASSWORD'], 'content_hash':state['content_hash']}).status_code == 200
+    path = tmp_path/'readonly.sqlite3'
+    with db() as source, sqlite3.connect(path) as copy:
+        source.backup(copy)
+    with sqlite3.connect('file:'+str(path)+'?mode=ro', uri=True) as c:
+        c.row_factory = sqlite3.Row
+        current = load_document(c, 'rx', rid)
+        model = deepcopy(current['models'][0])
+        model['diagnosis'] += ' thay đổi giả lập'
+        assert valid_signature(c, 'rx', rid, current, models=[model]) is None
+        assert c.execute('SELECT invalidated FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id DESC LIMIT 1', ('rx', rid)).fetchone()[0] == 0
+
+
+def test_018_rollback_refuses_real_signature(actors):
+    from tests.s2c_cases import check_rollback_refuses_existing_signature
+    clients, ids = actors
+    check_rollback_refuses_existing_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
+
+
+def test_other_user_printed_name_invalidates_signature(actors):
+    from tests.s2c_cases import check_user_field_invalidation
+    clients, ids = actors
+    check_user_field_invalidation(clients, ids, db, 1, os.environ['DEMO_PASSWORD'], 'printed_title', 'doctor2')
+
+
+def test_order_delete_invalidates_real_signature(actors):
+    from tests.s2c_cases import check_order_delete_does_not_revive_signature
+    clients, ids = actors
+    check_order_delete_does_not_revive_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])

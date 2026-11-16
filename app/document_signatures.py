@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import sqlite3
 from typing import Literal
 
 from fastapi import Depends, HTTPException
@@ -87,7 +88,20 @@ def valid_signature(c, kind, object_id, document=None, *, models=None):
     if models is not None:
         d = {**d, 'content_hash': content_hash(models)}
     s = c.execute('SELECT * FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id DESC LIMIT 1', (kind, object_id)).fetchone()
-    if not s or s['invalidated'] or not d['allowed'] or s['signed_by'] != d['actor'] or not hmac.compare_digest(s['content_hash'], d['content_hash']):
+    if not s or s['invalidated']:
+        return None
+    if not hmac.compare_digest(s['content_hash'], d['content_hash']):
+        connection = getattr(c, 'connection', None)
+        readonly = (connection.execute('SHOW transaction_read_only').fetchone()[0] == 'on' if connection is not None
+                    else bool(c.execute('PRAGMA query_only').fetchone()[0]))
+        if not readonly:
+            try:
+                c.execute('UPDATE document_signatures SET invalidated=1 WHERE id=? AND invalidated=0', (s['id'],))
+            except sqlite3.OperationalError as exc:
+                if getattr(exc, 'sqlite_errorcode', 0) & 255 != sqlite3.SQLITE_READONLY:
+                    raise
+        return None
+    if not d['allowed'] or s['signed_by'] != d['actor']:
         return None
     return {**dict(s), 'image': bytes(s['image'])}
 

@@ -7,7 +7,7 @@ COLUMNS = ('id', 'document_kind', 'document_id', 'visit_id', 'signed_by', 'signe
 
 def predicate(table, row):
     if table == 'orders':
-        return f"((document_kind IN ('order','lab') AND document_id={row}.id) OR (document_kind='lab_report' AND document_id IN (SELECT id FROM lab_reports WHERE order_id={row}.id)))"
+        return f"((document_kind='order' AND visit_id={row}.visit_id) OR (document_kind='lab' AND document_id={row}.id) OR (document_kind='lab_report' AND document_id IN (SELECT id FROM lab_reports WHERE order_id={row}.id)))"
     if table == 'prescriptions':
         return f"(document_kind='rx' AND document_id={row}.id)"
     if table == 'clinical_prescriptions':
@@ -49,6 +49,11 @@ def migrate_018(c, postgres=False, *, down=False):
     if applied == (not down):
         return
     if down:
+        if c.execute('SELECT 1 FROM document_signatures LIMIT 1').fetchone():
+            raise ValueError('Chưa quay lui S2c 018: đã có bản ký; khôi phục bản sao lưu trước nâng cấp để giữ lịch sử ký.')
+        c.execute('DROP TRIGGER s2c_users_update'+(' ON users' if postgres else ''))
+        if postgres:
+            c.execute('DROP FUNCTION s2c_users_update()')
         for event in ('update', 'invalidated', 'delete'):
             c.execute('DROP TRIGGER s2c_signature_guard_'+event+(' ON document_signatures' if postgres else ''))
         if postgres:
@@ -57,6 +62,13 @@ def migrate_018(c, postgres=False, *, down=False):
         c.execute('DELETE FROM schema_migrations WHERE version=18')
         return
     replace_triggers(c, postgres, True)
+    different = 'IS DISTINCT FROM' if postgres else 'IS NOT'
+    condition = ' OR '.join('OLD.'+key+' '+different+' NEW.'+key for key in ('printed_name', 'printed_title', 'full_name'))
+    if postgres:
+        c.connection.execute("CREATE FUNCTION s2c_users_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE document_signatures SET invalidated=1 WHERE invalidated=0; RETURN NEW; END $$;")
+        c.execute('CREATE TRIGGER s2c_users_update AFTER UPDATE ON users FOR EACH ROW WHEN ('+condition+') EXECUTE FUNCTION s2c_users_update()')
+    else:
+        c.execute('CREATE TRIGGER s2c_users_update AFTER UPDATE ON users WHEN ('+condition+') BEGIN UPDATE document_signatures SET invalidated=1 WHERE invalidated=0; END')
     columns = ', '.join(COLUMNS)
     if postgres:
         c.connection.execute("""CREATE FUNCTION s2c_signature_guard() RETURNS trigger LANGUAGE plpgsql AS $$
