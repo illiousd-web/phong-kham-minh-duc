@@ -9,6 +9,15 @@ ADDED = {
 IMMUTABLE = ('stock_receipts', 'stock_issues', 'stock_movements')
 
 
+def restore_s2b_function_acl(c):
+    """Owner-only: pg_restore --no-acl omits this private trigger-function ACL.
+
+    Backups before 016 have no such function; never migrate a restored old schema.
+    """
+    if c.execute("SELECT to_regprocedure('public.s2b_stock_immutable()') IS NOT NULL").fetchone()[0]:
+        c.execute('REVOKE ALL ON FUNCTION public.s2b_stock_immutable() FROM PUBLIC')
+
+
 def migrate_s2b(c, postgres=False, *, down=False):
     applied = bool(c.execute('SELECT 1 FROM schema_migrations WHERE version=16').fetchone())
     if applied == (not down):
@@ -45,8 +54,8 @@ def migrate_s2b(c, postgres=False, *, down=False):
             c.execute(statement)
     if postgres:
         c.connection.execute("""CREATE FUNCTION s2b_stock_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN RAISE EXCEPTION 'Phiếu kho và biến động đã lưu không được sửa/xóa' USING ERRCODE='23514'; END $$;
-        REVOKE ALL ON FUNCTION s2b_stock_immutable() FROM PUBLIC;""")
+        BEGIN RAISE EXCEPTION 'Phiếu kho và biến động đã lưu không được sửa/xóa' USING ERRCODE='23514'; END $$;""")
+        restore_s2b_function_acl(c)
     for table in IMMUTABLE:
         for event in ('UPDATE', 'DELETE'):
             trigger = f's2b_{table}_{event.lower()}'

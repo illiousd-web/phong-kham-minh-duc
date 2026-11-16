@@ -24,12 +24,22 @@ def old_snapshot(c):
                 ('stock_movements', 'id,stock_lot_id,movement_type,quantity,created_by,created_at')]}
 
 
+def sqlite_schema(c):
+    tables = [row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+    return {
+        'definitions': c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name").fetchall(),
+        'columns': {table: c.execute(f'PRAGMA table_info({table})').fetchall() for table in tables},
+        'foreign_keys': {table: c.execute(f'PRAGMA foreign_key_list({table})').fetchall() for table in tables},
+    }
+
+
 def test_sqlite_016_up_down_preserves_stock_and_unknown_prices(tmp_path):
     with sqlite3.connect(tmp_path/'old.db') as c:
         c.executescript((ROOT/'schema.sql').read_text())
         c.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)')
         legacy(c)
         before = old_snapshot(c)
+        before_schema = sqlite_schema(c)
         migrate_s2b(c)
         migrate_s2b(c)
         assert old_snapshot(c) == before
@@ -40,6 +50,7 @@ def test_sqlite_016_up_down_preserves_stock_and_unknown_prices(tmp_path):
         migrate_s2b(c, down=True)
         assert old_snapshot(c) == before
         assert not c.execute('SELECT 1 FROM schema_migrations WHERE version=16').fetchone()
+        assert sqlite_schema(c) == before_schema
         migrate_s2b(c)
         assert old_snapshot(c) == before
 

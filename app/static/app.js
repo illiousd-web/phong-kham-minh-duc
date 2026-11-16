@@ -16,8 +16,12 @@ const menus={
  cashier:[['cashier','Thu ngân']],
  manager:[['manager','Quản lý']],
  stock_owner:[['stock','Kho thuốc']],
- admin:[['admin','Quản trị'],['price-management','Quản lý'],['settings','Cài đặt'],['stock','Kho thuốc']]
+ admin:[['admin','Quản trị'],['price-management','Quản lý'],['settings','Cài đặt']]
 };
+// M6/M5 đăng ký menu trong các script defer sau app.js; thêm kho sau các mục đó, trước boot.
+document.addEventListener('DOMContentLoaded',()=>{
+ menus.admin.push(['stock','Kho thuốc']);
+},{once:true});
 let serverMode='demo',selectedRole=null,auditOffset=0;
 const pendingOrderKeys=new Map();
 const scopeWarnings=new Map();
