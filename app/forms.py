@@ -9,6 +9,7 @@ from xml.sax.saxutils import escape as xml_escape
 import re
 
 from .labels import vi, CATEGORY, lab_rows, local_day
+from .form_pagination import build_pdf, KeepEnd, continuation_identity, word_pagination, word_keep, word_keep_row
 
 from docx import Document
 from docx.shared import Pt, RGBColor
@@ -126,7 +127,7 @@ def fill_common(doc,ctx):
 
 def rx_rows(ctx):
     prescription=ctx.get('rx') or {}
-    lines=clean(prescription.get('drug_lines',''),6000).splitlines()
+    lines=clean(prescription.get('drug_lines','')).splitlines()
     # For demonstration accepts `name | quantity | dosage` on each line.
     result=[]
     for x in lines:
@@ -325,17 +326,37 @@ def generate_docx(kind, ctx):
         for label, value in metadata:
             anchor.insert_paragraph_before(label+': '+str(value))
     if kind=='visit':
+        sign_table = doc.tables[-1]
+        sign_date = sign_table._tbl.getprevious()
         for appendix in ctx.get('addenda',[]):
             doc.add_heading('PHỤ LỤC ĐÃ DUYỆT #'+str(appendix['id']),level=2)
             doc.add_paragraph('Lý do: '+appendix['reason'])
             doc.add_paragraph(appendix['content'])
             doc.add_paragraph('Người lập: '+str(appendix.get('author_name') or appendix['created_by'])+'; thời điểm duyệt: '+str(appendix['reviewed_at']))
+        # Appendices are clinical content too: the original signature follows them.
+        body = doc._element.body
+        if sign_date is not None:
+            body.insert(len(body)-1, sign_date)
+        body.insert(len(body)-1, sign_table._tbl)
+        word_keep_row(sign_table.rows[0])
+        for cell in sign_table.rows[0].cells:
+            word_keep(cell.paragraphs[-1], next=False)
+        # The date immediately before the signature and the preceding content stay attached.
+        from docx.text.paragraph import Paragraph as WordParagraph
+        if sign_date is not None and sign_date.tag.endswith('}p'):
+            word_keep(WordParagraph(sign_date, doc))
+            previous = sign_date.getprevious()
+            if previous is not None and previous.tag.endswith('}p'):
+                word_keep(WordParagraph(previous, doc))
+        word_pagination(doc, continuation_identity(ctx['patient']['full_name'], ctx['patient']['code'],
+                        f"MD-KB-{v['id']:06d}"), WATERMARK)
     # Visible draft label on every generated document, including rx.
-    footer=doc.sections[0].footer
-    ptag=footer.add_paragraph(WATERMARK)
-    ptag.style='Normal';ptag.alignment=1
-    for run in ptag.runs:
-        run.font.size=Pt(7);run.font.bold=True;run.font.color.rgb=RGBColor(168,35,24)
+    if kind != 'visit':
+        footer=doc.sections[0].footer
+        ptag=footer.add_paragraph(WATERMARK)
+        ptag.style='Normal';ptag.alignment=1
+        for run in ptag.runs:
+            run.font.size=Pt(7);run.font.bold=True;run.font.color.rgb=RGBColor(168,35,24)
     bio=BytesIO();doc.save(bio);return bio.getvalue()
 
 _FONT=None
@@ -433,7 +454,8 @@ def generate_pdf(kind,ctx):
             heading('PHỤ LỤC ĐÃ DUYỆT #'+str(appendix['id']))
             add('Lý do',appendix['reason']);add('Nội dung',appendix['content'])
             add('Người lập',appendix.get('author_name') or appendix['created_by']);add('Thời điểm duyệt',appendix['reviewed_at'])
-    story.append(Spacer(1,20))
+    if kind != 'visit':
+        story.append(Spacer(1,20))
     if kind in ('lab','ultrasound','xray','ecg'):
         sign=Table([[Paragraph('<b>NGƯỜI THỰC HIỆN</b><br/>(chưa ký số)<br/><br/><br/>'+pdf_safe(o.get('result_by_name')),styles['VnBody']),
                      Paragraph('<b>NGƯỜI DUYỆT KẾT QUẢ</b><br/>(chưa ký số)<br/><br/><br/>'+pdf_safe(o.get('approved_by_name')),styles['VnBody'])]],
@@ -442,7 +464,11 @@ def generate_pdf(kind,ctx):
         story.append(KeepTogether([sign]))
     else:
         signer='Bác sĩ khám bệnh' if kind in ('visit','rx','followup','order') else 'Người lập phiếu'
-        story.append(Paragraph(f'<b>{signer}</b> (chưa ký số, bản thử nghiệm)<br/><br/><br/>'+pdf_safe(ctx['doctor_name'] if kind!='intake' else ''),styles['VnBody']))
+        signature = Paragraph(f'<b>{signer}</b> (chưa ký số, bản thử nghiệm)<br/><br/><br/>'+pdf_safe(ctx['doctor_name'] if kind!='intake' else ''),styles['VnBody'])
+        if kind == 'visit':
+            story.append(KeepEnd(story.pop(), signature, gap=20))
+        else:
+            story.append(signature)
     def page_header(c,d):
         w,h=size
         c.saveState()
@@ -453,7 +479,19 @@ def generate_pdf(kind,ctx):
         c.setStrokeColor(colors.HexColor('#087F7A'));c.line(39,h-max(73,header_height+40),w-39,h-max(73,header_height+40))
         c.setFont(font,7);c.setFillColor(colors.HexColor('#B42318'))
         c.drawCentredString(w/2,33,WATERMARK)
-        c.setFont(font,7);c.setFillColor(colors.grey);c.drawRightString(w-39,19,f'Trang {d.page}')
+        if kind != 'visit':
+            c.setFont(font,7);c.setFillColor(colors.grey);c.drawRightString(w-39,19,f'Trang {d.page}')
         c.restoreState()
-    pdf.build(story,onFirstPage=page_header,onLaterPages=page_header)
+    if kind == 'visit':
+        identity = Paragraph(pdf_safe(continuation_identity(p['full_name'], p['code'], f"MD-KB-{v['id']:06d}")), styles['VnBody'])
+        ih = identity.wrap(size[0]-78, size[1])[1]
+        top = max(91, header_height+54)
+        def continuation(c, d):
+            page_header(c, d)
+            identity.drawOn(c, 39, size[1]-top-ih)
+        build_pdf(buf, story, font=font, pagesize=size, left=39, right=39, first_top=top,
+                  later_top=top+ih+12, bottom=54, first_header=page_header, later_header=continuation,
+                  title=TITLES[kind]+' – BẢN NHÁP', author=(ctx.get('clinic_profile') or {}).get('name') or '')
+    else:
+        pdf.build(story,onFirstPage=page_header,onLaterPages=page_header)
     return buf.getvalue()

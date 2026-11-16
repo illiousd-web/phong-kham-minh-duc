@@ -10,7 +10,7 @@ Nguồn: `docs/ui-mau/BoMau_33_ban_repo.pdf`, trang 29–33. Nhánh `feat/s2c-ma
 
 Đầu phiếu dùng `clinic_profile`. Để trống cài đặt thì đầu phiếu cũng trống. Logo in được dựng từ SVG công khai có sẵn trong `app/static`. Không có danh tính cơ sở, bệnh nhân hoặc ảnh chữ ký thật trong các tệp mới.
 
-Các mẫu chung, M5 và M6 dùng chung mô hình nội dung và bộ dựng Word/PDF. Giữ đủ thuốc, kết quả, ghi chú và nội dung điều chỉnh. Nội dung quá một trang A4 bị từ chối có thông báo, không cắt bỏ dòng. Trẻ dưới 72 tháng thiếu cân nặng không được in hoặc ký đơn; giữ nguyên các điều kiện lưu/khóa đơn hiện có.
+Các mẫu chung, M5 và M6 dùng chung mô hình nội dung và bộ dựng Word/PDF. Giữ đủ thuốc, kết quả, ghi chú và nội dung điều chỉnh. Nội dung thông thường gọn một trang A4. Nội dung dài tự sang trang tiếp theo, giữ nguyên cỡ chữ và toàn bộ nội dung; không từ chối in vì độ dài. Trang tiếp theo lặp họ tên, mã NB, số phiếu/mã đơn nội bộ; mọi trang có `Trang x/y`. Bảng chỉ số lặp tiêu đề cột. Khối ký và ảnh ký chỉ ở trang cuối, cùng dòng cuối nội dung. PDF dùng khung trang tiếp nối và bộ đếm tổng trang; Word dùng đầu trang đầu/tiếp nối, trường PAGE/NUMPAGES và hàng tiêu đề bảng lặp. Ô mã đơn quốc gia ở trang đầu vẫn để trống. Trẻ dưới 72 tháng thiếu cân nặng không được in hoặc ký đơn; giữ nguyên các điều kiện lưu/khóa đơn hiện có.
 
 ## Ký phiếu
 
@@ -43,12 +43,13 @@ Có thể dựng lại tài sản bằng `python -m scripts.build_s2c_assets` tr
 ## Căn cứ cập nhật assertion cũ
 
 - `tests/m5_cases.py`: trang 29–31 có `Xét nghiệm / Trị số bình thường / Kết quả`, không còn năm cột cũ. Đơn vị nằm cùng tham chiếu; ↑/↓ nằm cùng kết quả.
-- `tests/m6_cases.py`: trang 33 đặt thông tin cơ sở ở đầu và ô mã quốc gia để trống; tiêu đề `ĐƠN THUỐC`, khối ký `BÁC SĨ KHÁM BỆNH`. Kiểm mã nội bộ trong JSON vẫn giữ nguyên.
+- `tests/m6_cases.py`: đọc cả đầu trang đầu của Word khi bật đầu trang tiếp nối; giữ nguyên mọi assertion nội dung. Trang 33 đặt thông tin cơ sở ở đầu và ô mã quốc gia để trống; tiêu đề `ĐƠN THUỐC`, khối ký `BÁC SĨ KHÁM BỆNH`. Kiểm mã nội bộ trong JSON vẫn giữ nguyên.
 - `lan_tests/test_mot_ngay_kham.py`: tiêu đề trang 33 là `ĐƠN THUỐC`; vẫn kiểm đúng người bệnh và các phép đối chiếu nghiệp vụ cũ.
 
 - `tests/test_s2a.py`: đầu đơn ở trang 33 không có cơ quan chủ quản; vẫn kiểm tên, địa chỉ, điện thoại, email từ cài đặt và không còn tên cơ sở ghi cứng.
 - `tests/administrative_revision_cases.py`: trang 33 đặt địa chỉ trong bảng người bệnh, trước chẩn đoán/thuốc; vẫn kiểm nguyên địa chỉ và vị trí, không còn yêu cầu dòng nghề nghiệp vốn không nằm trong mẫu đơn mới.
 - `tests/test_s1_prescription.py`: đọc cả đoạn và bảng theo trang 33; giữ nguyên assertion liều `0,75 viên`.
 - `tests/test_v041_fixes.py`: trang 29–31 chỉ có khối ký Trưởng khoa xét nghiệm; tên người thực hiện/duyệt vẫn được kiểm, và phiếu đã duyệt không có dấu nháp.
-- `lan_tests/test_lan.py`: yêu cầu một trang ở trang 29–31 thay quy tắc in nhiều trang cũ; phiếu quá dài phải báo 422 và vẫn giữ nguyên toàn bộ kết quả trong CSDL. Phiếu khám dài vẫn in đủ đuôi; đơn vừa A4 vẫn giữ lời dặn và kiểm đúng một trang.
+- `lan_tests/test_lan.py`: theo yêu cầu sửa bắt buộc PR #40, bỏ nhánh chấp nhận 422 và kiểm một trang cho nội dung dài. Phiếu khám, xét nghiệm và đơn dài phải giữ đủ TAIL_MARKER ở PDF/Word, nhiều trang, ký ở cuối, mọi trang có `Trang x/y`. Word còn được chuyển sang PDF để kiểm bố cục khi có LibreOffice.
+- `tests/test_s2c_pagination.py`: ba nhóm 60 chỉ số, đơn 25 thuốc, lời dặn/ô cách dùng dài và chỉ định dài; kiểm mọi dòng, định danh lặp, tiêu đề bảng, ảnh ký chỉ trang cuối và cùng dòng nội dung cuối. `test_all_three_complete_lab_groups_and_five_medicines_fit_one_a4` vẫn kiểm một trang A4 cho nội dung thông thường, cả PDF trực tiếp và Word chuyển sang PDF.
 - `lan_tests/test_s2a.py`, `lan_tests/test_v050_migration.py`: nâng kiểm phiên bản chính xác từ 16 lên 17 theo migration S2c; giữ toàn bộ kiểm dữ liệu cũ/khôi phục và kiểm thêm bảng ký, tham chiếu đều rỗng sau nâng cấp.

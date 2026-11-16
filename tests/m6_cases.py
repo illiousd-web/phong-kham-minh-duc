@@ -100,7 +100,7 @@ def check_m6(clients, ids, db, service):
         for fmt in ('docx','pdf'):
             res=r.get(url+'/form?fmt='+fmt);assert res.status_code==200,res.text
             if fmt=='docx':
-                doc=Document(io.BytesIO(res.content));text=' '.join(c.text for sec in doc.sections for t in sec.header.tables for row in t.rows for c in row.cells)+' '+' '.join(p.text for p in doc.paragraphs)+' '+' '.join(c.text for t in doc.tables for row in t.rows for c in row.cells)
+                doc=Document(io.BytesIO(res.content));text=' '.join(c.text for sec in doc.sections for header in (sec.header, sec.first_page_header) for t in header.tables for row in t.rows for c in row.cells)+' '+' '.join(p.text for p in doc.paragraphs)+' '+' '.join(c.text for t in doc.tables for row in t.rows for c in row.cells)
             else:
                 with pymupdf.open(stream=res.content,filetype='pdf') as pdf:text=' '.join(p.get_text() for p in pdf)
             text=' '.join(text.split())

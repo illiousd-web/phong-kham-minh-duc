@@ -1,5 +1,4 @@
 """S2c print, signing, range-import and migration regression tests."""
-from copy import deepcopy
 from datetime import date
 from io import BytesIO
 import os
@@ -7,7 +6,6 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from docx import Document
-from fastapi import HTTPException
 from openpyxl import load_workbook
 from pypdf import PdfReader
 import pymupdf
@@ -117,6 +115,10 @@ def test_all_three_complete_lab_groups_and_five_medicines_fit_one_a4(actors, tmp
             text = PdfReader(BytesIO(pdf)).pages[0].extract_text()
             assert 'CƠ SỞ GIẢ LẬP' in text and 'Chẩn đoán giả lập' in text
             docx = render(model, 'docx')
+            from tests.print_pagination_cases import word_as_pdf
+            converted = word_as_pdf(docx)
+            if converted is not None:
+                assert len(PdfReader(BytesIO(converted)).pages) == 1, model['kind']
             doc = Document(BytesIO(docx))
             assert abs(doc.sections[0].page_width.pt-595.276) < 1
             with ZipFile(BytesIO(docx)) as archive:
@@ -210,15 +212,18 @@ def test_migration_idempotent_reversible_empty_and_preserves_signing_history(act
             migrate_s2c(c, down=True)
 
 
-def test_overflow_refused_without_dropping_prescription_rows():
+def test_overflow_preserves_all_prescription_rows_without_rejection():
     p = dict(full_name='Giả lập', sex='Nam', date_of_birth='1990-01-01', contact_phone='', escort_name='', weight_kg=None)
     value = dict(patient=p, clinic_profile={}, encounter={'diagnosis': 'Giả lập'}, prescriber={'name':'Giả lập'},
                  advice=dict(lifestyle_advice='', follow_up_advice='', purchase_advice=''), items=[], created_at=None, locked_at=None)
     m = from_m6(value, 'draft')
-    m['rows'] = [['Tên thuốc giả lập '*20, '10 viên', 'Cách dùng giả lập '*30] for _ in range(30)]
-    with pytest.raises(HTTPException) as error:
-        render(deepcopy(m), 'pdf')
-    assert error.value.status_code == 422
+    m['rows'] = [[f'DRUG_{i:03d} '+ 'Tên thuốc giả lập '*20, '10 viên', 'Cách dùng giả lập '*30] for i in range(30)]
+    from tests.print_pagination_cases import word_text
+    raw = render(m, 'pdf')
+    reader = PdfReader(BytesIO(raw))
+    assert len(reader.pages) > 1
+    for text in ('\n'.join(p.extract_text() for p in reader.pages), word_text(render(m, 'docx'))):
+        assert all(f'DRUG_{i:03d}' in text for i in range(30))
 
 
 def test_empty_migration_down_up_keeps_source_rows_and_never_imports_ranges(tmp_path):

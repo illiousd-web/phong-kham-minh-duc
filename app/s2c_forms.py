@@ -15,10 +15,12 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.platypus import Paragraph, Table, TableStyle, Spacer, Image, SimpleDocTemplate
+from reportlab.platypus import Paragraph, Table, TableStyle, Spacer, Image
 
 from .forms import TEMPLATE_DIR, WATERMARK, pdf_safe, fmt_date, format_patient_address, rx_rows
 from .labels import VN_TZ, lab_rows
+from .form_pagination import (AdviceWithSignature, KeepEnd, build_pdf, stack, continuation_identity,
+                              word_pagination, word_keep, word_keep_row, word_repeat_header, text_chunks)
 
 LOGO = TEMPLATE_DIR.parent/'static'/'MinhDuc_logo_in.png'
 GREEN = '#008249'
@@ -114,6 +116,7 @@ def from_m6(p, status):
                      person['escort_name'], person['contact_phone'], status, notice)
     m['notes'].append('CHƯA LIÊN THÔNG')
     m['signature'] = p.get('signature')
+    m['print_number'] = p.get('print_number') or p.get('local_code') or ''
     return m
 
 
@@ -128,6 +131,7 @@ def from_context(kind, ctx):
                          ctx['doctor_name'], r['created_at'], v.get('weight_kg'), v.get('escort_name'),
                          v.get('escort_phone') or p.get('phone'), 'draft', 'NHÁP – CHƯA CÓ GIÁ TRỊ')
         m['notes'].append('CHƯA LIÊN THÔNG')
+        m['print_number'] = f"MD-RX-{r['id']:06d}"
     elif kind == 'order':
         o = ctx['order']
         m = base('order', p, ctx.get('clinic_profile', {}), diagnosis, o['id'], o['created_at'])
@@ -212,7 +216,9 @@ def order_checks(m):
         selected=[x['name'] for x in orders if service_group(x)==category]
         result.append(('☒ ' if selected else '☐ ')+str(index)+'. '+label+(': '+', '.join(selected) if selected else ''))
     # Preserve arbitrary ordered lab names too; checkboxes alone cannot describe every catalog service.
-    result.append('Chỉ định xét nghiệm: '+', '.join(x['name'] for x in orders if x['category'] == 'lab'))
+    lab_names = [x['name'] for x in orders if x['category'] == 'lab']
+    if lab_names:
+        result.append('Chỉ định xét nghiệm: '+', '.join(lab_names))
     return result
 
 
@@ -223,8 +229,7 @@ def signature_caption(s):
 
 def render(model, fmt):
     m = deepcopy(model)
-    raw=pdf(m)
-    return word(m) if fmt=='docx' else raw
+    return word(m) if fmt=='docx' else pdf(m)
 
 
 def pdf(m):
@@ -242,7 +247,7 @@ def pdf(m):
             text=text.replace(symbol,'<font name="'+symbol_font+'">'+symbol+'</font>')
         return Paragraph(text, st)
     def grid(rows, widths, border=False):
-        table = Table(rows, colWidths=widths, hAlign='LEFT')
+        table = Table(rows, colWidths=widths, hAlign='LEFT', splitInRow=1)
         commands = [('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 4),
                     ('RIGHTPADDING', (0, 0), (-1, -1), 4), ('TOPPADDING', (0, 0), (-1, -1), 2), ('BOTTOMPADDING', (0, 0), (-1, -1), 2)]
         if border:
@@ -272,10 +277,8 @@ def pdf(m):
         story.append(par(m['notice'], center))
     fields=[]
     for a,b,c,d in m['fields']:
-        name_size=max(7,min(9,9*146/max(1,pdfmetrics.stringWidth(str(b),font,9)))) if a=='Họ tên' else 9
-        value_style=ParagraphStyle('FieldValue',parent=style,fontSize=name_size)
-        fields.append([par('<b>'+pdf_safe(a)+'</b>',markup=True),par(b,value_style),par('<b>'+pdf_safe(c)+'</b>',markup=True),par(d)])
-    field_table=grid(fields,[116,154,82,width-352])
+        fields.append([par('<b>'+pdf_safe(a)+'</b>',markup=True),par(b),par('<b>'+pdf_safe(c)+'</b>',markup=True),par(d)])
+    field_table=grid(fields,[104,180,82,width-366])
     field_table.setStyle(TableStyle([('SPAN',(1,i),(3,i)) for i,(_,_,c,_) in enumerate(m['fields']) if not c]))
     story += [field_table,Spacer(1,5)]
     if m['kind'] == 'rx':
@@ -296,6 +299,7 @@ def pdf(m):
         cell = ParagraphStyle('S2cLab', parent=small, fontSize=6.7, leading=8)
         lab_table=grid([[par(v,cell,j%3==2 and i>0) for j,v in enumerate(row)] for i,row in enumerate(rows)],
                        [width*.19,width*.18,width*.13]*2 if m['kind']=='biochemistry' else [width*.40,width*.35,width*.25],True)
+        lab_table.repeatRows = 1
         lab_table.setStyle(TableStyle([('TOPPADDING',(0,1),(-1,-1),.8),('BOTTOMPADDING',(0,1),(-1,-1),.8)]))
         story.append(lab_table)
     signature = [par(time_text(m['stamp']), center), par('<b>'+m['signer_title']+'</b>', center, True), par('(Ký, ghi rõ họ tên)', center)]
@@ -304,23 +308,49 @@ def pdf(m):
     signature += [par(m['signer_name'], center)]
     if s:
         signature.append(par(signature_caption(s), small))
+    sig_table = grid([['', signature]], [width*.55, width*.45])
     if m['kind'] == 'rx':
-        story += [Spacer(1, 6), grid([[par('Lời dặn:\n'+m['advice']), signature]], [width*.55, width*.45])]
-        story += [par(x, small) for x in m['notes']]
+        ending = AdviceWithSignature(par('Lời dặn:\n'+m['advice']),
+                                     stack(signature, width*.45-8),
+                                     stack([par(x, small) for x in m['notes']], width))
+        if m['rows'] and ending.wrapOn(None, width, A4[1])[1] < 500:
+            story.pop()  # Inter-medicine spacing; the last medicine stays with the ending.
+            story.append(KeepEnd(story.pop(), ending))
+        else:
+            story.append(ending)
     else:
-        story += [par(x, small) for x in m['notes']]
-        story += [Spacer(1, 6), grid([['', signature]], [width*.55, width*.45])]
-    # Reject overflow explicitly; no cropped text or silently missing medicines/results.
-    height = sum(item.wrap(width, A4[1])[1]+item.getSpaceBefore()+item.getSpaceAfter() for item in story)
-    if height > A4[1]-105:
-        raise HTTPException(422, 'Nội dung vượt một trang A4; cần rút gọn lời dặn hoặc tách phiếu trước khi in')
+        # Comments can themselves span pages. Only the final comment line and the
+        # signature are kept together, never an arbitrarily long entire comment.
+        notes = [par(x, small) for x in m['notes']]
+        ending = stack(notes+[Spacer(1, 6), sig_table], width)
+        if ending.wrapOn(None, width, A4[1])[1] < 500:
+            story.append(KeepEnd(story.pop(), ending))
+        else:
+            # Walk backwards to find the long comment, carrying its short suffix
+            # and signature with its final line instead of creating a signature-only page.
+            suffix = [Spacer(1, 6), sig_table]
+            for i in range(len(notes)-1, -1, -1):
+                candidate = stack([notes[i]]+suffix, width)
+                if candidate.wrapOn(None, width, A4[1])[1] >= 500:
+                    story += notes[:i]
+                    story.append(KeepEnd(notes[i], stack(suffix, width)))
+                    break
+                suffix.insert(0, notes[i])
+    identity = par(continuation_identity(m['fields'][0][1], m['patient_code'],
+                                        m.get('print_number') or m['number'], prescription=m['kind']=='rx'))
+    identity_height = identity.wrap(width, A4[1])[1]
     def frame(canvas, doc):
         canvas.setStrokeColor(colors.HexColor(GREEN))
-        canvas.line(50, A4[1]-105, A4[0]-50, A4[1]-105)
+        if doc.page == 1:
+            canvas.line(50, A4[1]-105, A4[0]-50, A4[1]-105)
+        else:
+            identity.drawOn(canvas, 50, A4[1]-30-identity_height)
+            canvas.line(50, A4[1]-38-identity_height, A4[0]-50, A4[1]-38-identity_height)
         canvas.setFont(font, 6)
         canvas.setFillColor(colors.HexColor('#B42318'))
         canvas.drawCentredString(A4[0]/2, 25, WATERMARK)
-    SimpleDocTemplate(out, pagesize=A4, leftMargin=50, rightMargin=50, topMargin=30, bottomMargin=35).build(story, onFirstPage=frame)
+    build_pdf(out, story, font=font, pagesize=A4, left=50, right=50, first_top=30,
+              later_top=max(68, identity_height+45), bottom=35, first_header=frame, later_header=frame)
     return out.getvalue()
 
 
@@ -330,7 +360,8 @@ def word(m):
         if not child.tag.endswith('}sectPr'):
             doc._element.body.remove(child)
     section = doc.sections[0]
-    header = section.header.tables[0]
+    first_header = section.first_page_header if section.different_first_page_header_footer else section.header
+    header = first_header.tables[0]
     profile=m['profile']
     identity=header.cell(0,1)
     identity.text=''
@@ -378,7 +409,7 @@ def word(m):
         paragraph(m['notice']).alignment = 1
     table = doc.add_table(rows=0, cols=4)
     table.autofit = False
-    for column,width in zip(table.columns,(116,154,82,143)):
+    for column,width in zip(table.columns,(104,180,82,129)):
         column.width=Pt(width)
     for a, b, c, d in m['fields']:
         cells = table.add_row().cells
@@ -393,8 +424,9 @@ def word(m):
     if m['kind'] == 'rx':
         paragraph('THUỐC ĐIỀU TRỊ', bold=True)
         for i, (name, qty, usage) in enumerate(m['rows'], 1):
-            paragraph(f'{i}. {name}     Số lượng: {qty}', bold=True)
-            p=paragraph('Cách dùng: '+usage)
+            word_keep(paragraph(f'{i}. {name}     Số lượng: {qty}', bold=True))
+            for chunk in text_chunks('Cách dùng: '+usage):
+                p = paragraph(chunk)
             rule=OxmlElement('w:pBdr')
             edge=OxmlElement('w:bottom')
             edge.set(qn('w:val'),'single')
@@ -411,7 +443,8 @@ def word(m):
             for cell, value in zip(t.add_row().cells, checks[0][1][i:i+4]):
                 cell.text = value
         for value in checks[1:]:
-            paragraph(value)
+            for chunk in text_chunks(value):
+                paragraph(chunk)
     else:
         paragraph('Bệnh phẩm: '+LABS[m['kind']][3]+'   Lấy mẫu lúc: '+time_text(m['sample_at'])+'   Trả kết quả lúc: '+time_text(m['result_at']), size=7)
         values = lab_grid(m)
@@ -422,20 +455,59 @@ def word(m):
         for column,fraction in zip(t.columns,fractions):
             column.width=Pt(495*fraction)
         for i, row in enumerate(values):
-            for cell, value in zip(t.add_row().cells, row):
+            from html import unescape
+            contents = []
+            for value in row:
                 bold = value.startswith('<b>') or i == 0
-                from html import unescape
-                value=unescape(value[3:-4] if value.startswith('<b>') else value)
-                cell.text = value
-                for run in cell.paragraphs[0].runs:
-                    run.bold = bold
-                    run.font.size = Pt(7)
+                value = unescape(value[3:-4] if value.startswith('<b>') else value)
+                contents.append((text_chunks(value), bold))
+            for part in range(max(len(chunks) for chunks, _ in contents)):
+                added = t.add_row()
+                if i == 0:
+                    word_repeat_header(added)
+                for cell, (chunks, bold) in zip(added.cells, contents):
+                    cell.text = chunks[part] if part < len(chunks) else ''
+                    for run in cell.paragraphs[0].runs:
+                        run.bold = bold
+                        run.font.size = Pt(7)
+    # Keep the final content line (not the whole paragraph/table) with the signature.
+    if m['kind'] in LABS:
+        for cell in t.rows[-1].cells:
+            for p in cell.paragraphs:
+                word_keep(p)
+                p.paragraph_format.keep_together = True
+        word_keep_row(t.rows[-1])
+    elif doc.paragraphs:
+        word_keep(doc.paragraphs[-1])
+        doc.paragraphs[-1].paragraph_format.keep_together = True
     if m['kind'] != 'rx':
         for value in m['notes']:
-            paragraph(value, size=7)
+            chunks = text_chunks(value)
+            for i, chunk in enumerate(chunks):
+                p = paragraph(chunk, size=7)
+                word_keep(p, next=i == len(chunks)-1)
+                if i == len(chunks)-1:
+                    p.paragraph_format.keep_together = True
+    long_advice = m['kind'] == 'rx' and Paragraph(pdf_safe(m['advice']), ParagraphStyle(
+        'AdviceMeasure', fontName=print_font(), fontSize=9, leading=11)).wrap(495*.55-12, 1e9)[1] > 240
+    if long_advice:
+        # A multi-page advice paragraph must start in the remaining space after the medicine.
+        if doc.paragraphs:
+            word_keep(doc.paragraphs[-1], next=False)
+        chunks = text_chunks('Lời dặn:\n'+m['advice'])
+        for i, chunk in enumerate(chunks):
+            p = paragraph(chunk)
+            p.paragraph_format.right_indent = Pt(495*.45)
+            word_keep(p, next=i == len(chunks)-1)
+        p.paragraph_format.keep_together = True
     t = doc.add_table(rows=1, cols=2)
+    t.autofit = False
+    t.columns[0].width, t.columns[1].width = Pt(495*.55), Pt(495*.45)
     if m['kind'] == 'rx':
-        t.cell(0, 0).text = 'Lời dặn:\n'+m['advice']
+        left = t.cell(0, 0)
+        left.text = ('Lời dặn:\n'+m['advice']) if not long_advice else ''
+        for value in m['notes']:
+            paragraph(value, left, size=7)
     cell = t.cell(0, 1)
     cell.text = time_text(m['stamp'])
     paragraph(m['signer_title'], cell, True).alignment = 1
@@ -450,22 +522,10 @@ def word(m):
     paragraph(m['signer_name'], cell).alignment = 1
     if s:
         paragraph(signature_caption(s), cell, size=6.5)
-    if m['kind'] == 'rx':
-        for value in m['notes']:
-            paragraph(value, size=7)
-    for table in doc.tables:
-        for row in table.rows:
-            prop = OxmlElement('w:cantSplit')
-            row._tr.get_or_add_trPr().append(prop)
-    # Avoid Word's default keep-with-next heading styles and large cell paragraph gaps.
-    for p in doc.paragraphs:
-        p.paragraph_format.keep_with_next = False
-    footer = section.footer.paragraphs[0]
-    footer.text = WATERMARK
-    footer.alignment = 1
-    for run in footer.runs:
-        run.font.size = Pt(6)
-        run.font.color.rgb = RGBColor.from_string('B42318')
+    word_keep_row(t.rows[0])
+    word_keep(cell.paragraphs[-1], next=False)
+    word_pagination(doc, continuation_identity(m['fields'][0][1], m['patient_code'],
+                    m.get('print_number') or m['number'], prescription=m['kind']=='rx'), WATERMARK)
     section._sectPr.set(qn('w:rsidR'), '00000000')
     out = BytesIO()
     doc.save(out)

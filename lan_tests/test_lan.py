@@ -214,11 +214,11 @@ def test_encrypted_backup_restore_and_tamper(tmp_path,clients,visit):
             c.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name)))
 
 
-def test_long_exports_preserve_tail_and_intake_hides_clinical(clients,visit):
+def test_long_exports_preserve_tail_and_intake_hides_clinical(clients,visit,tmp_path):
     doc=clients['doctor'];tech=clients['technician'];rec=clients['reception']
     complaint='Nội dung chuyên môn riêng tư chỉ bác sĩ xem'
     history=('Bệnh sử giả lập dài '*180)+' HISTORY_TAIL_MARKER'
-    instructions=('Lời dặn giả lập '*120)+' INSTRUCTION_TAIL_MARKER'
+    instructions=('Lời dặn giả lập\n'*180)+' INSTRUCTION_TAIL_MARKER'
     assert doc.put(f'/api/visits/{visit}/clinical',json={'version':0,'chief_complaint':complaint,'history':history,'diagnosis':'Chẩn đoán giả lập dài'}).status_code==200
     oid=create_order(clients,visit,'lab')
     result=('Kết quả thử '*800)+' RESULT_TAIL_MARKER'
@@ -229,20 +229,32 @@ def test_long_exports_preserve_tail_and_intake_hides_clinical(clients,visit):
     for kind,item,marker in [('visit',visit,'HISTORY_TAIL_MARKER'),('lab',oid,'RESULT_TAIL_MARKER'),('rx',rid,'INSTRUCTION_TAIL_MARKER')]:
         for fmt in ('pdf','docx'):
             response=doc.get(f'/api/forms/{kind}/{item}?fmt={fmt}')
-            if kind=='lab':
-                # Pages 29–31 are one A4 page: reject overflow, retain the full saved result.
-                assert response.status_code==422,response.text
-                assert 'một trang A4' in response.json()['detail']
-                with db() as c:
-                    assert c.execute('SELECT result_text FROM orders WHERE id=?',(oid,)).fetchone()[0]==result
-                continue
             assert response.status_code==200,response.text
-            if kind=='rx' and fmt=='pdf':
-                assert len(PdfReader(BytesIO(response.content)).pages)==1
-            if fmt=='pdf':text=' '.join(p.extract_text() or '' for p in PdfReader(BytesIO(response.content)).pages)
+            (tmp_path/(kind+'.'+fmt)).write_bytes(response.content)
+            signature = {'visit':'Bác sĩ khám bệnh', 'lab':'TRƯỞNG KHOA XÉT NGHIỆM', 'rx':'BÁC SĨ KHÁM BỆNH'}[kind]
+            if fmt=='pdf':
+                pages = PdfReader(BytesIO(response.content)).pages
+                texts = [p.extract_text() or '' for p in pages]
+                assert len(pages)>1,(kind,len(pages))
+                assert signature in texts[-1]
+                assert all(signature not in page for page in texts[:-1])
+                for index,page in enumerate(texts,1):
+                    assert f'Trang {index}/{len(pages)}' in page
+                text=' '.join(texts)
             else:
+                from tests.print_pagination_cases import assert_word_pagination, word_as_pdf
+                assert_word_pagination(response.content, lab=kind=='lab')
                 word=Document(BytesIO(response.content))
                 text=' '.join([p.text for p in word.paragraphs]+[cell.text for t in word.tables for row in t.rows for cell in row.cells])
+                converted = word_as_pdf(response.content)
+                if converted is not None:
+                    (tmp_path/(kind+'-word.pdf')).write_bytes(converted)
+                    texts = [p.extract_text() or '' for p in PdfReader(BytesIO(converted)).pages]
+                    assert len(texts)>1
+                    assert signature.upper() in texts[-1]
+                    assert all(signature.upper() not in page for page in texts[:-1])
+                    assert marker in ' '.join(texts)
+                    assert all(f'Trang {i}/{len(texts)}' in page for i,page in enumerate(texts,1))
             assert marker in text,(kind,fmt)
     response=rec.get(f'/api/forms/intake/{visit}?fmt=docx')
     word=Document(BytesIO(response.content))

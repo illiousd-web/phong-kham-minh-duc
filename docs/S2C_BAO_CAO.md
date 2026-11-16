@@ -1,36 +1,31 @@
 # Báo cáo S2c
 
-Nhánh `feat/s2c-mau-in`, tạo từ `9647e1e`. Mẫu PDF trang 29–33; đầu phiếu từ `clinic_profile`; ảnh ký chỉ ở CSDL, không có ảnh ký thật trong repo.
+Nhánh `feat/s2c-mau-in`, gốc `9647e1e`, PR #40. Mẫu trang 29–33; đầu phiếu từ `clinic_profile`; không có dữ liệu hoặc ảnh ký thật trong repo.
 
-- Migration **017**: bảng bản ký, trigger mất hiệu lực khi sửa; quay lui từ chối nếu có lịch sử ký.
-- Excel **78 chỉ số / 82 dòng tham chiếu**; xem trước → nạp đã đạt, không tự nạp khi cài.
-- **54 bài Python đạt**: `test_s2c`, `test_form_exports`, `test_forms_v02`, `test_s2a`, `test_m5`, `test_m6`, `test_c5_measurement`.
-- **27 bài LAN đạt**: `test_s2c`, `test_s2c_browser`, `test_m5_browser`, `test_m6_browser`, `test_mot_ngay_kham`, `test_v050_browser`. Có Chromium thật ở 1366/390px. Hồi quy màn bác sĩ `test_m0_browser` và các bài `u1b/u1c` cũng đã đạt trong lượt kiểm liên quan.
-- **22 bài mới**: 15 Python + 5 PostgreSQL + 2 Chromium; kiểm một trang A4, đúng ảnh/người ký, mật khẩu, audit, sửa mất hiệu lực, trẻ thiếu cân nặng, ↑/↓ đậm và Excel.
-- Sau chỉnh độ rộng nhãn và đầu đơn trang 33: 4 bài bố cục và 20 bài S2a/S2c đạt. PDF trực tiếp và Word chuyển sang PDF với ảnh ký: các mẫu đã kiểm đều một trang A4.
-- Rà thêm ô chỉ định: kiểm tra không khớp từ con (fasting/culture) và không đánh dấu TMH cho nội soi dạ dày; bài kiểm riêng đạt.
-- Bổ sung hồi quy giữ chữ ký khi hoàn tất lượt/cấp thuốc: 15 bài S2c và 19 bài PostgreSQL/Chromium/một ngày khám đạt. Ba bài in cũ do CI phát hiện đã được đối chiếu trang 29–33; chạy lại cùng S2c: 18 bài đạt, vẫn giữ kiểm địa chỉ nguyên văn và liều `0,75 viên`.
-- Cô lập thuốc giả lập không có tồn của fixture S2c; chạy S2c trước bài cấp thuốc cũ: 16 bài đạt, không sửa nghiệp vụ kho.
-- CI đã qua 422 bài Python. Cập nhật đúng schema 17 và giới hạn A4 trong các bài LAN cũ: chạy lại 4 bài đạt; giữ đủ 20.000 bệnh nhân/22.000 lượt, kiểm khôi phục và không tự nạp tham chiếu.
-- Ruff, ESLint, `git diff --check`, checksum tài sản: đạt. Kết quả năm job CI được cập nhật trên PR; chưa kiểm máy in thật/Word tại cơ sở.
+- Sửa bắt buộc PR #40: bỏ từ chối in do vượt A4. PDF/Word dài tự sang trang, giữ nguyên cỡ chữ và đủ nội dung; trang tiếp nối lặp họ tên, mã NB, số phiếu/mã đơn nội bộ; mọi trang có `Trang x/y`. Tiêu đề bảng xét nghiệm lặp; khối ký/ảnh ký chỉ ở trang cuối, cùng dòng nội dung cuối.
+- Giữ kiểm nội dung thông thường một trang A4, ký đúng người, mật khẩu/audit, sửa mất hiệu lực, trẻ dưới 72 tháng thiếu cân nặng, ↑/↓ đậm và xem trước → nạp Excel **78 chỉ số / 82 tham chiếu**.
+- Thêm **7 ca phân trang**: ba nhóm 60 chỉ số, đơn 25 thuốc, lời dặn dài, cách dùng dài, chỉ định dài. Kiểm đủ từng dòng, đuôi, số lần lặp, cỡ chữ, đầu/chân trang và chữ ký cuối; kiểm cả Word chuyển PDF bằng LibreOffice cục bộ. Khôi phục kiểm đủ TAIL_MARKER ở cả ba phiếu trong bài LAN.
+- Migration: không thêm migration cho lần sửa này; giữ **017** đã có của S2c. Không đổi workflow/deploy, logic kê đơn/duyệt xét nghiệm, thuốc kiểm soát hoặc quyền.
+- Kiểm thử cục bộ: **429 bài Python đạt** (`pytest tests`), gồm 7 ca phân trang; bài LAN in dài đã đạt. Chạy lại toàn bộ `lan_tests/` và năm job CI trên cùng PR #40; kết quả cuối ghi tại PR. Ruff, ESLint, checksum tài sản và diff-check: đạt. Chưa kiểm máy in thật/Word tại phòng khám.
 
-Chi tiết vận hành và căn cứ cập nhật assertion: [S2C_MAU_IN.md](S2C_MAU_IN.md).
+Chi tiết và căn cứ cập nhật assertion: [S2C_MAU_IN.md](S2C_MAU_IN.md). Lần chạy cục bộ dùng dữ liệu giả lập, PostgreSQL 17 và Chromium cục bộ; không thay timeout hoặc bỏ bài kiểm.
 
-Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so với `9647e1e`; tệp nhị phân không có số dòng.
+Số dòng sau sửa; `+ / −` so với `9647e1e`; tệp nhị phân không tính dòng.
 
 | Tệp | Số dòng | + / − |
 |---|---:|---:|
 | `.gitignore` | 270 | 2 / 0 |
 | `app/database.py` | 183 | 2 / 0 |
-| `app/document_signatures.py` | 145 | 145 / 0 |
-| `app/forms.py` | 459 | 14 / 10 |
+| `app/document_signatures.py` | 148 | 148 / 0 |
+| `app/form_pagination.py` | 205 | 205 / 0 |
+| `app/forms.py` | 497 | 62 / 20 |
 | `app/forms_api.py` | 147 | 19 / 0 |
 | `app/m5.py` | 481 | 19 / 6 |
 | `app/m5_forms.py` | 6 | 4 / 70 |
 | `app/m6.py` | 601 | 4 / 4 |
 | `app/m6_forms.py` | 6 | 3 / 81 |
 | `app/main.py` | 1101 | 11 / 0 |
-| `app/s2c_forms.py` | 472 | 472 / 0 |
+| `app/s2c_forms.py` | 532 | 532 / 0 |
 | `app/s2c_migration.py` | 74 | 74 / 0 |
 | `app/static/MinhDuc_logo_in.png` | Nhị phân | - / - |
 | `app/static/app.js` | 1321 | 51 / 1 |
@@ -46,11 +41,11 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `app/templates/04_Phieu_ket_qua_xet_nghiem_A4.docx` | 0 (xóa) | - / - |
 | `app/templates/08_Don_thuoc_A4.docx` | Nhị phân | - / - |
 | `app/templates/08_Don_thuoc_ngoai_tru_A5.docx` | 0 (xóa) | - / - |
-| `data/danh_muc_goc/chi_so_xet_nghiem_minh_duc.xlsx` | ChiSo: 78; ThamChieu: 82 (không tính đầu cột) | - / - |
-| `docs/S2C_BAO_CAO.md` | 71 | 71 / 0 |
-| `docs/S2C_MAU_IN.md` | 54 | 54 / 0 |
+| `data/danh_muc_goc/chi_so_xet_nghiem_minh_duc.xlsx` | ChiSo: 78; ThamChieu: 82 | - / - |
+| `docs/S2C_BAO_CAO.md` | 68 | 68 / 0 |
+| `docs/S2C_MAU_IN.md` | 55 | 55 / 0 |
 | `docs/assets-v031.sha256` | 35 | 13 / 9 |
-| `lan_tests/test_lan.py` | 278 | 9 / 0 |
+| `lan_tests/test_lan.py` | 290 | 24 / 3 |
 | `lan_tests/test_mot_ngay_kham.py` | 755 | 2 / 2 |
 | `lan_tests/test_s2a.py` | 134 | 4 / 2 |
 | `lan_tests/test_s2c.py` | 10 | 10 / 0 |
@@ -62,10 +57,12 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `tests/administrative_revision_cases.py` | 123 | 11 / 8 |
 | `tests/m5_cases.py` | 131 | 2 / 1 |
 | `tests/m6_cases.py` | 157 | 10 / 5 |
+| `tests/print_pagination_cases.py` | 76 | 76 / 0 |
 | `tests/s2c_cases.py` | 163 | 163 / 0 |
 | `tests/test_s1_prescription.py` | 62 | 2 / 1 |
-| `tests/test_s2a.py` | 116 | 3 / 1 |
-| `tests/test_s2c.py` | 242 | 242 / 0 |
+| `tests/test_s2a.py` | 116 | 4 / 2 |
+| `tests/test_s2c.py` | 247 | 247 / 0 |
+| `tests/test_s2c_pagination.py` | 78 | 78 / 0 |
 | `tests/test_v041_fixes.py` | 106 | 3 / 1 |
 
 Chờ S2d.

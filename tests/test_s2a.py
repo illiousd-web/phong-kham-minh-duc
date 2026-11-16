@@ -45,7 +45,7 @@ def test_profile_in_all_nine_docx_pdf_templates_and_both_export_routes():
                    rx={'id': 1, 'drug_lines': 'Thuốc giả lập | 1 | Giả lập', 'created_at': ctx['visit']['created_at']})
         for kind in TEMPLATE_BY_TYPE:
             document = Document(BytesIO(generate_docx(kind, ctx)))
-            headers = '\n'.join(cell.text for section in document.sections for table in section.header.tables for row in table.rows for cell in row.cells)
+            headers = '\n'.join(cell.text for section in document.sections for header in (section.header, section.first_page_header) for table in header.tables for row in table.rows for cell in row.cells)
             text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(generate_pdf(kind, ctx))).pages)
             # Page 33's prescription header omits the governing body; other frames retain it.
             expected={k:v for k,v in PROFILE.items() if kind!='rx' or k!='governing_body'}

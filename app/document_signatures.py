@@ -37,6 +37,9 @@ def clinical_print_data(c, rx):
     from .m6 import payload
     p = json.loads(rx['snapshot']) if rx['snapshot'] else payload(c, rx)
     p['clinic_profile'] = read_profile(c)
+    patient = c.execute('SELECT p.code FROM patients p JOIN visits v ON v.patient_id=p.id WHERE v.id=?', (rx['visit_id'],)).fetchone()
+    p['patient']['code'] = patient['code']
+    p['print_number'] = rx['local_code'] or f"MD-RX-{rx['id']:06d}"
     if rx['status'] == 'cancelled':
         replacement = c.execute('SELECT id,local_code FROM clinical_prescriptions WHERE replaces_id=? AND locked_at IS NOT NULL ORDER BY id LIMIT 1', (rx['id'],)).fetchone()
         if replacement:
