@@ -22,8 +22,13 @@ Nhánh `feat/s2b-kho-thuoc`, từ `main df9aa8a`. Chỉ dùng dữ liệu giả 
 - Báo cáo dùng ngày Việt Nam, gồm cả hai đầu kỳ. Tồn đầu/cuối bao gồm các lô
   cách ly/hết hạn; nhập gồm nhập thường, nhập kiểm soát và trả vào cách ly.
   Mỗi thuốc luôn cân `tồn đầu + nhập − xuất = tồn cuối`, kể cả số dư cũ chưa có
-  biến động ghi sổ. Doanh thu là giá bán chụp khi cấp, không phải tiền thu tại quầy;
-  lãi gộp ở đây = doanh thu cấp thuốc − giá vốn của các lần xuất trong kỳ.
+  biến động ghi sổ. Doanh thu thuần là giá bán chụp khi cấp trừ `charge_credits`
+  của trả thuốc đã duyệt, ghi nhận theo ngày duyệt (giờ Việt Nam), không phải tiền thu tại quầy.
+  `cogs_sold` là giá vốn bán theo từng lần cấp gốc, trừ giá vốn của số thuốc trả đã duyệt;
+  `cost_of_goods` giữ làm tên tương thích cho cùng giá trị. Lãi gộp = doanh thu thuần − `cogs_sold`.
+  Chi phí xuất nội bộ, trả NCC và hủy hết hạn có cột riêng, không trừ vào lãi gộp.
+  Cột “Trả lại (giảm doanh thu)” ghi riêng khoản giảm; tồn trả về vẫn ở lô cách ly.
+  Thẻ lãi tháng, Excel và PDF dùng cùng công thức và phép lọc quyền của API.
 - Lô cũ/biến động cũ không biết giá giữ `NULL` và hiển thị **chưa có giá**, không
   coi là 0. Chủ kho/Quản trị bổ sung giá lô cũ một lần kèm căn cứ; audit lưu trước,
   sau và lý do. Giá vốn của lần xuất đã lưu không bị thay đổi theo giá bổ sung.

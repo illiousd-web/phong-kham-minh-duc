@@ -93,9 +93,10 @@ def stock_xlsx(rows):
 
 def report_columns(data):
     cols = [('name', 'Thuốc', ''), ('opening', 'Tồn đầu', 'r'), ('received', 'Nhập', 'r'), ('issued', 'Xuất', 'r'), ('closing', 'Tồn cuối', 'r')]
-    if data['rows'] and 'cost_of_goods' in data['rows'][0]:
-        cols.append(('cost_of_goods', 'Giá vốn xuất', 'r'))
-    cols.append(('revenue', 'Doanh thu', 'r'))
+    if data['rows'] and 'cogs_sold' in data['rows'][0]:
+        cols += [('cogs_sold', 'Giá vốn bán', 'r'), ('cost_internal', 'Xuất nội bộ', 'r'),
+                 ('cost_supplier_return', 'Trả NCC', 'r'), ('cost_expired', 'Hủy hết hạn', 'r')]
+    cols += [('returns_revenue', 'Trả lại (giảm doanh thu)', 'r'), ('revenue', 'Doanh thu thuần', 'r')]
     if data['rows'] and 'gross_profit' in data['rows'][0]:
         cols.append(('gross_profit', 'Lãi gộp', 'r'))
     return cols

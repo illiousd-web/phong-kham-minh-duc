@@ -1,6 +1,6 @@
 """S2b contracts shared by SQLite and real PostgreSQL; synthetic values only."""
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 import json
 import secrets
@@ -115,7 +115,7 @@ def check_permissions(clients, owner, first, issued, disp):
             assert response.status_code == 200, response.text
             sheet = load_workbook(BytesIO(response.content)).active
             headers = [cell.value for cell in sheet[1]]
-            assert not {'Giá nhập', 'Giá trị tồn', 'Giá vốn xuất', 'Lãi gộp'}.intersection(headers)
+            assert not {'Giá nhập', 'Giá trị tồn', 'Giá vốn xuất', 'Giá vốn bán', 'Xuất nội bộ', 'Trả NCC', 'Hủy hết hạn', 'Lãi gộp'}.intersection(headers)
         for path in (f'/api/stock/documents/receipts/{first["id"]}/print', f'/api/stock/documents/issues/{issued["id"]}/print', '/api/reports/stock/export?fmt=pdf'):
             response = actor.get(path)
             if response.status_code == 403:
@@ -169,7 +169,9 @@ def check_legacy_cost(clients, db, owner):
     # Supplementing current cost cannot rewrite history.
     assert checked(owner.get(f'/api/stock/documents/issues/{issue["id"]}'))['total_amount'] is None
     row = next(x for x in checked(owner.get('/api/reports/stock'))['rows'] if x['id'] == mid)
-    assert row['cost_of_goods'] is None and row['gross_profit'] is None
+    assert row['cost_internal'] is None and row['cost_status'] == 'chưa có giá'
+    # S2b correction: unknown internal cost does not affect profit on medicine sales.
+    assert row['cogs_sold'] == row['cost_of_goods'] == row['gross_profit'] == 0
     checked(owner.put(f'/api/medicines/{mid}/min-stock', json={'min_stock': 16}))
     assert any(x['medicine_id'] == mid for x in checked(owner.get('/api/stock?stock_filter=below_minimum')))
     checked(owner.put(f'/api/medicines/{mid}/min-stock', json={'min_stock': None}))
@@ -226,3 +228,103 @@ def check_report_period_boundaries(clients, db, owner):
             assert item['opening'] + item['received'] - item['issued'] == item['closing']
     for query in ('month=2026-13', 'quarter=5', 'date_from=2026-02-01&date_to=2026-01-01', 'date_from=2026-01-01'):
         assert owner.get('/api/reports/stock?' + query).status_code == 422
+
+
+def report_row(owner, mid, query=''):
+    report = checked(owner.get('/api/reports/stock' + query))
+    for row in report['rows']:
+        assert row['opening'] + row['received'] - row['issued'] == row['closing'], row
+    return next(row for row in report['rows'] if row['id'] == mid)
+
+
+def check_issue_profit(clients, db, owner, reason):
+    mid = med(clients)
+    receipt = receive(owner, mid, 20, 2000)
+    if reason == 'expired_disposal':
+        # Synthetic expired stock, outside the receiving workflow's expiry guard.
+        with db(True) as c:
+            c.execute('INSERT INTO stock_lots(medicine_id,lot_number,expiry_date,quantity,unit_cost) VALUES(?,?,?,?,?)',
+                      (mid, 'HUY-' + secrets.token_hex(4), '2020-01-01', 20, 2000))
+            lid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+    else:
+        lid = receipt['stock_lot_id']
+    checked(owner.post('/api/stock/issues', json={'medicine_id': mid, 'quantity': 10,
+        'reason': reason, 'lot_id': lid, 'purpose': 'Kiểm chi phí xuất giả lập'}), 201)
+    row = report_row(owner, mid)
+    key = {'internal': 'cost_internal', 'supplier_return': 'cost_supplier_return',
+           'expired_disposal': 'cost_expired'}[reason]
+    assert row[key] == 20000
+    assert all(row[k] == 0 for k in ('cost_internal', 'cost_supplier_return', 'cost_expired') if k != key)
+    assert row['revenue'] == row['cogs_sold'] == row['cost_of_goods'] == row['gross_profit'] == 0
+    check_report_exports(owner, row)
+
+
+def check_report_exports(owner, row):
+    response = owner.get('/api/reports/stock/export?fmt=xlsx')
+    assert response.status_code == 200, response.text
+    values = list(load_workbook(BytesIO(response.content)).active.values)
+    headers = values[0]
+    exported = next(dict(zip(headers, values)) for values in values[1:] if values[0] == row['name'])
+    for key, label in [('cogs_sold', 'Giá vốn bán'), ('cost_internal', 'Xuất nội bộ'),
+                       ('cost_supplier_return', 'Trả NCC'), ('cost_expired', 'Hủy hết hạn'),
+                       ('returns_revenue', 'Trả lại (giảm doanh thu)'), ('revenue', 'Doanh thu thuần'),
+                       ('gross_profit', 'Lãi gộp')]:
+        assert exported[label] == row[key]
+    response = owner.get('/api/reports/stock/export?fmt=pdf')
+    assert response.status_code == 200, response.text
+    text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(response.content)).pages)
+    # PDF paragraphs may wrap their headings to fit the additional columns.
+    compact = ' '.join(text.split())
+    for label in ('Giá vốn bán', 'Xuất nội bộ', 'Trả NCC', 'Hủy hết hạn', 'Trả lại (giảm doanh thu)', 'Doanh thu thuần'):
+        assert label in compact
+    report = checked(owner.get('/api/reports/stock'))['rows']
+    expected = None if any(r['gross_profit'] is None for r in report) else sum(r['gross_profit'] for r in report)
+    assert checked(owner.get('/api/stock/summary'))['gross_profit'] == expected
+
+
+def check_return_profit(clients, visit, db, owner, half, approval_next_day=False):
+    mid = med(clients)
+    # Two different original lot costs: full 20,000; half (1 + 4 units) 10,000.
+    receive(owner, mid, 2, 1000, expiry='2028-01-01')
+    receive(owner, mid, 8, 2250, expiry='2029-01-01')
+    visit_row = checked(clients['doctor'].get(f'/api/visits/{visit}'))
+    checked(clients['doctor'].put(f'/api/visits/{visit}/clinical', json={
+        'version': visit_row['version'], 'diagnosis': 'Kiểm trả thuốc giả lập'}))
+    rid = checked(clients['doctor'].post('/api/prescriptions', json={'visit_id': visit,
+        'items': [{'medicine_id': mid, 'quantity': 10, 'directions': 'Không điều trị thật'}]}), 201)['id']
+    disp = checked(clients['pharmacy'].post(f'/api/prescriptions/{rid}/dispense'), 201)
+    row = report_row(owner, mid)
+    assert (row['revenue'], row['cogs_sold'], row['gross_profit']) == (50000, 20000, 30000)
+    return_items = [{'dispensation_item_id': it['id'], 'quantity': it['quantity'] // (2 if half else 1)} for it in disp['lots']]
+    ret = checked(clients['pharmacy'].post(f'/api/dispensations/{disp["dispensation_id"]}/returns', json={
+        'reason': 'Trả thuốc giả lập', 'request_key': secrets.token_hex(16), 'items': return_items}), 201)
+    # Pending returns neither reduce revenue nor reverse COGS.
+    assert report_row(owner, mid) == row
+    sale_day = datetime.now(VN_TZ).date()
+    approved_at = datetime.now(VN_TZ) + timedelta(days=int(approval_next_day))
+    from app.main import app
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, 'path', '') == '/api/medication-returns/{rid}/review')
+    clock_cell = dict(zip(endpoint.__code__.co_freevars, endpoint.__closure__))['now']
+    # Inject only the return workflow's clock, leaving authentication on real time.
+    original_clock = clock_cell.cell_contents
+    try:
+        clock_cell.cell_contents = lambda: approved_at.isoformat()
+        checked(clients['manager'].post(f'/api/medication-returns/{ret["id"]}/review', json={'approve': True}))
+    finally:
+        clock_cell.cell_contents = original_clock
+    credit, cost = (25000, 10000) if half else (50000, 20000)
+    query = '?date_from=' + sale_day.isoformat() + '&date_to=' + approved_at.date().isoformat()
+    row = report_row(owner, mid, query)
+    assert (row['returns_revenue'], row['revenue'], row['cogs_sold'], row['gross_profit']) == (credit, 50000-credit, 20000-cost, 30000-credit+cost)
+    assert row['cost_internal'] == row['cost_supplier_return'] == row['cost_expired'] == 0
+    assert row['received'] == 10 + (5 if half else 10)
+    with db() as c:
+        assert c.execute('SELECT SUM(quantity) FROM stock_lots WHERE medicine_id=? AND quarantined=1', (mid,)).fetchone()[0] == (5 if half else 10)
+    if approval_next_day:
+        # Approval date (Vietnam), rather than request, sale, or credit timestamp.
+        same_day = report_row(owner, mid, '?date_from=' + sale_day.isoformat() + '&date_to=' + sale_day.isoformat())
+        assert (same_day['returns_revenue'], same_day['revenue'], same_day['cogs_sold'], same_day['gross_profit']) == (0, 50000, 20000, 30000)
+        next_day = report_row(owner, mid, '?date_from=' + approved_at.date().isoformat() + '&date_to=' + approved_at.date().isoformat())
+        assert (next_day['returns_revenue'], next_day['revenue'], next_day['cogs_sold'], next_day['gross_profit']) == (credit, -credit, -cost, cost-credit)
+    else:
+        check_report_exports(owner, row)

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 
-from .browser_helpers import settle, no_horizontal_scroll
+from .browser_helpers import settle, no_horizontal_scroll, send
 from .conftest import PASSWORDS
 from tests.s2b_cases import med, owner_sessions, receive
 
@@ -82,6 +82,19 @@ def check_stock_390px_sticky_resize_cost_privacy_and_forms(https_server, clients
         wrapper.scroll_into_view_if_needed()
         table.evaluate('e=>window.scrollBy(0,e.getBoundingClientRect().top-100)')
         page.screenshot(path=str(evidence/'kho-390.png'))
+        page.locator('[data-r5-jump=r5-report]').click()
+        report_table = page.locator('[data-stock-table="report-true"]')
+        assert report_table.locator('th').all_text_contents() == [
+            'Thuốc', 'Tồn đầu', 'Nhập', 'Xuất', 'Tồn cuối', 'Giá vốn bán',
+            'Xuất nội bộ', 'Trả NCC', 'Hủy hết hạn', 'Trả lại (giảm doanh thu)', 'Doanh thu thuần', 'Lãi gộp']
+        report_wrapper = report_table.locator('..')
+        assert report_wrapper.evaluate('e=>e.scrollWidth>e.clientWidth')
+        first_x = report_table.locator('tbody td').first.bounding_box()['x']
+        report_wrapper.evaluate('e=>{e.scrollLeft=650;e.scrollTop=80}')
+        assert abs(report_table.locator('tbody td').first.bounding_box()['x'] - first_x) <= 1
+        assert report_table.locator('th').first.evaluate("e=>getComputedStyle(e).position") == 'sticky'
+        assert all(cell.evaluate('e=>e.scrollWidth<=e.clientWidth+1') for cell in report_table.locator('tbody td.r').all())
+        page.screenshot(path=str(evidence/'bao-cao-390.png'))
         page.set_viewport_size({'width': 1366, 'height': 900})
         page.locator('[data-r5-jump=r5-receipt]').click()
         receipt = page.locator('[data-form=stock-receipt]')
@@ -134,6 +147,8 @@ def check_stock_390px_sticky_resize_cost_privacy_and_forms(https_server, clients
         expect(page.locator('[data-form=stock-receipt] [name=unit_cost]')).to_have_count(0)
         assert 'Giá trị tồn kho' not in page.locator('.s2b-stats').inner_text()
         assert 'Lãi gộp' not in page.locator('.s2b-stats').inner_text()
+        assert page.locator('[data-stock-table="report-false"] th').all_text_contents() == [
+            'Thuốc', 'Tồn đầu', 'Nhập', 'Xuất', 'Tồn cuối', 'Trả lại (giảm doanh thu)', 'Doanh thu thuần']
         no_horizontal_scroll(page)
         context.close()
         # Admin assigns the auxiliary role through the existing account editor.
@@ -152,14 +167,12 @@ def check_stock_390px_sticky_resize_cost_privacy_and_forms(https_server, clients
         expect(editor.locator('[name=roles][value=stock_owner]')).to_be_checked()
         expect(editor).to_contain_text('Quyền phụ kho thuốc')
         editor.locator('[name=roles][value=stock_owner]').uncheck()
-        editor.locator('button').first.click()
-        settle(page)
+        send(page, editor.locator('button').first)
         changed = next(row for row in clients['admin'].get('/api/accounts').json() if row['id'] == account['id'])
         assert changed['roles'] == ['pharmacy']
         editor = page.locator('[data-form=account-edit]')
         editor.locator('[name=roles][value=stock_owner]').check()
-        editor.locator('button').first.click()
-        settle(page)
+        send(page, editor.locator('button').first)
         changed = next(row for row in clients['admin'].get('/api/accounts').json() if row['id'] == account['id'])
         assert set(changed['roles']) == {'pharmacy', 'stock_owner'}
         context.close()

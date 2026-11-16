@@ -32,4 +32,31 @@ Lần chạy lại trên PostgreSQL 17 có SCRAM (không skip vì trust): `lan_t
 
 CI windows-install-e2e chạy trên head mới; chưa coi kết quả cục bộ là kết quả CI. Các bộ `lan_tests/test_windows_install_db.py`, `lan_tests/test_browser_https.py`, migration 016 PostgreSQL/SQLite chạy riêng để tách biến môi trường mà test CLI của bộ cài chủ động thay đổi; không sửa assertion để bỏ qua lỗi môi trường.
 
+## Sửa báo cáo tiền từ head 89b4f9b
+
+Nguyên nhân: `app/stock.py::stock_report` cộng giá vốn mọi loại xuất rồi trừ khỏi doanh thu,
+đồng thời chưa đọc khoản giảm thu và giá vốn của trả thuốc đã duyệt. Màn hình và bản xuất
+đều lấy công thức này nên thẻ tháng, Excel và PDF cùng sai.
+
+- Tách `cogs_sold`, `cost_internal`, `cost_supplier_return`, `cost_expired`; ba loại xuất
+  ngoài bán có cột riêng, không làm giảm lãi gộp. `cost_of_goods` giữ tên tương thích cho `cogs_sold`.
+- Doanh thu thuần = tiền cấp theo đơn − `charge_credits` của trả đã duyệt, theo ngày duyệt Việt Nam.
+  Giá vốn trả lấy snapshot của lần xuất gốc; ghép dòng cấp và biến động theo thứ tự trong từng lô
+  (hai dòng được tạo cùng giao dịch sau khóa/trừ lô). Không lấy giá hiện tại của lô;
+  thiếu snapshot hoặc số lượng đối chiếu không khớp thì giữ “chưa có giá”.
+- Lãi gộp = doanh thu thuần − `cogs_sold`; thẻ tháng/JSON/Excel/PDF cùng dùng kết quả này.
+  Các trường chi phí mới qua cùng bộ lọc tiền admin/stock_owner; doanh thu và khoản giảm doanh thu
+  theo quyền đọc doanh thu cũ. Không đổi migration 016, FEFO, workflow, deploy/ hay phân quyền.
+- Sửa ghi chú mẫu HTML dòng 122 đúng “chỉ hiện với Quản trị và Chủ kho thuốc”.
+- Thêm 14 ca tham số hóa trên SQLite/PostgreSQL trong `tests/s2b_cases.py` và hai wrapper:
+  nội bộ 20.000 không giảm lãi; trả NCC/hủy 20.000 đúng cột; bán 50.000/vốn 20.000 rồi trả
+  toàn bộ ra 0/0/0, trả nửa ra 25.000/10.000/15.000. Trả lấy từ hai lô 1.000 và 2.250;
+  kiểm pending, ngày duyệt cùng/ngày kế tiếp, tồn cách ly/cân tồn, Excel/PDF và tổng thẻ tháng.
+  Assertion giá vốn chưa biết của xuất nội bộ được chuyển sang `cost_internal IS NULL` và
+  lãi bằng 0 theo chính yêu cầu sửa công thức mới; giữ kiểm bất biến snapshot.
+- Bổ sung kiểm cột báo cáo ở 390px và quyền UI. Khi test lưu quyền bộc lộ đọc dữ liệu trước
+  HTTP lưu xong, dùng helper `send` sẵn có chờ đúng phản hồi; không nới assertion hoặc timeout.
+
+Kết quả kiểm lần này được ghi tại [S2B_KET_QUA.md](S2B_KET_QUA.md); CI báo trực tiếp trên PR.
+
 Chờ S2c.
