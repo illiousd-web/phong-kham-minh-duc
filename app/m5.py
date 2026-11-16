@@ -1,5 +1,6 @@
 """Structured laboratory results. No price, charge or authorization mutations."""
 import json
+import re
 from datetime import datetime,date
 from decimal import Decimal,InvalidOperation,ROUND_HALF_UP
 from typing import Literal
@@ -33,6 +34,12 @@ def rounded_number(value,decimals):
 
 def display_number(value,decimals):
     return format(rounded_number(value,decimals),'.'+str(decimals)+'f').replace('.',',')
+
+
+def strict_upper(text):
+    """The M5 workbook has no exclusivity column; retain the source '<' verbatim."""
+    match=re.fullmatch(r'<\s*([0-9]+(?:[.,][0-9]+)?)',text.strip())
+    return number(match.group(1)) if match else None
 
 
 class Strict(BaseModel):
@@ -80,7 +87,7 @@ class TestInput(Strict):
         if any(not s or len(s)>200 for s in self.choices) or len(set(self.choices))!=len(self.choices): raise ValueError('Danh sách định tính có lựa chọn rỗng/trùng/quá dài')
         if self.result_type=='choice' and not self.choices: raise ValueError('Cần danh sách lựa chọn định tính')
         for i,r in enumerate(self.references):
-            if self.result_type=='number' and r.normal_value: raise ValueError('Chỉ số số cần cận số')
+            if self.result_type=='number' and r.normal_value and strict_upper(r.normal_value) is None: raise ValueError('Chỉ số số cần cận số hoặc biểu thức < số')
             if self.result_type!='number' and not r.normal_value: raise ValueError('Chỉ số chữ/định tính cần giá trị bình thường')
             if self.result_type=='choice' and r.normal_value not in self.choices: raise ValueError('Giá trị bình thường ngoài danh sách lựa chọn')
             for old in self.references[:i]:
@@ -164,14 +171,18 @@ def age_at(dob,stamp):
 
 
 def evaluate(definition,refs,value,sex,age):
-    eligible=[r for r in refs if bool(r['normal_value'])==(definition['result_type']!='number') and r['sex'] in ('chung',sex) and
+    eligible=[r for r in refs if (bool(r['normal_value'])==(definition['result_type']!='number') or
+              definition['result_type']=='number' and strict_upper(r['normal_value']) is not None) and r['sex'] in ('chung',sex) and
               (age is not None and (r['age_from'] is None or age>=r['age_from']) and (r['age_to'] is None or age<=r['age_to']) or age is None and r['age_from'] is None and r['age_to'] is None)]
     eligible.sort(key=lambda r:r['sex']==sex,reverse=True)
     ref=eligible[0] if eligible else None;flag=''
     if not ref: return {'reference':None,'reference_text':'Chưa có khoảng tham chiếu','flag':''}
     if ref['normal_value']:
         text=ref['normal_value']
-        if value.strip() and value.strip().casefold()!=text.casefold(): flag='Bất thường'
+        exclusive=strict_upper(text) if definition['result_type']=='number' else None
+        if exclusive is not None:
+            if value.strip() and rounded_number(value,definition.get('decimals',2))>=exclusive:flag='H'
+        elif not text.startswith(('(', '……', 'Giờ 1:', 'Đoạn trung tính')) and value.strip() and value.strip().casefold()!=text.casefold(): flag='Bất thường'
     else:
         low,high=ref['lower_value'],ref['upper_value']
         decimals=definition.get('decimals',2)
@@ -456,9 +467,11 @@ def install_m5(app,db,principal,require,audit,visit_access,now):
         with db('access') as c:
             r,o=report_access(c,u,rid,require)
             if r['status']!='approved' and 'technician' not in u['roles']:raise HTTPException(403,'Chỉ in phiếu đã duyệt')
-            payload=report_data(c,r,o)
-            successor=c.execute("SELECT id FROM lab_reports WHERE replaces_id=? AND status='approved'",(rid,)).fetchone()
-            if successor:payload['superseded_by']=successor['id']
+            from .document_signatures import lab_print_data, valid_signature
+            payload=lab_print_data(c,r,o)
+            from .s2c_forms import laboratory
+            models=[laboratory(payload,g) for g in GROUPS if any(x['group_name']==g for x in payload['items'])]
+            payload['signature']=valid_signature(c,'lab_report',rid,models=models) if r['status']=='approved' else None
             if not any(x['group_name']==group for x in payload['items']):raise HTTPException(404,'Nhóm không có chỉ định trên phiếu')
             audit(c,u,'lab_printed','lab_report',rid,'Nhóm '+GROUPS[group]+'; '+fmt)
         raw=render(payload,group,fmt)

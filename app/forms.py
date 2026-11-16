@@ -23,17 +23,16 @@ from reportlab.lib.utils import ImageReader
 TEMPLATE_DIR = Path(__file__).resolve().parent / 'templates'
 LOGO = Path(__file__).resolve().parent / 'static' / 'images' / 'logo_minh_duc.png'
 CLINIC = 'PHÒNG KHÁM ĐA KHOA MINH ĐỨC'
-CONTACT = '60 đường Thái Bình, phường Nam Định, tỉnh Ninh Bình  |  083 862 0553 - 0916 232 369'
 WATERMARK = 'BẢN THỬ NGHIỆM - KHÔNG DÙNG CHO NGƯỜI BỆNH THẬT'
 TEMPLATE_BY_TYPE = {
  'intake':'01_Phieu_tiep_don_A4.docx',
  'visit':'02_Phieu_kham_ngoai_tru_A4.docx',
- 'order':'03_Phieu_chi_dinh_CLS_A4.docx',
- 'lab':'04_Phieu_ket_qua_xet_nghiem_A4.docx',
+ 'order':'03_Phieu_chi_dinh_noi_khoa_A4.docx',
+ 'lab':'04_Phieu_XN_biochemistry_A4.docx',
  'ultrasound':'05_Phieu_ket_qua_sieu_am_A4.docx',
  'xray':'06_Phieu_ket_qua_Xquang_A4.docx',
  'ecg':'07_Phieu_ket_qua_dien_tim_A4.docx',
- 'rx':'08_Don_thuoc_ngoai_tru_A5.docx',
+ 'rx':'08_Don_thuoc_A4.docx',
  'followup':'09_Giay_hen_tai_kham_A5.docx',
 }
 TITLES = {
@@ -147,13 +146,15 @@ def clinic_lines(ctx):
 
 def fill_clinic_header(doc, ctx):
     lines = clinic_lines(ctx)
-    if not lines:
-        return
     for section in doc.sections:
         for table in section.header.tables:
             for row in table.rows:
                 for cell in row.cells:
                     if CLINIC in cell.text:
+                        if not lines:
+                            for paragraph in cell.paragraphs:
+                                doc_text(paragraph, '')
+                            continue
                         compact = section.page_width.pt < 500
                         height = 0
                         for index, text in enumerate(lines):
@@ -174,6 +175,9 @@ def fill_clinic_header(doc, ctx):
                         section.top_margin = Pt(max(section.top_margin.pt, section.header_distance.pt+height+12))
 
 def generate_docx(kind, ctx):
+    if kind in ('rx','order','lab'):
+        from .s2c_forms import from_context, render
+        return render(from_context(kind,ctx), 'docx')
     from .d0 import diagnosis_text
     ctx={**ctx,'visit':{**ctx['visit'],'diagnosis':diagnosis_text(ctx['visit'])}}
     if kind not in TEMPLATE_BY_TYPE:raise ValueError('Biểu mẫu không hợp lệ')
@@ -358,6 +362,9 @@ def font_name():
 def pdf_safe(s):return xml_escape(clean(s)).replace('\n','<br/>')
 
 def generate_pdf(kind,ctx):
+    if kind in ('rx','order','lab'):
+        from .s2c_forms import from_context, render
+        return render(from_context(kind,ctx), 'pdf')
     from .d0 import diagnosis_text
     ctx={**ctx,'visit':{**ctx['visit'],'diagnosis':diagnosis_text(ctx['visit'])}}
     if kind not in TEMPLATE_BY_TYPE:raise ValueError('Biểu mẫu không hợp lệ')
@@ -368,7 +375,7 @@ def generate_pdf(kind,ctx):
                               ParagraphStyle(name='ClinicHeader', fontName=font, fontSize=8, leading=11)) if lines else None
     header_height = clinic_header.wrap(size[0]-154, size[1])[1] if clinic_header else 37
     buf=BytesIO();pdf=SimpleDocTemplate(buf,pagesize=size,rightMargin=39,leftMargin=39,topMargin=max(91,header_height+54),bottomMargin=54,
-                                      title=TITLES[kind]+' – BẢN NHÁP',author=(ctx.get('clinic_profile') or {}).get('name') or CLINIC)
+                                      title=TITLES[kind]+' – BẢN NHÁP',author=(ctx.get('clinic_profile') or {}).get('name') or '')
     styles=getSampleStyleSheet();styles.add(ParagraphStyle(name='VnBody',fontName=font,fontSize=9.2,leading=13,spaceAfter=7))
     styles.add(ParagraphStyle(name='VnTitle',fontName=font,fontSize=12 if size==A5 else 14,leading=19,spaceAfter=13,alignment=1,textColor=colors.HexColor('#087F7A')))
     styles.add(ParagraphStyle(name='VnHeading',fontName=font,fontSize=10,leading=14,spaceBefore=11,spaceAfter=7,textColor=colors.HexColor('#17665F')))
@@ -443,9 +450,6 @@ def generate_pdf(kind,ctx):
             c.drawImage(ImageReader(str(LOGO)),39,h-67,width=72,height=43,preserveAspectRatio=True,mask='auto')
         if clinic_header:
             clinic_header.drawOn(c, 115, h-30-header_height)
-        else:
-            c.setFont(font,9.2);c.setFillColor(colors.HexColor('#087F7A'));c.drawString(115,h-37,CLINIC)
-            c.setFont(font,7);c.setFillColor(colors.black);c.drawString(115,h-51,'60 đường Thái Bình, P. Nam Định, Ninh Bình')
         c.setStrokeColor(colors.HexColor('#087F7A'));c.line(39,h-max(73,header_height+40),w-39,h-max(73,header_height+40))
         c.setFont(font,7);c.setFillColor(colors.HexColor('#B42318'))
         c.drawCentredString(w/2,33,WATERMARK)

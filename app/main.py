@@ -90,6 +90,8 @@ def init_db():
         migrate_s2a(c)
         from .s2b_migration import migrate_s2b
         migrate_s2b(c)
+        from .s2c_migration import migrate_s2c
+        migrate_s2c(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -1008,10 +1010,16 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
                 raise HTTPException(403,'Không phải bác sĩ được phân công')
             if (o or {}).get('status')!='approved':
                 raise HTTPException(409,'Kết quả chưa được duyệt mô phỏng')
+        if kind in ('rx','order','lab'):
+            from .document_signatures import valid_signature
+            from .s2c_forms import from_context
+            context['signature'] = valid_signature(c, kind, object_id, models=[from_context(kind,context)])
         # Data is fetched solely from the authorized record, never client-submitted text.
         audit(c,u,'draft_form_exported','visit',v['id'],f'{kind}.{fmt}')
     try:
         payload=generate_pdf(kind,context) if fmt=='pdf' else generate_docx(kind,context)
+    except HTTPException:
+        raise
     except Exception as exc:
         # Do not expose server-local file paths to clients.
         raise HTTPException(503,'Không tạo được biểu mẫu, kiểm tra phông chữ hoặc tệp mẫu') from exc
@@ -1088,3 +1096,6 @@ install_result_history(app,db,principal,require,audit,visit_access)
 
 from .clinic_profile import install_clinic_profile
 install_clinic_profile(app, db, principal, require, audit, NOW)
+
+from .document_signatures import install_document_signatures
+install_document_signatures(app, db, principal, require, audit, NOW)

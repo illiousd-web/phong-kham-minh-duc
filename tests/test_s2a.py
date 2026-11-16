@@ -47,7 +47,9 @@ def test_profile_in_all_nine_docx_pdf_templates_and_both_export_routes():
             document = Document(BytesIO(generate_docx(kind, ctx)))
             headers = '\n'.join(cell.text for section in document.sections for table in section.header.tables for row in table.rows for cell in row.cells)
             text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(generate_pdf(kind, ctx))).pages)
-            for value in PROFILE.values():
+            # Page 33's prescription header omits the governing body; other frames retain it.
+            expected={k:v for k,v in PROFILE.items() if kind!='rx' or k!='governing_body'}
+            for value in expected.values():
                 assert value in headers and value in text, (kind, value)
             assert CLINIC not in headers and CLINIC not in text
             # Template assets remain unchanged; S2a inserts no signature image.

@@ -179,3 +179,5 @@ def migrate():
         migrate_s2a(PGConnection(con), postgres=True)
         from .s2b_migration import migrate_s2b
         migrate_s2b(PGConnection(con), postgres=True)
+        from .s2c_migration import migrate_s2c
+        migrate_s2c(PGConnection(con), postgres=True)

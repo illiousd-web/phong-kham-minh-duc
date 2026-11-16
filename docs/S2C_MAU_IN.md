@@ -1,0 +1,49 @@
+# S2c — Mẫu in và ký bằng ảnh chữ ký
+
+Nguồn: `docs/ui-mau/BoMau_33_ban_repo.pdf`, trang 29–33. Nhánh `feat/s2c-mau-in`, gốc `9647e1e`.
+
+- Trang 29: hóa sinh máu, MS 22/BV-02, hai cụm Xét nghiệm / Trị số bình thường / Kết quả.
+- Trang 30: huyết học, MS 17/BV-02, một cụm ba cột.
+- Trang 31: hóa sinh nước tiểu, MS 23/BV-02, một cụm ba cột.
+- Trang 32: phiếu chỉ định nội khoa, đánh dấu theo các chỉ định còn hiệu lực của lượt khám.
+- Trang 33: đơn thuốc A4, ô mã quốc gia để trống; không in mã nội bộ vào ô này.
+
+Đầu phiếu dùng `clinic_profile`. Để trống cài đặt thì đầu phiếu cũng trống. Logo in được dựng từ SVG công khai có sẵn trong `app/static`. Không có danh tính cơ sở, bệnh nhân hoặc ảnh chữ ký thật trong các tệp mới.
+
+Các mẫu chung, M5 và M6 dùng chung mô hình nội dung và bộ dựng Word/PDF. Giữ đủ thuốc, kết quả, ghi chú và nội dung điều chỉnh. Nội dung quá một trang A4 bị từ chối có thông báo, không cắt bỏ dòng. Trẻ dưới 72 tháng thiếu cân nặng không được in hoặc ký đơn; giữ nguyên các điều kiện lưu/khóa đơn hiện có.
+
+## Ký phiếu
+
+Bác sĩ kê đơn/chỉ định hoặc chính bác sĩ đã duyệt phiếu xét nghiệm bấm **Ký**, nhập lại mật khẩu. API chọn người ký và ảnh từ tài khoản đang xác thực; không nhận `signed_by` hay ảnh do trình duyệt gửi.
+
+Mỗi lần ký lưu người ký, thời điểm, SHA-256 của mô hình nội dung, tên tài khoản và bản sao ảnh chữ ký tại thời điểm ký. Mỗi lần ký có audit riêng. Thay ảnh chữ ký hiện hành không thay ảnh trên bản đã ký.
+
+Khi in, chữ ký chỉ hiện nếu đúng người chịu trách nhiệm, phiếu còn hiệu lực và mã băm khớp chính nội dung đưa vào bản in. Dưới ảnh ghi giờ Việt Nam: `Ký lúc HH:MM dd/mm/yyyy bởi tài khoản …`.
+
+Sửa hồ sơ nguồn làm các bản ký của lượt mất hiệu lực vĩnh viễn, kể cả sửa lại giá trị cũ. Cần ký lại. Phiếu M5 điều chỉnh vẫn đi qua duyệt như trước; bản mới không kế thừa chữ ký bản cũ.
+
+## Migration 017
+
+Bổ sung `document_signatures` và các trigger vô hiệu hóa bản ký khi dữ liệu nguồn thay đổi, cho cả SQLite và PostgreSQL. Nâng cấp lặp lại không thêm bản ký hoặc nạp tham chiếu. Quay lui chỉ được thực hiện khi chưa có lịch sử ký; nếu đã có, migration từ chối để giữ bằng chứng.
+
+Bộ chuẩn bị C5 được cập nhật thêm migration 017 và bảng ký rỗng; không thay phép đo, dữ liệu đo hoặc ngưỡng đạt. Không sửa `deploy/`, workflow, logic kê đơn, duyệt xét nghiệm, thuốc kiểm soát hoặc quyền hiện có ngoài hành vi ký.
+
+## Tệp tham chiếu tùy chọn
+
+`data/danh_muc_goc/chi_so_xet_nghiem_minh_duc.xlsx`: 78 chỉ số, 82 dòng tham chiếu, hai sheet `ChiSo` và `ThamChieu`, đúng cột của nút **Tải Excel mẫu rỗng** M5.
+
+Nguồn được đối chiếu bằng `pdftotext -f 29 -l 31 -layout`. Giữ nguyên con số và đơn vị; chỉ sửa lỗi gõ `mmo/L` thành `mmol/L` và quy ước `109/l` thành `10⁹/l`. Không sửa các giá trị đáng ngờ như C.peptide `0.37 – 1.47 mmol/L`, CRP `< 10 mg/dl`, pH `5.0`, tỷ trọng `1.010`. Nam/Nữ tách thành các dòng tham chiếu riêng.
+
+Mẫu M5 hiện chỉ có cận số bao gồm hai đầu. Để giữ đúng dấu `<` của PDF, dùng cột **Giá trị bình thường** với biểu thức nguyên văn, ví dụ `< 6.5`; bộ đánh giá số hỗ trợ riêng biểu thức này. Không đổi `<` thành `≤` hoặc tự trừ một lượng nhỏ khỏi cận. Các tham chiếu dạng chữ/ghi chú giữ nguyên nguồn; không suy diễn thêm khoảng y khoa.
+
+Quản trị mở **Danh mục chỉ số xét nghiệm**, chọn tệp, bấm **Xem trước**, kiểm tra rồi tích **Nạp sau khi đã xem trước đúng tệp** và nạp. Không tự nạp khi cài hoặc khởi động. Chỉ số dùng mã theo nhóm để phân biệt glucose máu với glucose nước tiểu; cần liên kết các chỉ số được chọn vào dịch vụ theo luồng M5 sẵn có.
+
+Có thể dựng lại tài sản bằng `python -m scripts.build_s2c_assets` trong môi trường kiểm thử có PyMuPDF. Script chỉ ghi các template, logo dẫn xuất và Excel công khai, không đụng CSDL.
+
+## Căn cứ cập nhật assertion cũ
+
+- `tests/m5_cases.py`: trang 29–31 có `Xét nghiệm / Trị số bình thường / Kết quả`, không còn năm cột cũ. Đơn vị nằm cùng tham chiếu; ↑/↓ nằm cùng kết quả.
+- `tests/m6_cases.py`: trang 33 đặt thông tin cơ sở ở đầu và ô mã quốc gia để trống; tiêu đề `ĐƠN THUỐC`, khối ký `BÁC SĨ KHÁM BỆNH`. Kiểm mã nội bộ trong JSON vẫn giữ nguyên.
+- `lan_tests/test_mot_ngay_kham.py`: tiêu đề trang 33 là `ĐƠN THUỐC`; vẫn kiểm đúng người bệnh và các phép đối chiếu nghiệp vụ cũ.
+
+- `tests/test_s2a.py`: đầu đơn ở trang 33 không có cơ quan chủ quản; vẫn kiểm tên, địa chỉ, điện thoại, email từ cài đặt và không còn tên cơ sở ghi cứng.

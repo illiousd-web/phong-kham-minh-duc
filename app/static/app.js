@@ -114,7 +114,10 @@ async function exportMedicalForm(kind,id,fmt='pdf'){
   setTimeout(()=>URL.revokeObjectURL(fileUrl),10000);
   notify('Đã tải biểu mẫu '+fmt.toUpperCase()+' từ cơ sở dữ liệu');
 }
-function formButtons(kind,id){return `<span class="printactions"><button type="button" class="ghost smallbtn" data-action="export-form" data-kind="${esc(kind)}" data-id="${Number(id)}" data-format="pdf">Tải PDF</button> <button type="button" class="ghost smallbtn" data-action="export-form" data-kind="${esc(kind)}" data-id="${Number(id)}" data-format="docx">Tải Word</button></span>`}
+function formButtons(kind,id){
+ const sign=cap('doctor')&&['rx','order','lab'].includes(kind)?` <button type="button" class="ghost smallbtn" data-s2c-sign="${kind}" data-id="${Number(id)}">Ký</button>`:'';
+ return `<span class="printactions"><button type="button" class="ghost smallbtn" data-action="export-form" data-kind="${esc(kind)}" data-id="${Number(id)}" data-format="pdf">Tải PDF</button> <button type="button" class="ghost smallbtn" data-action="export-form" data-kind="${esc(kind)}" data-id="${Number(id)}" data-format="docx">Tải Word</button>${sign}</span>`;
+}
 const taskStatus=s=>({pending:'Chưa thực hiện',done:'Đã thực hiện',cancelled:'Đã hủy'})[s]||vi(s);
 const OPEN=v=>!['completed','cancelled'].includes(v.status);
 const hidden=(name,value)=>`<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
@@ -1269,3 +1272,50 @@ document.addEventListener('input',e=>{const f=e.target.closest('[data-form=passw
 
 function placeDoctorExports(){const group=document.querySelector('.r3-exam-export-buttons'),dock=document.querySelector('.r3-exam-dock'),block=document.querySelector('.r3-exam-documents');if(!group||!dock||!block)return;const mobile=matchMedia('(max-width:900px)').matches;block.hidden=!mobile;(mobile?block:dock).append(group)}
 matchMedia('(max-width:900px)').addEventListener('change',placeDoctorExports);
+
+// S2c: the server selects both the responsible signer and the stored image.
+document.addEventListener('click',async event=>{
+ const button=event.target.closest('[data-s2c-sign]');
+ if(!button)return;
+ event.preventDefault();
+ event.stopImmediatePropagation();
+ try{
+  const dirty=document.querySelector('[data-m6-form="rx"][data-dirty="1"]');
+  if(dirty)throw Error('Lưu nháp các thay đổi trước khi ký');
+  const path='/document-signatures/'+button.dataset.s2cSign+'/'+button.dataset.id;
+  const state=await api(path);
+  const dialog=document.createElement('dialog');
+  dialog.className='s2c-sign-dialog';
+  dialog.innerHTML=`<h2>Ký phiếu bằng ảnh chữ ký</h2><p>Phiếu #${Number(button.dataset.id)} · ${esc(auth.user.name)}</p><p>Chỉnh sửa nội dung sau khi ký sẽ làm bản ký mất hiệu lực.</p><form data-s2c-sign-form><label class="field">Nhập lại mật khẩu<input type="password" name="signature_password" autocomplete="current-password" required maxlength="250"></label><p role="alert" data-s2c-sign-error></p><div class="multi-actions"><button type="submit" class="btn">Ký phiếu</button><button type="button" data-s2c-close>Đóng</button></div></form>`;
+  dialog.querySelector('[data-s2c-close]').addEventListener('click',()=>{
+   dialog.remove();
+  });
+  dialog.addEventListener('cancel',()=>{
+   dialog.remove();
+  });
+  dialog.querySelector('form').addEventListener('submit',async submit=>{
+   submit.preventDefault();
+   submit.stopImmediatePropagation();
+   const input=dialog.querySelector('input');
+   const confirmButton=dialog.querySelector('[type=submit]');
+   confirmButton.disabled=true;
+   try{
+    await api(path,{method:'POST',body:{password:input.value,content_hash:state.content_hash}});
+    dialog.remove();
+    await render();
+    notify('Đã ký phiếu bằng ảnh chữ ký của tài khoản');
+   }catch(error){
+    dialog.querySelector('[data-s2c-sign-error]').textContent=error.message;
+   }finally{
+    input.value='';
+    confirmButton.disabled=false;
+   }
+  });
+  document.body.append(dialog);
+  dialog.showModal();
+  dialog.querySelector('input').focus();
+ }catch(error){
+  notify(error.message,true);
+ }
+},true);
+Object.assign(LABEL,{document_signed:'Ký phiếu bằng ảnh chữ ký',document_sign_failed:'Xác nhận mật khẩu ký không thành công',clinical_rx:'Đơn thuốc',lab_report:'Phiếu xét nghiệm'});

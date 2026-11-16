@@ -585,10 +585,10 @@ def install_m6(app, db, principal, require, audit, visit_access, now):
         from .m6_forms import render
         with db('access') as c:
             rx = access(c, rid, u)
-            value = json.loads(rx['snapshot']) if rx['snapshot'] else payload(c, rx)
-            if rx['status'] == 'cancelled':
-                replacement = c.execute('SELECT id,local_code FROM clinical_prescriptions WHERE replaces_id=? AND locked_at IS NOT NULL ORDER BY id LIMIT 1', (rid,)).fetchone()
-                if replacement: value['replaced_by_code'] = replacement['local_code'] or '#'+str(replacement['id'])
+            from .document_signatures import clinical_print_data, valid_signature
+            value = clinical_print_data(c, rx)
+            from .s2c_forms import from_m6
+            value['signature'] = valid_signature(c, 'clinical_rx', rid, models=[from_m6(value,rx['status'])])
             content = render(value, rx['status'], fmt)
             audit(c, u, 'clinical_rx_printed', 'clinical_prescription', rid, fmt)
         mime = 'application/pdf' if fmt == 'pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
