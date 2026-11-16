@@ -41,7 +41,7 @@ jobs:
             sleep 20
           done
           python -m playwright install chromium
-      - name: Install matching PostgreSQL client from the signed official repository
+      - name: Install PostgreSQL client, fonts and LibreOffice Writer
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
@@ -52,7 +52,7 @@ jobs:
             sleep 20
           done
           for attempt in 1 2 3; do
-            if sudo apt-get install -y postgresql-client-17 fonts-dejavu-core; then break; fi
+            if sudo apt-get install -y postgresql-client-17 fonts-dejavu-core libreoffice-writer; then break; fi
             if [ "$attempt" -eq 3 ]; then exit 1; fi
             sleep 20
           done

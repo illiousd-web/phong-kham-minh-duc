@@ -232,6 +232,8 @@ def test_empty_migration_down_up_keeps_source_rows_and_never_imports_ranges(tmp_
     # Work on a disposable copy; never remove signing history from the source database.
     with db() as source, sqlite3.connect(tmp_path/'migration.sqlite3') as c:
         source.backup(c)
+        from app.s2c_migration_018 import migrate_018
+        migrate_018(c, down=True)
         c.execute('DELETE FROM document_signatures')
         c.commit()
         before = [tuple(r) for r in c.execute('SELECT * FROM visits ORDER BY id')]
@@ -245,3 +247,67 @@ def test_empty_migration_down_up_keeps_source_rows_and_never_imports_ranges(tmp_
         assert c.execute('SELECT COUNT(*) FROM lab_reference_ranges').fetchone()[0] == references
         assert c.execute('SELECT * FROM visits ORDER BY id').fetchall() == before
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
+
+
+def test_child_weight_uses_prescription_date_not_print_date(monkeypatch):
+    from datetime import datetime
+    import app.administrative as administrative
+    class PrintDate(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 2, 1, 12, tzinfo=tz)
+    monkeypatch.setattr(administrative, 'datetime', PrintDate)
+    from app.s2c_forms import prescription
+    from fastapi import HTTPException
+    person = dict(full_name='Trẻ giả lập', sex='Nam', date_of_birth='2020-01-01')
+    with pytest.raises(HTTPException, match='cân nặng'):
+        prescription(person, {}, 'Giả lập', [], '', 'Bác sĩ giả lập', '2025-12-01T12:00:00+07:00')
+    assert prescription(person, {}, 'Giả lập', [], '', 'Bác sĩ giả lập', '2026-02-01T12:00:00+07:00')['kind'] == 'rx'
+    value = dict(patient={**person, 'weight_kg': None, 'escort_name': '', 'contact_phone': ''},
+                 clinic_profile={}, encounter={'diagnosis':'Giả lập'}, prescriber={'name':'Giả lập'},
+                 advice=dict(lifestyle_advice='', follow_up_advice='', purchase_advice=''), items=[],
+                 created_at='2025-12-01T12:00:00+07:00', locked_at='2026-02-01T12:00:00+07:00')
+    with pytest.raises(HTTPException, match='cân nặng'):
+        from_m6(value, 'locked')
+
+
+def test_signature_scoped_invalidation_and_evidence_immutable(actors):
+    import sqlite3
+    clients, ids = actors
+    from tests.s2c_cases import check_scoped_signature
+    sid = check_scoped_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
+    with db(True) as c:
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute('UPDATE document_signatures SET username=? WHERE id=?', ('giả mạo', sid))
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute('UPDATE document_signatures SET username=username WHERE id=?', (sid,))
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute('UPDATE document_signatures SET invalidated=0 WHERE id=?', (sid,))
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute('DELETE FROM document_signatures WHERE id=?', (sid,))
+
+
+def test_018_upgrade_and_downgrade_restores_017_triggers(tmp_path):
+    import sqlite3
+    from app.s2c_migration_018 import migrate_018
+    with db() as source, sqlite3.connect(tmp_path/'upgrade.sqlite3') as c:
+        source.backup(c)
+        evidence = c.execute('SELECT id,invalidated,content_hash,image FROM document_signatures ORDER BY id').fetchall()
+        before = len(evidence)
+        migrate_018(c, down=True)
+        old = c.execute("SELECT sql FROM sqlite_master WHERE name='s2c_orders_insert'").fetchone()[0]
+        assert 'visit_id' in old
+        migrate_018(c)
+        assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 18
+        assert c.execute('SELECT COUNT(*) FROM document_signatures').fetchone()[0] == before
+        assert c.execute('SELECT id,invalidated,content_hash,image FROM document_signatures ORDER BY id').fetchall() == evidence
+        assert 'document_kind' in c.execute("SELECT sql FROM sqlite_master WHERE name='s2c_orders_insert'").fetchone()[0]
+        migrate_018(c, down=True)
+        assert c.execute("SELECT sql FROM sqlite_master WHERE name='s2c_orders_insert'").fetchone()[0] == old
+        migrate_018(c)
+
+
+def test_order_change_invalidates_only_its_own_documents(actors):
+    from tests.s2c_cases import check_order_invalidation_scope
+    clients, ids = actors
+    check_order_invalidation_scope(clients, ids, db, 1)

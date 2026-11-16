@@ -161,3 +161,61 @@ def check_signing(clients, ids, db, service, password, kind):
         closed=d.post(f'/api/visits/{vid}/complete',json={'version':current['version']})
         assert closed.status_code==200,closed.text
         assert image_count(d.get(url))==2
+
+
+def check_scoped_signature(clients, ids, db, service, password):
+    d, a = clients['doctor'], clients['admin']
+    image = signature_image()
+    assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('fake.png', image, 'image/png')}).status_code == 200
+    vid, rid, url, _ = document(clients, ids, db, service, 'rx')
+    endpoint = f'/api/document-signatures/rx/{rid}'
+    state = d.get(endpoint).json()
+    assert d.post(endpoint, json={'password': password, 'content_hash': state['content_hash']}).status_code == 200
+    suffix = secrets.token_hex(6)
+    test = a.post('/api/lab/catalog', json={'code': 'S2C-SCOPE-'+suffix, 'name': 'XN giả lập',
+        'group_name': 'hematology', 'unit': 'g/L', 'result_type': 'number', 'decimals': 1})
+    assert test.status_code == 201, test.text
+    tid = test.json()['id']
+    with db(True) as c:
+        c.execute('INSERT INTO service_catalog(name,price,code) VALUES(?,?,?)', ('XN giả lập '+suffix, 10000, 'S2C-SCOPE-'+suffix))
+        service_id = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute('INSERT INTO service_categories(service_id,category) VALUES(?,?)', (service_id, 'lab'))
+    assert a.put(f'/api/lab/services/{service_id}', json={'test_ids': [tid]}).status_code == 200
+    order = d.post('/api/orders', json={'visit_id': vid, 'category': 'lab', 'service_id': service_id, 'request_key': secrets.token_hex(16)})
+    assert order.status_code == 201, order.text
+    opened = clients['technician'].post(f"/api/lab/orders/{order.json()['id']}/reports")
+    assert opened.status_code == 201, opened.text
+    report = opened.json()['id']
+    for version, value in ((0, '1'), (1, '2')):
+        edited = clients['technician'].put(f'/api/lab/reports/{report}', json={
+            'version': version, 'sample_at': '2026-11-16T08:00:00+07:00', 'result_at': '2026-11-16T09:00:00+07:00',
+            'items': [{'test_id': tid, 'value': value}]})
+        assert edited.status_code == 200, edited.text
+    assert image_count(d.get(url)) == 2
+    with db(True) as c:
+        row = c.execute("SELECT id FROM document_signatures WHERE document_kind='rx' AND document_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
+        sid = row['id']
+        c.execute("UPDATE prescriptions SET instructions='Sửa đơn giả lập' WHERE id=?", (rid,))
+    assert image_count(d.get(url)) == 1
+    return sid
+
+
+def check_order_invalidation_scope(clients, ids, db, service):
+    vid = new_visit(clients, ids, service)
+    with db(True) as c:
+        pairs = []
+        for index in (1, 2):
+            c.execute("INSERT INTO orders(visit_id,category,name,requested_by,created_at) VALUES(?,'lab',?,?,'2026-01-01')", (vid, f'XN giả lập {index}', ids['doctor']))
+            oid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+            c.execute("INSERT INTO lab_reports(order_id,created_at) VALUES(?,'2026-01-01')", (oid,))
+            report = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+            ids_for_order = []
+            for kind, document_id in (('order', oid), ('lab', oid), ('lab_report', report)):
+                c.execute('INSERT INTO document_signatures(document_kind,document_id,visit_id,signed_by,signed_at,content_hash,image,username) VALUES(?,?,?,?,?,?,?,?)',
+                          (kind, document_id, vid, ids['doctor'], '2026-01-01', '0'*64, signature_image(), 'fake'))
+                ids_for_order.append(c.execute('SELECT id FROM document_signatures WHERE document_kind=? AND document_id=? AND visit_id=? ORDER BY id DESC LIMIT 1', (kind, document_id, vid)).fetchone()[0])
+            pairs.append((oid, ids_for_order))
+        c.execute("UPDATE orders SET name='Đã sửa' WHERE id=?", (pairs[0][0],))
+        for index, (_, records) in enumerate(pairs):
+            for sid in records:
+                assert c.execute('SELECT invalidated FROM document_signatures WHERE id=?', (sid,)).fetchone()[0] == (1 if index == 0 else 0)

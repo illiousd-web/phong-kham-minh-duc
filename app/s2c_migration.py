@@ -39,10 +39,15 @@ def update_condition(table, postgres):
 def migrate_s2c(c, postgres=False, *, down=False):
     applied = bool(c.execute('SELECT 1 FROM schema_migrations WHERE version=17').fetchone())
     if applied == (not down):
+        if not down:
+            from .s2c_migration_018 import migrate_018
+            migrate_018(c, postgres)
         return
     if down:
         if c.execute('SELECT 1 FROM document_signatures LIMIT 1').fetchone():
             raise ValueError('Chưa quay lui S2c: đã có bản ký; khôi phục bản sao lưu trước nâng cấp để giữ lịch sử ký.')
+        from .s2c_migration_018 import migrate_018
+        migrate_018(c, postgres, down=True)
         for table, (events, _) in CHANGES.items():
             for event in events.split(' OR '):
                 c.execute(f'DROP TRIGGER s2c_{table}_{event.lower()}'+(f' ON {table}' if postgres else ''))
@@ -72,3 +77,5 @@ def migrate_s2c(c, postgres=False, *, down=False):
             else:
                 c.execute(f'CREATE TRIGGER {name} AFTER {event} ON {table}{condition} BEGIN {update} END')
     c.execute('INSERT INTO schema_migrations(version) VALUES(17)')
+    from .s2c_migration_018 import migrate_018
+    migrate_018(c, postgres)

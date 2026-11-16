@@ -430,7 +430,7 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 13  # versions 5–17, including S2c
+                expected_state['tables']['schema_migrations'] += 14  # versions 5–18, including S2c
                 expected_state['tables']['clinic_profile'] = 1
                 expected_state['tables']['user_signatures'] = 0
                 expected_state['tables']['document_signatures'] = 0

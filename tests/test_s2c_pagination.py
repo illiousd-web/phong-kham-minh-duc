@@ -82,3 +82,13 @@ def test_long_prints_pdf_and_word_preserve_every_row_and_sign_only_last_page(kin
             for i in range(1, 61 if lab else (26 if kind=='rx' else 1)):
                 assert f'{"INDEX" if lab else "DRUG"}_{i:03d}' in text
             assert all(abs(p.mediabox.width-595.276) < 1 for p in PdfReader(BytesIO(pdf)).pages)
+
+
+def test_missing_libreoffice_requires_explicit_developer_opt_out(monkeypatch):
+    import tests.print_pagination_cases as cases
+    monkeypatch.setattr(cases.shutil, 'which', lambda _: None)
+    monkeypatch.delenv('S2C_ALLOW_MISSING_SOFFICE', raising=False)
+    with pytest.raises(AssertionError, match='LibreOffice'):
+        cases.word_as_pdf(b'fake')
+    monkeypatch.setenv('S2C_ALLOW_MISSING_SOFFICE', '1')
+    assert cases.word_as_pdf(b'fake') is None

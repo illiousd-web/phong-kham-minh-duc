@@ -262,6 +262,20 @@ def test_long_exports_preserve_tail_and_intake_hides_clinical(clients,visit,tmp_
     assert complaint not in text and 'HISTORY_TAIL_MARKER' not in text
 
 
+def test_single_paragraph_120_repetitions_preserves_tail(clients, visit):
+    from tests.print_pagination_cases import word_text
+    instructions = ('Lời dặn giả lập '*120)+' INSTRUCTION_TAIL_MARKER'
+    assert clients['doctor'].put(f'/api/visits/{visit}/clinical', json={
+        'version': 0, 'diagnosis': 'Chẩn đoán giả lập'}).status_code == 200
+    rid = create_rx(clients, visit, instructions=instructions)['id']
+    for fmt in ('pdf', 'docx'):
+        response = clients['doctor'].get(f'/api/forms/rx/{rid}?fmt={fmt}')
+        assert response.status_code == 200, response.text
+        text = (' '.join(page.extract_text() for page in PdfReader(BytesIO(response.content)).pages)
+                if fmt == 'pdf' else word_text(response.content))
+        assert 'INSTRUCTION_TAIL_MARKER' in text
+
+
 def test_parallel_same_idempotency_key_one_payment(clients,visit):
     key=secrets.token_hex(16)
     payload={'visit_id':visit,'amount':50000,'method':'cash','idempotency_key':key}

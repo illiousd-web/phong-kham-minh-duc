@@ -59,9 +59,12 @@ def time_text(value):
     return datetime.fromisoformat(value).astimezone(VN_TZ).strftime('%H:%M %d/%m/%Y')
 
 
-def check_weight(person, weight):
+def check_weight(person, weight, stamp=None):
     from .administrative import months_old
-    age = months_old(person.get('date_of_birth'))
+    when = datetime.fromisoformat(stamp.replace('Z', '+00:00')) if stamp else None
+    if when is not None and when.tzinfo is None:
+        when = when.replace(tzinfo=VN_TZ)
+    age = months_old(person.get('date_of_birth'), when)
     if age is not None and age < 72 and (weight is None or str(weight).strip() in ('', '0')):
         raise HTTPException(422, 'Cần nhập cân nặng cho trẻ dưới 72 tháng trước khi in hoặc ký đơn thuốc')
 
@@ -82,8 +85,8 @@ def age_text(patient):
     return (str(months)+' tháng' if months < 72 else str(months//12)) if months is not None else ''
 
 
-def prescription(person, profile, diagnosis, rows, advice, name, stamp, weight=None, escort='', phone='', status='draft', notice=''):
-    check_weight(person, weight)
+def prescription(person, profile, diagnosis, rows, advice, name, stamp, weight=None, escort='', phone='', status='draft', notice='', age_at=None):
+    check_weight(person, weight, age_at or stamp)
     m = base('rx', person, profile, diagnosis, stamp=stamp)
     m['fields'] = [('Họ tên', person['full_name'], 'Giới tính', person.get('sex', '')),
                    ('Số định danh / CCCD', person.get('document_number') or person.get('citizen_id') or '', 'Ngày sinh', fmt_date(person.get('date_of_birth'))),
@@ -113,7 +116,7 @@ def from_m6(p, status):
         notice = 'ĐƠN ĐÃ HỦY – ĐÃ ĐƯỢC THAY THẾ BỞI '+p['replaced_by_code']
     m = prescription(person, p.get('clinic_profile', {}), p['encounter']['diagnosis'], rows, advice,
                      p['prescriber']['name'], p['locked_at'] or p['created_at'], person['weight_kg'],
-                     person['escort_name'], person['contact_phone'], status, notice)
+                     person['escort_name'], person['contact_phone'], status, notice, age_at=p['created_at'])
     m['notes'].append('CHƯA LIÊN THÔNG')
     m['signature'] = p.get('signature')
     m['print_number'] = p.get('print_number') or p.get('local_code') or ''

@@ -22,11 +22,11 @@ Khi in, chữ ký chỉ hiện nếu đúng người chịu trách nhiệm, phi�
 
 Sửa các trường nội dung in của hồ sơ nguồn làm bản ký mất hiệu lực vĩnh viễn, kể cả sửa lại giá trị cũ. Chỉ tăng phiên bản, hoàn tất lượt hoặc chuyển trạng thái cấp thuốc không làm mất chữ ký khi nội dung in giữ nguyên. Cần ký lại. Phiếu M5 điều chỉnh vẫn đi qua duyệt như trước; bản mới không kế thừa chữ ký bản cũ.
 
-## Migration 017
+## Migration 017–018
 
-Bổ sung `document_signatures` và các trigger vô hiệu hóa bản ký khi dữ liệu nguồn thay đổi, cho cả SQLite và PostgreSQL. Nâng cấp lặp lại không thêm bản ký hoặc nạp tham chiếu. Quay lui chỉ được thực hiện khi chưa có lịch sử ký; nếu đã có, migration từ chối để giữ bằng chứng.
+Migration 017 bổ sung `document_signatures`. Migration 018 nâng cấp từ 017: vô hiệu theo đúng loại và mã tài liệu đối với đơn, chỉ định và kết quả; hồ sơ lượt khám, người bệnh và cơ sở vẫn áp dụng rộng. Bản ký chỉ được cập nhật `invalidated` một chiều 0 → 1; không được sửa cột khác hoặc xóa. Vai trò `clinic_app` chỉ được cập nhật cột `invalidated`. Cả SQLite và PostgreSQL đều có trigger bảo vệ. Quay lui riêng 018 bằng `scripts.manage rollback-s2c-018` với kết nối chủ sở hữu khôi phục trigger 017. Nâng cấp lặp lại không thêm bản ký hoặc nạp tham chiếu. Quay lui 017 chỉ được thực hiện khi chưa có lịch sử ký; nếu đã có, migration từ chối để giữ bằng chứng.
 
-Bộ chuẩn bị C5 được cập nhật thêm migration 017 và bảng ký rỗng; không thay phép đo, dữ liệu đo hoặc ngưỡng đạt. Không sửa `deploy/`, workflow, logic kê đơn, duyệt xét nghiệm, thuốc kiểm soát hoặc quyền hiện có ngoài hành vi ký.
+Bộ chuẩn bị C5 được cập nhật migration 018 và bảng ký rỗng; không thay phép đo, dữ liệu đo hoặc ngưỡng đạt. Quyền bảng ký và cài LibreOffice trong CI được cập nhật theo yêu cầu; không đổi logic kê đơn, duyệt xét nghiệm hoặc thuốc kiểm soát.
 
 ## Tệp tham chiếu tùy chọn
 
@@ -52,4 +52,4 @@ Có thể dựng lại tài sản bằng `python -m scripts.build_s2c_assets` tr
 - `tests/test_v041_fixes.py`: trang 29–31 chỉ có khối ký Trưởng khoa xét nghiệm; tên người thực hiện/duyệt vẫn được kiểm, và phiếu đã duyệt không có dấu nháp.
 - `lan_tests/test_lan.py`: theo yêu cầu sửa bắt buộc PR #40, bỏ nhánh chấp nhận 422 và kiểm một trang cho nội dung dài. Phiếu khám, xét nghiệm và đơn dài phải giữ đủ TAIL_MARKER ở PDF/Word, nhiều trang, ký ở cuối, mọi trang có `Trang x/y`. Word còn được chuyển sang PDF để kiểm bố cục khi có LibreOffice.
 - `tests/test_s2c_pagination.py`: ba nhóm 60 chỉ số, đơn 25 thuốc, lời dặn/ô cách dùng dài và chỉ định dài; kiểm mọi dòng, định danh lặp, tiêu đề bảng, ảnh ký chỉ trang cuối và cùng dòng nội dung cuối. `test_all_three_complete_lab_groups_and_five_medicines_fit_one_a4` vẫn kiểm một trang A4 cho nội dung thông thường, cả PDF trực tiếp và Word chuyển sang PDF.
-- `lan_tests/test_s2a.py`, `lan_tests/test_v050_migration.py`: nâng kiểm phiên bản chính xác từ 16 lên 17 theo migration S2c; giữ toàn bộ kiểm dữ liệu cũ/khôi phục và kiểm thêm bảng ký, tham chiếu đều rỗng sau nâng cấp.
+- `lan_tests/test_s2a.py`, `lan_tests/test_v050_migration.py`: nâng kiểm phiên bản chính xác từ 16 lên 18 theo migration S2c; giữ toàn bộ kiểm dữ liệu cũ/khôi phục và kiểm thêm bảng ký, tham chiếu đều rỗng sau nâng cấp.

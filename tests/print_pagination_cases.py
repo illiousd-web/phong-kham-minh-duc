@@ -2,6 +2,7 @@
 from io import BytesIO
 from pathlib import Path
 import shutil
+import os
 import subprocess
 from tempfile import TemporaryDirectory
 
@@ -63,7 +64,9 @@ def word_as_pdf(raw):
     """Exercise Word's native layout when LibreOffice is installed; XML always checked."""
     exe = shutil.which('soffice')
     if not exe:
-        return None
+        if os.environ.get('S2C_ALLOW_MISSING_SOFFICE') == '1':
+            return None
+        raise AssertionError('Cần LibreOffice để kiểm Word sang PDF; máy dev có thể đặt S2C_ALLOW_MISSING_SOFFICE=1')
     with TemporaryDirectory(prefix='s2c-word-layout-') as folder:
         root = Path(folder)
         source = root/'document.docx'
