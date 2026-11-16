@@ -121,9 +121,11 @@ def test_postgres_016_down_restores_full_schema_and_s1_definitions(monkeypatch):
         drop_db(name)
 
 
-def test_postgres_016_backup_restore_keeps_schema_acl_sequences_and_stock(tmp_path, monkeypatch):
+def test_postgres_016_backup_restore_keeps_schema_acl_sequences_and_stock(tmp_path, monkeypatch, capsys):
     import json
     import subprocess
+    import os
+    import shutil
     from scripts import backup_lan, install_db
     name, url = migration_database(monkeypatch)
     target_name = 's2b_restore_' + secrets.token_hex(5)
@@ -163,7 +165,37 @@ def test_postgres_016_backup_restore_keeps_schema_acl_sequences_and_stock(tmp_pa
         unpacked = tmp_path/'unpacked'
         unpacked.mkdir()
         backup_lan.unpack_verified(backup, key, unpacked)
-        listing = subprocess.run(['pg_restore', '--list', str(unpacked/'database.dump')], check=True, capture_output=True, text=True).stdout
+        # Use the actual bin directory selected by backup(), including Debian pg_wrapper.
+        import re
+        tool_env = backup_lan.pg_env(url)
+        dump_path = shutil.which(os.getenv('CLINIC_PG_DUMP', 'pg_dump'))
+        assert dump_path, 'Không tìm thấy pg_dump của luồng sao lưu'
+        dump_tool = Path(dump_path).absolute()
+        dump_version = subprocess.run([str(dump_tool), '--version'], env=tool_env, check=True,
+                                      capture_output=True, text=True).stdout
+        version = re.search(r'\d+\.\d+', dump_version).group()
+        if dump_tool.resolve().name == 'pg_wrapper':
+            dump_tool = Path('/usr/lib/postgresql')/version.split('.')[0]/'bin/pg_dump'
+        assert dump_tool.is_file(), f'Không tìm thấy pg_dump thực: {dump_tool}'
+        restore_tool = dump_tool.with_name('pg_restore' + dump_tool.suffix)
+        assert restore_tool.is_file(), f'Không có pg_restore cùng bộ với {dump_tool}'
+        restore_version = subprocess.run([str(restore_tool), '--version'], env=tool_env, check=True,
+                                         capture_output=True, text=True).stdout
+        assert re.search(r'\d+\.\d+', restore_version).group() == version, (dump_version, restore_version)
+        # Diagnose the old PATH invocation without using it to validate the archive.
+        path_restore = shutil.which('pg_restore')
+        if path_restore and Path(path_restore).resolve() != restore_tool.resolve():
+            probe = subprocess.run([path_restore, '--list', str(unpacked/'database.dump')],
+                                   env=tool_env, capture_output=True, text=True)
+            if probe.returncode:
+                with capsys.disabled():
+                    print(f'Chẩn đoán pg_restore trên PATH: exit {probe.returncode}; stderr={probe.stderr}', flush=True)
+        monkeypatch.setenv('CLINIC_PG_RESTORE', str(restore_tool))
+        try:
+            listing = subprocess.run([str(restore_tool), '--list', str(unpacked/'database.dump')],
+                                     env=tool_env, check=True, capture_output=True, text=True).stdout
+        except subprocess.CalledProcessError as error:
+            pytest.fail(f'pg_restore --list exit {error.returncode}: {error.stderr}')
         for relation in ('stock_receipts', 'stock_issues', 'stock_document_sequences', 'stock_receipts_id_seq', 'stock_issues_id_seq'):
             assert relation in listing
         backup_lan.restore(backup, key, target, tmp_path/'restored-files')

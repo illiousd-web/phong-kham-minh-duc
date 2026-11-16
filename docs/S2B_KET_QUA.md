@@ -43,7 +43,7 @@ Số dòng là tổng hiện tại; cột +/− so với `main df9aa8a`.
 | `lan_tests/test_browser_https.py` | 656 | 2 | 1 |
 | `lan_tests/test_pending_queues.py` | 340 | 10 | 3 |
 | `lan_tests/test_s2a.py` | 132 | 2 | 2 |
-| `lan_tests/test_s2b_migration.py` | 197 | 197 | 0 |
+| `lan_tests/test_s2b_migration.py` | 229 | 229 | 0 |
 | `lan_tests/test_s2b_stock.py` | 17 | 17 | 0 |
 | `lan_tests/test_v050_migration.py` | 148 | 2 | 2 |
 | `migrations/016_s2b_stock.sql` | 36 | 36 | 0 |
