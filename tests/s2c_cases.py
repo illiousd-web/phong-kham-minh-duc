@@ -38,6 +38,9 @@ def document(clients, ids, db, service, kind, dob='1990-01-01'):
         r = d.post('/api/prescriptions', json={'visit_id': vid, 'items':[{'medicine_id':mid,'quantity':2,'directions':'Liều giả lập'}], 'instructions': 'Lời dặn giả lập'})
         assert r.status_code == 201, r.text
         oid = r.json()['id']
+        # This fixture has no inventory; keep it out of later pharmacy catalog choices.
+        with db(True) as c:
+            c.execute('UPDATE medicines SET active=0 WHERE id=?',(mid,))
         return vid, oid, f'/api/forms/rx/{oid}', f'/api/forms/rx/{oid}?fmt=docx'
     if kind == 'clinical_rx':
         r = d.post('/api/clinical-prescriptions', json={'visit_id': vid, 'items': [

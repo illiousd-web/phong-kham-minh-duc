@@ -10,6 +10,7 @@ Nhánh `feat/s2c-mau-in`, tạo từ `9647e1e`. Mẫu PDF trang 29–33; đầu 
 - Sau chỉnh độ rộng nhãn và đầu đơn trang 33: 4 bài bố cục và 20 bài S2a/S2c đạt. PDF trực tiếp và Word chuyển sang PDF với ảnh ký: các mẫu đã kiểm đều một trang A4.
 - Rà thêm ô chỉ định: kiểm tra không khớp từ con (fasting/culture) và không đánh dấu TMH cho nội soi dạ dày; bài kiểm riêng đạt.
 - Bổ sung hồi quy giữ chữ ký khi hoàn tất lượt/cấp thuốc: 15 bài S2c và 19 bài PostgreSQL/Chromium/một ngày khám đạt. Ba bài in cũ do CI phát hiện đã được đối chiếu trang 29–33; chạy lại cùng S2c: 18 bài đạt, vẫn giữ kiểm địa chỉ nguyên văn và liều `0,75 viên`.
+- Cô lập thuốc giả lập không có tồn của fixture S2c; chạy S2c trước bài cấp thuốc cũ: 16 bài đạt, không sửa nghiệp vụ kho.
 - Ruff, ESLint, `git diff --check`, checksum tài sản: đạt. Kết quả năm job CI được cập nhật trên PR; chưa kiểm máy in thật/Word tại cơ sở.
 
 Chi tiết vận hành và căn cứ cập nhật assertion: [S2C_MAU_IN.md](S2C_MAU_IN.md).
@@ -45,7 +46,7 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `app/templates/08_Don_thuoc_A4.docx` | Nhị phân | - / - |
 | `app/templates/08_Don_thuoc_ngoai_tru_A5.docx` | 0 (xóa) | - / - |
 | `data/danh_muc_goc/chi_so_xet_nghiem_minh_duc.xlsx` | ChiSo: 78; ThamChieu: 82 (không tính đầu cột) | - / - |
-| `docs/S2C_BAO_CAO.md` | 66 | 62 / 0 |
+| `docs/S2C_BAO_CAO.md` | 67 | 67 / 0 |
 | `docs/S2C_MAU_IN.md` | 52 | 52 / 0 |
 | `docs/assets-v031.sha256` | 35 | 13 / 9 |
 | `lan_tests/test_mot_ngay_kham.py` | 755 | 2 / 2 |
@@ -57,7 +58,7 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `tests/administrative_revision_cases.py` | 123 | 11 / 8 |
 | `tests/m5_cases.py` | 131 | 2 / 1 |
 | `tests/m6_cases.py` | 157 | 10 / 5 |
-| `tests/s2c_cases.py` | 160 | 160 / 0 |
+| `tests/s2c_cases.py` | 163 | 163 / 0 |
 | `tests/test_s1_prescription.py` | 62 | 2 / 1 |
 | `tests/test_s2a.py` | 116 | 3 / 1 |
 | `tests/test_s2c.py` | 242 | 242 / 0 |
