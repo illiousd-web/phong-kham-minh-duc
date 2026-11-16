@@ -95,9 +95,14 @@ def test_receipt_pdf_amount_and_scope():
 
 def test_fefo_stock_issue_is_atomic_and_blocks_controlled():
     pharmacy=token('duoc')
-    stock=client.get('/api/stock',headers=pharmacy).json()
-    med=next(x for x in stock if not x['controlled'] and x['quantity']>=120)
-    med_id=next(x for x in client.get('/api/medicines',headers=pharmacy).json() if x['name']==med['name'])['id']
+    import secrets
+    tag=secrets.token_hex(8)
+    created=client.post('/api/catalog/medicines',headers=token('quanly'),json={'name':'Thuốc FEFO giả lập '+tag,'base_unit':'viên'})
+    assert created.status_code==201,created.text
+    med={'id':created.json()['id'],'name':'Thuốc FEFO giả lập '+tag}
+    med_id=med['id']
+    receipt=client.post('/api/stock/receipts',headers=pharmacy,json={'medicine_id':med_id,'lot_number':'FEFO-'+tag,'expiry_date':'2099-12-31','quantity':200})
+    assert receipt.status_code==201,receipt.text
     pre=client.get('/api/stock',headers=pharmacy).json()
     resp=client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':med_id,'quantity':130,'purpose':'Sử dụng mô phỏng không điều trị'})
     assert resp.status_code==201,resp.text
