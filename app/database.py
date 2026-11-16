@@ -44,8 +44,7 @@ class PGConnection:
         self.operational = operational
 
     def execute(self, sql, params=()):
-        invalidate_signature = sql == 'UPDATE document_signatures SET invalidated=1 WHERE id=? AND invalidated=0'
-        if self.operational and not invalidate_signature and not re.match(r'\s*(SELECT\b|(?:INSERT INTO|UPDATE|DELETE FROM)\s+(?:sessions|login_attempts|audit_log)\b)', sql, re.I):
+        if self.operational and not re.match(r'\s*(SELECT\b|(?:INSERT INTO|UPDATE|DELETE FROM)\s+(?:sessions|login_attempts|audit_log)\b)', sql, re.I):
             raise RuntimeError('Giao dịch truy cập không được sửa dữ liệu nghiệp vụ')
         if sql == 'SELECT last_insert_rowid()':
             return SavedID(self.last_id)

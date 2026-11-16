@@ -2,7 +2,6 @@
 import hashlib
 import hmac
 import json
-import sqlite3
 from typing import Literal
 
 from fastapi import Depends, HTTPException
@@ -91,15 +90,6 @@ def valid_signature(c, kind, object_id, document=None, *, models=None):
     if not s or s['invalidated']:
         return None
     if not hmac.compare_digest(s['content_hash'], d['content_hash']):
-        connection = getattr(c, 'connection', None)
-        readonly = (connection.execute('SHOW transaction_read_only').fetchone()[0] == 'on' if connection is not None
-                    else bool(c.execute('PRAGMA query_only').fetchone()[0]))
-        if not readonly:
-            try:
-                c.execute('UPDATE document_signatures SET invalidated=1 WHERE id=? AND invalidated=0', (s['id'],))
-            except sqlite3.OperationalError as exc:
-                if getattr(exc, 'sqlite_errorcode', 0) & 255 != sqlite3.SQLITE_READONLY:
-                    raise
         return None
     if not d['allowed'] or s['signed_by'] != d['actor']:
         return None

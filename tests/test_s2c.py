@@ -326,12 +326,6 @@ def test_permanent_invalidation_api(actors):
     check_permanent_invalidation(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
 
 
-def test_mismatched_hash_invalidates_in_access_transaction(actors):
-    from tests.s2c_cases import check_mismatched_hash_invalidates_in_access_transaction
-    clients, ids = actors
-    check_mismatched_hash_invalidates_in_access_transaction(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
-
-
 @pytest.mark.parametrize('field', ['printed_name', 'printed_title', 'full_name'])
 def test_printed_user_fields_invalidate_permanently(actors, field):
     from tests.s2c_cases import check_user_field_invalidation
@@ -368,7 +362,7 @@ def test_018_rollback_refuses_real_signature(actors):
     check_rollback_refuses_existing_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
 
 
-def test_other_user_printed_name_invalidates_signature(actors):
+def test_other_user_printed_name_preserves_signature(actors):
     from tests.s2c_cases import check_user_field_invalidation
     clients, ids = actors
     check_user_field_invalidation(clients, ids, db, 1, os.environ['DEMO_PASSWORD'], 'printed_title', 'doctor2')
@@ -378,3 +372,16 @@ def test_order_delete_invalidates_real_signature(actors):
     from tests.s2c_cases import check_order_delete_does_not_revive_signature
     clients, ids = actors
     check_order_delete_does_not_revive_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
+
+
+def test_stale_read_preserves_new_signature(actors):
+    from tests.s2c_cases import check_stale_read_cannot_invalidate_new_signature
+    clients, ids = actors
+    check_stale_read_cannot_invalidate_new_signature(clients, ids, db, 1, os.environ['DEMO_PASSWORD'])
+
+
+@pytest.mark.parametrize('kind', ['lab', 'lab_report'])
+def test_lab_performer_name_invalidates_lab_not_rx(actors, kind):
+    from tests.s2c_cases import check_lab_performer_name_scope
+    clients, ids = actors
+    check_lab_performer_name_scope(clients, ids, db, 1, os.environ['DEMO_PASSWORD'], kind)

@@ -64,11 +64,24 @@ def migrate_018(c, postgres=False, *, down=False):
     replace_triggers(c, postgres, True)
     different = 'IS DISTINCT FROM' if postgres else 'IS NOT'
     condition = ' OR '.join('OLD.'+key+' '+different+' NEW.'+key for key in ('printed_name', 'printed_title', 'full_name'))
+    # Names printed by from_context/main: visit doctor, result_by, approved_by.
+    # M5 additionally prints lab_reports.performed_by/approved_by; M6 uses its prescriber.
+    users_where = """(signed_by=OLD.id
+        OR (document_kind IN ('order','rx') AND visit_id IN (SELECT id FROM visits WHERE doctor_id=OLD.id))
+        OR (document_kind='clinical_rx' AND document_id IN (SELECT id FROM clinical_prescriptions WHERE doctor_id=OLD.id))
+        OR (document_kind='lab' AND document_id IN
+            (SELECT o.id FROM orders o JOIN visits v ON v.id=o.visit_id
+             WHERE v.doctor_id=OLD.id OR o.result_by=OLD.id OR o.approved_by=OLD.id))
+        OR (document_kind='lab_report' AND document_id IN
+            (SELECT r.id FROM lab_reports r JOIN orders o ON o.id=r.order_id JOIN visits v ON v.id=o.visit_id
+             WHERE v.doctor_id=OLD.id OR o.result_by=OLD.id OR o.approved_by=OLD.id
+                OR r.performed_by=OLD.id OR r.approved_by=OLD.id)))"""
+    invalidate_users = 'UPDATE document_signatures SET invalidated=1 WHERE invalidated=0 AND '+users_where+';'
     if postgres:
-        c.connection.execute("CREATE FUNCTION s2c_users_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE document_signatures SET invalidated=1 WHERE invalidated=0; RETURN NEW; END $$;")
+        c.connection.execute('CREATE FUNCTION s2c_users_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN '+invalidate_users+' RETURN NEW; END $$;')
         c.execute('CREATE TRIGGER s2c_users_update AFTER UPDATE ON users FOR EACH ROW WHEN ('+condition+') EXECUTE FUNCTION s2c_users_update()')
     else:
-        c.execute('CREATE TRIGGER s2c_users_update AFTER UPDATE ON users WHEN ('+condition+') BEGIN UPDATE document_signatures SET invalidated=1 WHERE invalidated=0; END')
+        c.execute('CREATE TRIGGER s2c_users_update AFTER UPDATE ON users WHEN ('+condition+') BEGIN '+invalidate_users+' END')
     columns = ', '.join(COLUMNS)
     if postgres:
         c.connection.execute("""CREATE FUNCTION s2c_signature_guard() RETURNS trigger LANGUAGE plpgsql AS $$

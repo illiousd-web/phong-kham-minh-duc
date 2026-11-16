@@ -13,9 +13,7 @@ def test_s2c_signatures_with_postgres(clients, kind):
 def test_scoped_and_immutable_signature_as_clinic_app(clients):
     import psycopg
     from pathlib import Path
-    from app.database import PGConnection, record_factory
-    from app.document_signatures import load_document, valid_signature
-    from copy import deepcopy
+    from app.database import record_factory
     from .conftest import URL
     from tests.s2c_cases import check_scoped_signature
     sid = check_scoped_signature(clients, IDS, db, SERVICE, PASSWORDS['doctor'])
@@ -38,11 +36,6 @@ def test_scoped_and_immutable_signature_as_clinic_app(clients):
             c.execute(grants)
             c.execute('SET ROLE clinic_app')
             assert c.execute('UPDATE document_signatures SET invalidated=1 WHERE id=%s RETURNING invalidated', (clone,)).fetchone()[0] == 1
-            access = PGConnection(c, operational=True)
-            model = deepcopy(load_document(access, 'rx', rid)['models'][0])
-            model['diagnosis'] += ' thay đổi giả lập'
-            assert valid_signature(access, 'rx', rid, models=[model]) is None
-            assert c.execute("SELECT invalidated FROM document_signatures WHERE document_kind='rx' AND document_id=%s ORDER BY id DESC LIMIT 1", (rid,)).fetchone()[0] == 1
             for sql in ("UPDATE document_signatures SET username='gia mao' WHERE id=%s",
                         "UPDATE document_signatures SET username=username WHERE id=%s",
                         'DELETE FROM document_signatures WHERE id=%s',
@@ -92,11 +85,6 @@ def test_postgres_permanent_invalidation_api(clients):
     check_permanent_invalidation(clients, IDS, db, SERVICE, PASSWORDS['doctor'])
 
 
-def test_postgres_mismatched_hash_invalidates_in_access_transaction(clients):
-    from tests.s2c_cases import check_mismatched_hash_invalidates_in_access_transaction
-    check_mismatched_hash_invalidates_in_access_transaction(clients, IDS, db, SERVICE, PASSWORDS['doctor'])
-
-
 @pytest.mark.parametrize('field', ['printed_name', 'printed_title', 'full_name'])
 def test_postgres_printed_user_fields_invalidate_permanently(clients, field):
     from tests.s2c_cases import check_user_field_invalidation
@@ -115,7 +103,7 @@ def test_postgres_018_rollback_and_cli_refuse_real_signature(clients, monkeypatc
         assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 18
 
 
-def test_postgres_other_user_printed_name_invalidates_signature(clients):
+def test_postgres_other_user_printed_name_preserves_signature(clients):
     from tests.s2c_cases import check_user_field_invalidation
     check_user_field_invalidation(clients, IDS, db, SERVICE, PASSWORDS['doctor'], 'printed_title', 'doctor2')
 
@@ -123,3 +111,14 @@ def test_postgres_other_user_printed_name_invalidates_signature(clients):
 def test_postgres_order_delete_invalidates_real_signature(clients):
     from tests.s2c_cases import check_order_delete_does_not_revive_signature
     check_order_delete_does_not_revive_signature(clients, IDS, db, SERVICE, PASSWORDS['doctor'])
+
+
+def test_postgres_stale_read_preserves_new_signature(clients):
+    from tests.s2c_cases import check_stale_read_cannot_invalidate_new_signature
+    check_stale_read_cannot_invalidate_new_signature(clients, IDS, db, SERVICE, PASSWORDS['doctor'])
+
+
+@pytest.mark.parametrize('kind', ['lab', 'lab_report'])
+def test_postgres_lab_performer_name_invalidates_lab_not_rx(clients, kind):
+    from tests.s2c_cases import check_lab_performer_name_scope
+    check_lab_performer_name_scope(clients, IDS, db, SERVICE, PASSWORDS['doctor'], kind)
