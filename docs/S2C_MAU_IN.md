@@ -20,7 +20,7 @@ Mỗi lần ký lưu người ký, thời điểm, SHA-256 của mô hình nội
 
 Khi in, chữ ký chỉ hiện nếu đúng người chịu trách nhiệm, phiếu còn hiệu lực và mã băm khớp chính nội dung đưa vào bản in. Dưới ảnh ghi giờ Việt Nam: `Ký lúc HH:MM dd/mm/yyyy bởi tài khoản …`.
 
-Sửa hồ sơ nguồn làm các bản ký của lượt mất hiệu lực vĩnh viễn, kể cả sửa lại giá trị cũ. Cần ký lại. Phiếu M5 điều chỉnh vẫn đi qua duyệt như trước; bản mới không kế thừa chữ ký bản cũ.
+Sửa các trường nội dung in của hồ sơ nguồn làm bản ký mất hiệu lực vĩnh viễn, kể cả sửa lại giá trị cũ. Chỉ tăng phiên bản, hoàn tất lượt hoặc chuyển trạng thái cấp thuốc không làm mất chữ ký khi nội dung in giữ nguyên. Cần ký lại. Phiếu M5 điều chỉnh vẫn đi qua duyệt như trước; bản mới không kế thừa chữ ký bản cũ.
 
 ## Migration 017
 
@@ -47,3 +47,6 @@ Có thể dựng lại tài sản bằng `python -m scripts.build_s2c_assets` tr
 - `lan_tests/test_mot_ngay_kham.py`: tiêu đề trang 33 là `ĐƠN THUỐC`; vẫn kiểm đúng người bệnh và các phép đối chiếu nghiệp vụ cũ.
 
 - `tests/test_s2a.py`: đầu đơn ở trang 33 không có cơ quan chủ quản; vẫn kiểm tên, địa chỉ, điện thoại, email từ cài đặt và không còn tên cơ sở ghi cứng.
+- `tests/administrative_revision_cases.py`: trang 33 đặt địa chỉ trong bảng người bệnh, trước chẩn đoán/thuốc; vẫn kiểm nguyên địa chỉ và vị trí, không còn yêu cầu dòng nghề nghiệp vốn không nằm trong mẫu đơn mới.
+- `tests/test_s1_prescription.py`: đọc cả đoạn và bảng theo trang 33; giữ nguyên assertion liều `0,75 viên`.
+- `tests/test_v041_fixes.py`: trang 29–31 chỉ có khối ký Trưởng khoa xét nghiệm; tên người thực hiện/duyệt vẫn được kiểm, và phiếu đã duyệt không có dấu nháp.

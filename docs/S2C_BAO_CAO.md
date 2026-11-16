@@ -9,7 +9,8 @@ Nhánh `feat/s2c-mau-in`, tạo từ `9647e1e`. Mẫu PDF trang 29–33; đầu 
 - **22 bài mới**: 15 Python + 5 PostgreSQL + 2 Chromium; kiểm một trang A4, đúng ảnh/người ký, mật khẩu, audit, sửa mất hiệu lực, trẻ thiếu cân nặng, ↑/↓ đậm và Excel.
 - Sau chỉnh độ rộng nhãn và đầu đơn trang 33: 4 bài bố cục và 20 bài S2a/S2c đạt. PDF trực tiếp và Word chuyển sang PDF với ảnh ký: các mẫu đã kiểm đều một trang A4.
 - Rà thêm ô chỉ định: kiểm tra không khớp từ con (fasting/culture) và không đánh dấu TMH cho nội soi dạ dày; bài kiểm riêng đạt.
-- Ruff, ESLint, `git diff --check`, checksum tài sản: đạt. Năm job CI còn chờ kết quả trên PR; chưa kiểm máy in thật/Word trên Windows.
+- Bổ sung hồi quy giữ chữ ký khi hoàn tất lượt/cấp thuốc: 15 bài S2c và 19 bài PostgreSQL/Chromium/một ngày khám đạt. Ba bài in cũ do CI phát hiện đã được đối chiếu trang 29–33; chạy lại cùng S2c: 18 bài đạt, vẫn giữ kiểm địa chỉ nguyên văn và liều `0,75 viên`.
+- Ruff, ESLint, `git diff --check`, checksum tài sản: đạt. Kết quả năm job CI được cập nhật trên PR; chưa kiểm máy in thật/Word tại cơ sở.
 
 Chi tiết vận hành và căn cứ cập nhật assertion: [S2C_MAU_IN.md](S2C_MAU_IN.md).
 
@@ -27,8 +28,8 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `app/m6.py` | 601 | 4 / 4 |
 | `app/m6_forms.py` | 6 | 3 / 81 |
 | `app/main.py` | 1101 | 11 / 0 |
-| `app/s2c_forms.py` | 471 | 471 / 0 |
-| `app/s2c_migration.py` | 53 | 53 / 0 |
+| `app/s2c_forms.py` | 472 | 472 / 0 |
+| `app/s2c_migration.py` | 74 | 74 / 0 |
 | `app/static/MinhDuc_logo_in.png` | Nhị phân | - / - |
 | `app/static/app.js` | 1321 | 51 / 1 |
 | `app/static/m5.js` | 93 | 1 / 1 |
@@ -44,8 +45,8 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `app/templates/08_Don_thuoc_A4.docx` | Nhị phân | - / - |
 | `app/templates/08_Don_thuoc_ngoai_tru_A5.docx` | 0 (xóa) | - / - |
 | `data/danh_muc_goc/chi_so_xet_nghiem_minh_duc.xlsx` | ChiSo: 78; ThamChieu: 82 (không tính đầu cột) | - / - |
-| `docs/S2C_BAO_CAO.md` | 62 | 61 / 0 |
-| `docs/S2C_MAU_IN.md` | 49 | 49 / 0 |
+| `docs/S2C_BAO_CAO.md` | 66 | 62 / 0 |
+| `docs/S2C_MAU_IN.md` | 52 | 52 / 0 |
 | `docs/assets-v031.sha256` | 35 | 13 / 9 |
 | `lan_tests/test_mot_ngay_kham.py` | 755 | 2 / 2 |
 | `lan_tests/test_s2c.py` | 10 | 10 / 0 |
@@ -53,10 +54,13 @@ Số dòng sau sửa; tệp đã xóa ghi 0. `+/-` là số dòng thay đổi so
 | `migrations/017_s2c_signatures.sql` | 14 | 14 / 0 |
 | `scripts/build_s2c_assets.py` | 198 | 198 / 0 |
 | `scripts/do_hieu_nang.py` | 486 | 4 / 1 |
+| `tests/administrative_revision_cases.py` | 123 | 11 / 8 |
 | `tests/m5_cases.py` | 131 | 2 / 1 |
 | `tests/m6_cases.py` | 157 | 10 / 5 |
-| `tests/s2c_cases.py` | 145 | 145 / 0 |
+| `tests/s2c_cases.py` | 160 | 160 / 0 |
+| `tests/test_s1_prescription.py` | 62 | 2 / 1 |
 | `tests/test_s2a.py` | 116 | 3 / 1 |
 | `tests/test_s2c.py` | 242 | 242 / 0 |
+| `tests/test_v041_fixes.py` | 106 | 3 / 1 |
 
 Chờ S2d.

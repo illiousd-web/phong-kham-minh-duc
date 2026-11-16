@@ -47,7 +47,8 @@ def test_positive_comma_quantity_and_printed_dose_unit(prescription):
         assert response.status_code==200,response.text
         if fmt=='docx':
             document=Document(io.BytesIO(response.content))
-            text=' '.join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+            # Page 33 prints medicines as numbered paragraphs instead of table rows.
+            text=' '.join(p.text for p in document.paragraphs)+' '+' '.join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
         else:
             with pymupdf.open(stream=response.content,filetype='pdf') as document:text=' '.join(page.get_text() for page in document)
         assert '0,75 viên' in text

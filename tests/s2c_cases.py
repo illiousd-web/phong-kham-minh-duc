@@ -125,6 +125,10 @@ def check_signing(clients, ids, db, service, password, kind):
         evidence = c.execute('SELECT * FROM document_signatures WHERE document_kind=? AND document_id=? ORDER BY id DESC LIMIT 1', (kind, oid)).fetchone()
         assert evidence['signed_by'] == ids['doctor'] and len(evidence['content_hash']) == 64
         assert c.execute("SELECT 1 FROM audit_log WHERE event='document_signed' AND object_type=? AND object_id=?", (kind, oid)).fetchone()
+    # Operational versions and statuses do not alter print content or revoke a signature.
+    with db(True) as c:
+        c.execute('UPDATE visits SET version=version+1 WHERE id=?',(vid,))
+    assert image_count(d.get(url))==2
     # Replacing an account's current signature never substitutes it into an earlier signed form.
     assert a.put(f'/api/users/{ids["doctor"]}/signature', files={'file': ('new.png', other, 'image/png')}).status_code == 200
     with ZipFile(BytesIO(d.get(word_url).content)) as archive:
@@ -143,3 +147,14 @@ def check_signing(clients, ids, db, service, password, kind):
     assert image_count(d.get(url)) == 2
     with db() as c:
         assert c.execute('SELECT COUNT(*) FROM document_signatures WHERE document_kind=? AND document_id=?', (kind, oid)).fetchone()[0] == 2
+
+    if kind in ('rx','clinical_rx'):
+        if kind=='rx':
+            # Mirror the existing warehouse workflow status without mutating stock or money.
+            with db(True) as c:
+                c.execute("UPDATE prescriptions SET status='dispensed' WHERE id=?",(oid,))
+            assert image_count(d.get(url))==2
+        current=d.get(f'/api/visits/{vid}').json()
+        closed=d.post(f'/api/visits/{vid}/complete',json={'version':current['version']})
+        assert closed.status_code==200,closed.text
+        assert image_count(d.get(url))==2

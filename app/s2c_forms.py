@@ -126,7 +126,7 @@ def from_context(kind, ctx):
         m = prescription(p, ctx.get('clinic_profile', {}), diagnosis, rx_rows(ctx),
                          (r.get('instructions') or '')+'\nHẹn tái khám: '+fmt_date(r.get('follow_up') or v.get('follow_up')),
                          ctx['doctor_name'], r['created_at'], v.get('weight_kg'), v.get('escort_name'),
-                         v.get('escort_phone') or p.get('phone'), r.get('status', 'draft'), 'NHÁP – CHƯA CÓ GIÁ TRỊ')
+                         v.get('escort_phone') or p.get('phone'), 'draft', 'NHÁP – CHƯA CÓ GIÁ TRỊ')
         m['notes'].append('CHƯA LIÊN THÔNG')
     elif kind == 'order':
         o = ctx['order']
@@ -135,7 +135,7 @@ def from_context(kind, ctx):
                        ('Địa chỉ', format_patient_address(p), 'Nghề nghiệp', p.get('occupation', '')),
                        ('Số BHYT', p.get('health_insurance_number', ''), 'Mã NB', p.get('code', '')),
                        ('Lý do khám', v.get('chief_complaint', ''), '', ''), ('Chẩn đoán sơ bộ', diagnosis, '', '')]
-        m['orders'] = [dict(x) for x in (ctx.get('orders') or [o]) if x['status'] != 'cancelled']
+        m['orders'] = [{key:x[key] for key in ('name','category')} for x in (ctx.get('orders') or [o]) if x['status'] != 'cancelled']
         m.update(signer_title='BÁC SĨ CHỈ ĐỊNH', signer_name=ctx['doctor_name'])
         m['notes'] = ['Phiếu chỉ định nội bộ — Phụ lục XXIX Thông tư 32/2023 không có mẫu riêng cho phiếu chỉ định ngoại trú [CẦN ĐỐI CHIẾU].']
     else:
@@ -385,8 +385,9 @@ def word(m):
         for i, value in enumerate((a, b, c, d)):
             cells[i].text = str(value or '')
         if not c:
-            cells[1].merge(cells[3])
-        for i in (0, 2):
+            merged=cells[1].merge(cells[3])
+            merged.text=str(b or '')
+        for i in ((0,2) if c else (0,)):
             for run in cells[i].paragraphs[0].runs:
                 run.bold = True
     if m['kind'] == 'rx':

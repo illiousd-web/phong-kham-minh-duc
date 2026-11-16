@@ -16,6 +16,26 @@ CHANGES = {
 }
 
 
+PRINTED_FIELDS = {
+    'visits': ('doctor_id','created_at','chief_complaint','diagnosis','diagnosis_codes','primary_icd10',
+               'follow_up','weight_kg','escort_name','escort_phone'),
+    'patients': ('full_name','code','date_of_birth','sex','phone','document_number','citizen_id',
+                 'address','address_detail','province','commune','occupation'),
+    'prescriptions': ('visit_id','doctor_id','drug_lines','instructions','follow_up','created_at'),
+}
+
+
+def update_condition(table, postgres):
+    fields=PRINTED_FIELDS.get(table)
+    if not fields:
+        return ''
+    different='IS DISTINCT FROM' if postgres else 'IS NOT'
+    terms=[f'OLD.{key} {different} NEW.{key}' for key in fields]
+    if table=='prescriptions':
+        terms.append(f"(OLD.status {different} NEW.status AND (OLD.status='cancelled' OR NEW.status='cancelled'))")
+    return ' WHEN ('+' OR '.join(terms)+')'
+
+
 def migrate_s2c(c, postgres=False, *, down=False):
     applied = bool(c.execute('SELECT 1 FROM schema_migrations WHERE version=17').fetchone())
     if applied == (not down):
@@ -44,10 +64,11 @@ def migrate_s2c(c, postgres=False, *, down=False):
             where = ('visit_id IN '+expr if expr and expr.startswith('(') else 'visit_id='+expr) if expr else '1=1'
             update = 'UPDATE document_signatures SET invalidated=1 WHERE invalidated=0 AND '+where+';'
             name = f's2c_{table}_{event.lower()}'
+            condition=update_condition(table,postgres) if event=='UPDATE' else ''
             if postgres:
                 c.connection.execute(f'''CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$
                     BEGIN {update} RETURN {row}; END $$;''')
-                c.execute(f'CREATE TRIGGER {name} AFTER {event} ON {table} FOR EACH ROW EXECUTE FUNCTION {name}()')
+                c.execute(f'CREATE TRIGGER {name} AFTER {event} ON {table} FOR EACH ROW{condition} EXECUTE FUNCTION {name}()')
             else:
-                c.execute(f'CREATE TRIGGER {name} AFTER {event} ON {table} BEGIN {update} END')
+                c.execute(f'CREATE TRIGGER {name} AFTER {event} ON {table}{condition} BEGIN {update} END')
     c.execute('INSERT INTO schema_migrations(version) VALUES(17)')
