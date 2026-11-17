@@ -1,5 +1,4 @@
 """Read-only management reports; local-day grouping matches the stock ledger (UTC+7)."""
-from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
 
@@ -61,16 +60,22 @@ def revenue_report(c, start, end):
             row = bucket(day(payment['created_at']))
             row['payments'] += payment['amount']
 
+    # The effective_adjustments view automatically excludes reversed discounts.
+    # Reviewed-at is the accounting event day for discounts and paid refunds.
+    for adjustment in c.execute("""SELECT kind,amount,reviewed_at
+        FROM effective_adjustments WHERE status='approved' AND kind IN ('discount','refund')
+        ORDER BY reviewed_at,id"""):
+        if in_period(adjustment['reviewed_at'], start, end):
+            row = bucket(day(adjustment['reviewed_at']))
+            row['discount' if adjustment['kind'] == 'discount' else 'refund'] += adjustment['amount']
+
     rows = [days[key] for key in sorted(days)]
+    for row in rows:
+        row['revenue'] = row['gross'] - row['discount']
+        row['paid'] = row['payments'] - row['refund']
+        row['outstanding'] = row['revenue'] - row['paid']
     totals = {key: sum(row[key] for row in rows) for key in
               ('medicine','clinical','other','gross','discount','revenue','payments','refund','paid','outstanding')}
-    for row in rows:
-        row['revenue'] = row['gross']
-        row['paid'] = row['payments']
-        row['outstanding'] = row['revenue'] - row['paid']
-    totals['revenue'] = totals['gross']
-    totals['paid'] = totals['payments']
-    totals['outstanding'] = totals['revenue'] - totals['paid']
     return {'date_from': start, 'date_to': end, 'rows': rows, 'totals': totals}
 
 
@@ -166,6 +171,13 @@ def corrections_report(c, start, end):
         FROM imaging_reports r JOIN orders o ON o.id=r.order_id
         JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id
         JOIN users u ON u.id=r.created_by WHERE r.replaces_id IS NOT NULL""", 'Đính chính hình ảnh')
+    for kind, label in (('discount', 'Giảm giá'), ('refund', 'Hoàn tiền')):
+        collect("""SELECT p.code AS patient_code,
+            (a.kind || ' #' || CAST(a.id AS TEXT) || ': ' || CAST(a.amount AS TEXT) || ' đ') AS content,
+            u.full_name AS actor,a.reviewed_at AS occurred_at,a.reason
+            FROM effective_adjustments a JOIN visits v ON v.id=a.visit_id
+            JOIN patients p ON p.id=v.patient_id JOIN users u ON u.id=a.reviewed_by
+            WHERE a.status='approved' AND a.kind=?""".replace('a.kind=?', "a.kind='" + kind + "'"), label)
     rows.sort(key=lambda r: (r['occurred_at'],r['type'],r['patient_code']))
     return {'date_from': start, 'date_to': end, 'rows': rows, 'total': len(rows)}
 
