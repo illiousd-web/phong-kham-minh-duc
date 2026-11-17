@@ -1024,7 +1024,7 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
     with db('access') as c:
         if kind in ('ultrasound','xray'):
             from .imaging import access
-            access(c,u,object_id)
+            access(c,u,object_id,kind=kind)
         context=form_context(c,kind,object_id)
         v=context['visit'];o=context.get('order')
         if kind in ('visit','order','followup'):

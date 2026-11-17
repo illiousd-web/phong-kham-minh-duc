@@ -119,9 +119,9 @@ def test_s1_text_result_two_tabs_keep_first_version(https_server,clients,width):
     suffix=secrets.token_hex(5)
     patient=r.post('/api/patients',json={'full_name':'Giả lập hai tab '+suffix,'sex':'Nữ','date_of_birth':'1990-01-01','phone':'0900000000'}).json()['id']
     vid=r.post('/api/visits',json={'patient_id':patient,'doctor_id':IDS['doctor'],'service_id':SERVICE}).json()['id']
-    service=a.post('/api/catalog/services',json={'name':'Siêu âm hai tab giả lập '+suffix,'category':'ultrasound','price':12345})
+    service=a.post('/api/catalog/services',json={'name':'Điện tim hai tab giả lập '+suffix,'category':'ecg','price':12345})
     assert service.status_code==201,service.text
-    order=d.post('/api/orders',json={'visit_id':vid,'service_id':service.json()['id'],'category':'ultrasound','request_key':'s1-ui-'+suffix})
+    order=d.post('/api/orders',json={'visit_id':vid,'service_id':service.json()['id'],'category':'ecg','request_key':'s1-ui-'+suffix})
     assert order.status_code==201,order.text
     oid=order.json()['id'];origin,certdir=https_server
     cert=x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())

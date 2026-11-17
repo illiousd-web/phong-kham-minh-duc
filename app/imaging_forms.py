@@ -13,10 +13,21 @@ from docx.shared import Inches, Pt
 from .forms import pdf_safe, fmt_date, format_patient_address
 
 
+def section_headings(m):
+    xray = m['kind']=='xray'
+    sections = [('request','YÊU CẦU CHIẾU/CHỤP' if xray else 'YÊU CẦU KIỂM TRA'),
+                ('result','KẾT QUẢ CHIẾU/CHỤP' if xray else 'KẾT QUẢ SIÊU ÂM — Mô tả')]
+    if m['images']:
+        sections.append(('images','HÌNH ẢNH X-QUANG' if xray else 'HÌNH ẢNH SIÊU ÂM'))
+    sections.append(('conclusion','KẾT LUẬN'))
+    return {key:f'{chr(65+i)}. {title}' for i,(key,title) in enumerate(sections)}
+
+
 def blocks(m, size):
     from .forms import LOGO, WATERMARK
     from .s2c_forms import print_font
     font = print_font()
+    headings = section_headings(m)
     normal = ParagraphStyle('imaging-body',fontName=font,fontSize=size,leading=size*1.18,spaceAfter=2)
     bold = ParagraphStyle('imaging-head',parent=normal,textColor=colors.HexColor('#008249'),fontSize=size+1)
     def p(t, heading=False):
@@ -38,14 +49,14 @@ def blocks(m, size):
     if m.get('successor'):
         items.append(p(m['successor']))
     pat = m['patient']
-    patient = [[p('Họ tên'),p(pat['full_name']),p('Ngày sinh'),p(fmt_date(pat['date_of_birth'])+' · '+pat.get('sex',''))],
-               [p('Địa chỉ'),p(format_patient_address(pat)),p('Số BHYT'),p(pat.get('insurance_number') or '—')],
+    patient = [[p('Họ tên'),p(pat['full_name']),p('Ngày sinh'),p(fmt_date(pat['date_of_birth'])+' · Giới: '+pat.get('sex',''))],
+               [p('Địa chỉ'),p(format_patient_address(pat)),p('Số BHYT'),p(pat.get('health_insurance_number') or '—')],
                [p('Khoa/Phòng'),p('Ngoại trú'),p('Buồng/giường'),p('Không áp dụng (ngoại trú)')],
                [p('Chẩn đoán'),p(m['diagnosis']),p(''),p('')]]
     patient_table = Table(patient,colWidths=[75,195,90,155])
     patient_table.setStyle(TableStyle([('SPAN',(1,3),(3,3)),('VALIGN',(0,0),(-1,-1),'TOP')]))
-    items += [patient_table,p('A. YÊU CẦU CHIẾU/CHỤP' if m['kind']=='xray' else 'A. YÊU CẦU KIỂM TRA',True),
-              p(m['request']),p('B. KẾT QUẢ CHIẾU/CHỤP' if m['kind']=='xray' else 'B. KẾT QUẢ SIÊU ÂM — Mô tả',True),
+    items += [patient_table,p(headings['request'],True),
+              p(m['request']),p(headings['result'],True),
               p('Thực hiện lúc: '+fmt_time(m['stamp']))]
     rows = [[p(label),p(text)] for label,text in m['sections']]
     table = Table(rows,colWidths=[115,400])
@@ -57,8 +68,8 @@ def blocks(m, size):
         pictures = [Image(str(FILES/x['key']),width=230,height=75,kind='proportional') for x in m['images']]
         picture_table = Table([pictures],colWidths=[257.5]*len(pictures))
         picture_table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#F0F5F3')),('BOX',(0,0),(-1,-1),.3,colors.HexColor('#B4C6C8'))]))
-        items += [p('C. HÌNH ẢNH X-QUANG' if m['kind']=='xray' else 'C. HÌNH ẢNH SIÊU ÂM',True),picture_table]
-    items.append(p(('D.' if m['kind']=='ultrasound' or m['images'] else 'C.')+' KẾT LUẬN',True))
+        items += [p(headings['images'],True),picture_table]
+    items.append(p(headings['conclusion'],True))
     left = [p(m['conclusion'])]
     if m['advice']:
         left += [p('Lời dặn của bác sĩ chuyên khoa:',True),p(m['advice'])]
@@ -112,6 +123,7 @@ def word(m):
     from .forms import LOGO, WATERMARK
     from .main import FILES
     doc = Document()
+    headings = section_headings(m)
     section = doc.sections[0]
     section.page_width=Inches(8.2677); section.page_height=Inches(11.6929)
     section.top_margin=section.bottom_margin=Inches(.4)
@@ -126,15 +138,17 @@ def word(m):
     header.cell(0,2).text=f"MS: {'08' if m['kind']=='xray' else '11'}/BV-02\nSố: {m['number']}\nMã NB: {m['patient']['code']}"
     doc.add_paragraph('PHIẾU CHIẾU/CHỤP X-QUANG' if m['kind']=='xray' else 'PHIẾU SIÊU ÂM','Title')
     doc.add_paragraph(m['template_name']+' · '+m['number'])
-    doc.add_paragraph('Họ tên: '+m['patient']['full_name']+' · Mã NB: '+m['patient']['code']+' · '+m['patient']['sex'])
+    doc.add_paragraph('Họ tên: '+m['patient']['full_name']+' · Mã NB: '+m['patient']['code'])
+    doc.add_paragraph('Ngày sinh: '+fmt_date(m['patient']['date_of_birth'])+' · Giới: '+m['patient']['sex'])
     doc.add_paragraph('Địa chỉ: '+format_patient_address(m['patient']))
+    doc.add_paragraph('Số BHYT: '+(m['patient'].get('health_insurance_number') or '—'))
     doc.add_paragraph('Chẩn đoán: '+m['diagnosis'])
     if m.get('replaces'):
         doc.add_paragraph('Đính chính '+m['replaces']+' — '+m['reason'])
     if m.get('successor'):
         doc.add_paragraph(m['successor'])
-    doc.add_paragraph('A. YÊU CẦU KIỂM TRA: '+m['request'])
-    doc.add_paragraph('B. KẾT QUẢ · '+fmt_time(m['stamp']))
+    doc.add_paragraph(headings['request']+': '+m['request'])
+    doc.add_paragraph(headings['result']+' · '+fmt_time(m['stamp']))
     table = doc.add_table(rows=0,cols=2)
     table.autofit=False
     table.columns[0].width=Inches(1.5);table.columns[1].width=Inches(5.6)
@@ -142,7 +156,7 @@ def word(m):
         cells=table.add_row().cells; cells[0].text=label; cells[1].text=text
         cells[0].width=Inches(1.5);cells[1].width=Inches(5.6)
     if m['images']:
-        doc.add_paragraph('C. HÌNH ẢNH')
+        doc.add_paragraph(headings['images'])
         cells=doc.add_table(rows=1,cols=2).rows[0].cells
         for cell,item in zip(cells,m['images']):
             from PIL import Image as PILImage
@@ -150,7 +164,7 @@ def word(m):
                 ratio=min(2.2/picture.width,1/picture.height)
                 w,h=picture.width*ratio,picture.height*ratio
             cell.paragraphs[0].add_run().add_picture(str(FILES/item['key']),width=Inches(w),height=Inches(h))
-    doc.add_paragraph('D. KẾT LUẬN: '+m['conclusion'])
+    doc.add_paragraph(headings['conclusion']+': '+m['conclusion'])
     if m['advice']:
         doc.add_paragraph('Lời dặn: '+m['advice'])
     p=doc.add_paragraph('BÁC SĨ CHUYÊN KHOA · '+m['signer_name']); p.alignment=2

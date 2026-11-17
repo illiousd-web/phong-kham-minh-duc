@@ -188,7 +188,7 @@ def install_document_signatures(app, db, principal, require, audit, now):
                 frozen = {k:v for k,v in d['models'][0].items() if k not in ('signature','signature_notice','successor')}
                 c.execute('UPDATE imaging_reports SET snapshot=? WHERE id=?', (json.dumps(frozen,ensure_ascii=False),object_id))
                 c.execute("UPDATE orders SET status='approved',approved_by=?,approved_at=?,result_by=?,result_text=? WHERE id=?",
-                          (u['id'],stamp,r['created_by'],'Kết luận: '+r['conclusion'],r['order_id']))
+                          (u['id'],stamp,r['updated_by'],'Kết luận: '+r['conclusion'],r['order_id']))
                 from .domain import status_refresh
                 status_refresh(c,d['visit_id'])
             audit(c, u, 'document_signed', kind, object_id, json.dumps({

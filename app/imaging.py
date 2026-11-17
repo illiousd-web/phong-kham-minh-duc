@@ -52,10 +52,12 @@ def report(c, rid):
     return dict(r)
 
 
-def access(c, u, oid, *, writing=False, correction=False):
+def access(c, u, oid, *, kind=None, writing=False, correction=False):
     if not {'doctor','technician'}.intersection(u['roles']):
         raise HTTPException(403, 'Chỉ bác sĩ hoặc kỹ thuật viên được xem kết quả')
     o = c.execute('SELECT o.*,v.doctor_id,v.status AS visit_status FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?', (oid,)).fetchone()
+    if o and kind is not None and kind != o['category']:
+        raise HTTPException(422, 'Loại phiếu không khớp chỉ định')
     if not o or o['category'] not in ('ultrasound','xray'):
         raise HTTPException(404, 'Không có chỉ định siêu âm/X-quang')
     if 'technician' not in u['roles'] and o['doctor_id'] != u['id']:
@@ -171,9 +173,9 @@ def install_imaging(app, db, principal, require, audit, now):
             if not t['active'] or t['category'] != o['category']:
                 raise HTTPException(422, 'Mẫu không phù hợp hoặc đã tắt')
             stamp = now()
-            c.execute('''INSERT INTO imaging_reports(order_id,template_code,descriptions,request,conclusion,advice,created_by,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?)''', (oid,data.template_code,json.dumps(['']*len(t['content']['rows'])),t['content']['yc'],
-                t['content']['kl'] or '',t['content'].get('dan') or '',u['id'],stamp,stamp))
+            c.execute('''INSERT INTO imaging_reports(order_id,template_code,descriptions,request,conclusion,advice,created_by,created_at,updated_at,updated_by)
+                VALUES(?,?,?,?,?,?,?,?,?,?)''', (oid,data.template_code,json.dumps(['']*len(t['content']['rows'])),t['content']['yc'],
+                t['content']['kl'] or '',t['content'].get('dan') or '',u['id'],stamp,stamp,u['id']))
             rid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
             audit(c,u,'imaging_created','imaging_report',rid)
             return {'id':rid}
@@ -198,8 +200,8 @@ def install_imaging(app, db, principal, require, audit, now):
                 raise HTTPException(409, 'Phiếu đã được sửa, tải lại trước khi lưu')
             if len(data.descriptions) != len(t['rows']) or any(len(x)>5000 for x in data.descriptions):
                 raise HTTPException(422, 'Số mục hoặc độ dài mô tả không phù hợp')
-            c.execute('UPDATE imaging_reports SET descriptions=?,request=?,conclusion=?,advice=?,version=version+1,updated_at=? WHERE id=?',
-                      (json.dumps(data.descriptions,ensure_ascii=False),data.request if data.request is not None else r['request'],data.conclusion,data.advice,now(),rid))
+            c.execute('UPDATE imaging_reports SET descriptions=?,request=?,conclusion=?,advice=?,version=version+1,updated_at=?,updated_by=? WHERE id=?',
+                      (json.dumps(data.descriptions,ensure_ascii=False),data.request if data.request is not None else r['request'],data.conclusion,data.advice,now(),u['id'],rid))
             audit(c,u,'imaging_saved','imaging_report',rid)
         return {'version':data.version+1}
 
@@ -213,8 +215,8 @@ def install_imaging(app, db, principal, require, audit, now):
             if len(data.reason.strip())<8 or c.execute('SELECT 1 FROM imaging_reports WHERE replaces_id=?', (rid,)).fetchone():
                 raise HTTPException(409, 'Thiếu lý do hoặc phiếu đã có đính chính')
             stamp = now()
-            c.execute('''INSERT INTO imaging_reports(order_id,template_code,descriptions,request,conclusion,advice,created_by,created_at,updated_at,replaces_id,reason)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)''',(r['order_id'],r['template_code'],r['descriptions'],r['request'],r['conclusion'],r['advice'],u['id'],stamp,stamp,rid,data.reason.strip()))
+            c.execute('''INSERT INTO imaging_reports(order_id,template_code,descriptions,request,conclusion,advice,created_by,created_at,updated_at,replaces_id,reason,updated_by)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',(r['order_id'],r['template_code'],r['descriptions'],r['request'],r['conclusion'],r['advice'],u['id'],stamp,stamp,rid,data.reason.strip(),u['id']))
             new = c.execute('SELECT last_insert_rowid()').fetchone()[0]
             for item in images(c,rid):
                 c.execute('INSERT INTO imaging_images(report_id,file_key,sha256,media_type,created_by,created_at) VALUES(?,?,?,?,?,?)',
@@ -252,7 +254,9 @@ def install_imaging(app, db, principal, require, audit, now):
                 r = report(c,rid)
                 access(c,u,r['order_id'],writing=True,correction=bool(r['replaces_id']))
                 editable(r)
-                if len(images(c,rid))>=2:
+                # db(True) holds the PostgreSQL writer lock / SQLite BEGIN IMMEDIATE
+                # through commit: count and insert cannot race another upload.
+                if c.execute('SELECT COUNT(*) FROM imaging_images WHERE report_id=?',(rid,)).fetchone()[0]>=2:
                     raise HTTPException(409, 'Mỗi phiếu tối đa 2 ảnh')
                 check_upload(FILES,len(raw))
                 FILES.mkdir(parents=True,exist_ok=True)
