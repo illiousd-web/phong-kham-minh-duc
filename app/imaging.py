@@ -270,6 +270,7 @@ def install_imaging(app, db, principal, require, audit, now):
                 c.execute('INSERT INTO imaging_images(report_id,file_key,sha256,media_type,created_by,created_at) VALUES(?,?,?,?,?,?)',
                           (rid,key,hashlib.sha256(raw).hexdigest(),media,u['id'],now()))
                 iid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+                c.execute('UPDATE imaging_reports SET version=version+1, updated_by=? WHERE id=?', (u['id'], rid))
                 audit(c,u,'imaging_image_uploaded','imaging_report',rid,str(iid))
         except Exception:
             # A lost commit acknowledgement must never delete a referenced file.
@@ -304,6 +305,7 @@ def install_imaging(app, db, principal, require, audit, now):
                 raise HTTPException(404, 'Không có ảnh')
             key = item['file_key']
             c.execute('DELETE FROM imaging_images WHERE id=?',(iid,))
+            c.execute('UPDATE imaging_reports SET version=version+1, updated_by=? WHERE id=?', (u['id'], rid))
             audit(c,u,'imaging_image_deleted','imaging_report',rid,str(iid))
         with db(True) as c:
             if not c.execute('SELECT 1 FROM imaging_images WHERE file_key=?',(key,)).fetchone():
