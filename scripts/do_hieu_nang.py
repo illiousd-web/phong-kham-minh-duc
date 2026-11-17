@@ -158,6 +158,7 @@ def migrate_profile_schema(c):
     from app.s2a_migration import migrate_s2a
     from app.s2b_migration import migrate_s2b
     from app.s2c_migration import migrate_s2c
+    from app.s2d_migration import migrate_s2d
     for _ in range(2):
         migrate_m0(c);migrate_administrative(c);migrate_public_catalog(c)
         migrate_m6(c,postgres=True);migrate_m5(c,postgres=True);migrate_d0(c,postgres=True);migrate_source_catalogs(c,postgres=True)
@@ -166,6 +167,7 @@ def migrate_profile_schema(c):
         migrate_s2a(c,postgres=True)
         migrate_s2b(c,postgres=True)
         migrate_s2c(c,postgres=True)
+        migrate_s2d(c,postgres=True)
 
 
 def database_state(url):

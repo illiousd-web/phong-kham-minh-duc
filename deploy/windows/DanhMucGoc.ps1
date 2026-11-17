@@ -37,3 +37,26 @@ function Copy-D0PublicCatalogs {
         } finally { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force } }
     }
 }
+
+# S2d có một nguồn riêng; không mở rộng danh sách bảy danh mục D0.
+function Test-S2dPublicTemplate {
+    param([string]$SourceRoot)
+    $source = Join-Path $SourceRoot 'data\danh_muc_goc\mau_ket_qua_28.json'
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw 'Thiếu nguồn 28 mẫu kết quả S2d.' }
+    if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -ne '55bee1aeb602cad7685c6da8f0cfc6c91e4d11d10aa56d1cf58c5fa75273aad1') { throw 'Sai SHA-256 nguồn 28 mẫu kết quả S2d.' }
+}
+function Copy-S2dPublicTemplate {
+    param([string]$SourceRoot, [string]$DestinationRoot)
+    Test-S2dPublicTemplate -SourceRoot $SourceRoot
+    $relative = 'data\danh_muc_goc\mau_ket_qua_28.json'
+    $source = Join-Path $SourceRoot $relative
+    $target = Join-Path $DestinationRoot $relative
+    if ([IO.Path]::GetFullPath($source) -eq [IO.Path]::GetFullPath($target)) { return }
+    New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
+    $temp = $target + '.moi-' + [guid]::NewGuid().ToString('N')
+    try {
+        Copy-Item -LiteralPath $source -Destination $temp -ErrorAction Stop
+        if ((Get-FileHash -LiteralPath $temp -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) { throw 'Chép nguồn S2d không khớp.' }
+        Move-Item -LiteralPath $temp -Destination $target -Force -ErrorAction Stop
+    } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+}

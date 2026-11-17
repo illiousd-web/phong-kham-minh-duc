@@ -199,6 +199,7 @@ try {
     if ($root.Count -eq 0) { Stop-CaiDat 'Tệp .zip không phải bản phần mềm Minh Đức hợp lệ.' @('Kiểm tra lại tệp tải về.') 5 }
     $newRoot = $root[0].Directory.Parent.FullName
     Test-D0PublicCatalogs -SourceRoot $newRoot
+    Test-S2dPublicTemplate -SourceRoot $newRoot
     Get-ChildItem -LiteralPath $newRoot -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
     Write-Dat ('Phiên bản hiện tại: ' + (Get-AppVersion $P.Code) + '  →  bản mới: ' + (Get-AppVersion $newRoot))
 
@@ -228,6 +229,7 @@ try {
     $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($newRoot, $P.Code, '/MIR', '/R:2', '/W:2', '/XD', '.venv', '.venv-cu', '.git', '__pycache__', 'test_evidence', 'data', 'backups', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
     if (-not $r.Ok) { throw 'Không chép được mã mới.' }
     Copy-D0PublicCatalogs -SourceRoot $newRoot -DestinationRoot $P.Code
+    Copy-S2dPublicTemplate -SourceRoot $newRoot -DestinationRoot $P.Code
     Write-Dat 'Đã thay mã nguồn (bản cũ được giữ để quay về).'
 
     Write-Buoc 'Bước 6/8: Cài thư viện (kiểm mã băm)'

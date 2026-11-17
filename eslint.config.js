@@ -13,7 +13,7 @@ const browserGlobals = Object.fromEntries([
 // index.html:30-32 loads app.js, m6.js and m5.js as deferred classic scripts.
 // Declare only names actually provided by the other scripts, per consumer file.
 const sharedGlobals = {
-    "app/static/app.js": ["M5", "M6"],
+    "app/static/app.js": ["M5", "M6", "createImageBitmap"],
     "app/static/m5.js": [
         "LABEL", "M6", "SCREENS", "api", "auth", "authHeader", "cap", "card",
         "esc", "empty", "r2Mark", "labelTables", "menus", "notify", "parseDay", "render",

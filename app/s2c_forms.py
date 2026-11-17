@@ -234,6 +234,9 @@ def signature_caption(s):
 
 
 def render(model, fmt):
+    if model.get('imaging'):
+        from .imaging_forms import render as imaging_render
+        return imaging_render(model, fmt)
     m = deepcopy(model)
     return word(m) if fmt=='docx' else pdf(m)
 
@@ -543,6 +546,9 @@ def word(m):
 
 
 def printed_content(m):
+    if m.get('imaging'):
+        from .imaging import content
+        return content(m)
     """Only visible blocks shared by the PDF and Word renderers (excluding the signature)."""
     kind = m['kind']
     profile_keys = ('name','address','phone','email') if kind == 'rx' else ('governing_body','name','address','phone','email')

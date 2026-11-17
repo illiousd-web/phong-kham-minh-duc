@@ -57,3 +57,12 @@ DO $$ BEGIN
            FROM pg_attribute WHERE attrelid='document_signatures'::regclass AND attnum>0 AND NOT attisdropped);
  END IF;
 END $$;
+
+-- S2d: preserve imaging history and private trigger ACLs after restore.
+DO $$ BEGIN
+ IF to_regclass('public.imaging_reports') IS NOT NULL THEN
+  REVOKE DELETE, TRUNCATE ON imaging_reports FROM clinic_app;
+  REVOKE TRUNCATE ON imaging_images, imaging_templates FROM clinic_app;
+  REVOKE ALL ON FUNCTION s2d_report_guard(), s2d_image_guard() FROM PUBLIC;
+ END IF;
+END $$;

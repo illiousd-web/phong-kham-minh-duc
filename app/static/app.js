@@ -286,7 +286,7 @@ async function doctorScreen(){
  const mine=ords.filter(o=>o.visit_id===vid),rx=rxs.find(x=>x.visit_id===vid&&x.status!=='cancelled')||rxs.find(x=>x.visit_id===vid);
  const codesForm=await D0.clinical(v);
  const exam=`<form data-form="clinical" class="fields r3-exam-form">${hidden('visit_id',vid)}${hidden('version',v.version)}${vitalsFields()}${textarea('Lý do khám và triệu chứng','chief_complaint')}${textarea('Bệnh sử, tiền sử','history')}${textarea('Chẩn đoán','diagnosis','Mô tả chẩn đoán của bác sĩ; mã bệnh chọn riêng phía trên')}${textarea('Hướng điều trị, lời dặn','treatment')}${dateField('Hẹn tái khám','follow_up')}<div class="wide actions r2-dock r3-exam-dock"><button class="btn"><span class="r3-desktop-label">Lưu phiếu khám (F2)</span><span class="r3-mobile-label">Lưu</span></button><button type="button" class="btn-blue" data-action="doctor-jump" data-target="orders"><span class="r3-desktop-label">Chỉ định cận lâm sàng</span><span class="r3-mobile-label">Chỉ định</span></button><button type="button" class="r3-primary-link" data-action="doctor-jump" data-target="rx">Kê đơn</button><span class="r3-exam-export-buttons"> <button class="ghost" type="button" data-action="export-form" data-kind="visit" data-id="${vid}" data-format="pdf">Phiếu khám PDF</button> <button class="ghost" type="button" data-action="export-form" data-kind="visit" data-id="${vid}" data-format="docx">Phiếu khám Word</button> <button class="ghost" type="button" data-action="export-form" data-kind="followup" data-id="${vid}" data-format="pdf">Giấy hẹn tái khám</button></span></div></form>`+codesForm;
- const orderRows=mine.map(o=>`<tr><td>${esc(o.name)}${scopeWarnings.has(o.id)?`<div class="notice" role="alert" data-scope-warning="${o.id}">${esc(scopeWarnings.get(o.id))}</div>`:''}${o.unpriced?' <span class="status warn">CHƯA CÓ GIÁ</span>':''}<div class="muted">${esc(vi(o.category))}</div>${o.result_text?`<div class="result-text">${esc(o.result_text).replace(/\n/g,'<br>')}</div>`:''}</td><td>${pill(o.status)}</td><td><div class="multi-actions">${o.status==='requested'?btn('Duyệt chỉ định / ghi phí','authorize-order',`data-id="${o.id}"`,'btn smallbtn'):''}${o.lab_report_status==='pending_review'&&o.lab_report_id?`<button data-m5="review" data-id="${o.lab_report_id}">Duyệt phiếu theo chỉ số</button>`:o.status==='pending_review'?btn('Duyệt kết quả','approve',`data-id="${o.id}"`,'btn smallbtn'):''}${o.file_name?btn('Tệp đính kèm','file',`data-id="${o.id}"`):''}${o.lab_report_id?`<button data-m5="view" data-id="${o.lab_report_id}">Xem phiếu theo chỉ số</button>`:o.status==='approved'&&['lab','ultrasound','xray','ecg'].includes(o.category)?formButtons(o.category,o.id):formButtons('order',o.id)}${!done&&!['cancelled'].includes(o.status)?btn('Đề nghị hủy','cancel-order',`data-id="${o.id}"`):''}</div></td></tr>`);
+ const orderRows=mine.map(o=>`<tr><td>${esc(o.name)}${scopeWarnings.has(o.id)?`<div class="notice" role="alert" data-scope-warning="${o.id}">${esc(scopeWarnings.get(o.id))}</div>`:''}${o.unpriced?' <span class="status warn">CHƯA CÓ GIÁ</span>':''}<div class="muted">${esc(vi(o.category))}</div>${o.result_text?`<div class="result-text">${esc(o.result_text).replace(/\n/g,'<br>')}</div>`:''}</td><td>${pill(o.status)}</td><td><div class="multi-actions">${['ultrasound','xray'].includes(o.category)&&(o.imaging_report_id||!(o.result_text||o.file_name))?`<button type="button" data-s2d-order="${o.id}">Phiếu hình ảnh</button>`:''}${o.status==='requested'?btn('Duyệt chỉ định / ghi phí','authorize-order',`data-id="${o.id}"`,'btn smallbtn'):''}${o.lab_report_status==='pending_review'&&o.lab_report_id?`<button data-m5="review" data-id="${o.lab_report_id}">Duyệt phiếu theo chỉ số</button>`:o.status==='pending_review'?btn('Duyệt kết quả','approve',`data-id="${o.id}"`,'btn smallbtn'):''}${o.file_name?btn('Tệp đính kèm','file',`data-id="${o.id}"`):''}${o.lab_report_id?`<button data-m5="view" data-id="${o.lab_report_id}">Xem phiếu theo chỉ số</button>`:o.status==='approved'&&['lab','ultrasound','xray','ecg'].includes(o.category)?formButtons(o.category,o.id):formButtons('order',o.id)}${!done&&!['cancelled'].includes(o.status)?btn('Đề nghị hủy','cancel-order',`data-id="${o.id}"`):''}</div></td></tr>`);
  const orders=(done?'':`<form class="fields" data-form="order">${hidden('visit_id',vid)}${selectField('Dịch vụ theo bảng giá','service_id',cls.map(x=>[x.id,`${vi(x.category)} – ${x.name} (${servicePrice(x)})`]))}${selectField('Ghi phí','defer_approval',[['0','Xác nhận và ghi phí ngay'],['1','Lưu nháp, chưa phát sinh tiền']])}<div class="wide"><button class="btn" ${cls.length?'':'disabled'}>Thêm chỉ định</button></div></form>`)+t(orderRows,['Chỉ định / kết quả','Trạng thái','Thao tác']);
  const pmeds=prescribable(meds);
  const warehouseRxHtml=rx?`<div class="rx-view"><p>${esc(rx.drug_lines).replace(/\n/g,'<br>')}</p><p>${pill(rx.status)}</p><div class="multi-actions">${formButtons('rx',rx.id)}${rx.status==='draft'?btn('Hủy đơn nháp','cancel-rx',`data-id="${rx.id}"`,'btn-danger smallbtn'):''}</div>${rx.status==='cancelled'?'<p class="hint">Đơn đã hủy được lưu, không lập lại đơn mới cho lượt này.</p>':''}</div>`:
@@ -315,10 +315,11 @@ async function doctorScreen(){
 
 // ---------- Kỹ thuật viên: chỉ định chờ làm → nhập kết quả ----------
 async function labScreen(){
- orderList=await api('/orders');const todo=orderList.filter(o=>o.status==='ordered'),sent=orderList.filter(o=>o.status==='pending_review');
- const editable=[...todo,...sent];if(!editable.some(o=>o.id===sel.order))sel.order=todo[0]?.id??null;
+ const [pendingOrders,pastOrders]=await Promise.all([api('/orders'),api('/orders?history=true')]);
+ orderList=[...pendingOrders,...pastOrders.filter(o=>['ultrasound','xray'].includes(o.category)&&o.status==='approved'&&o.imaging_report_id)];const todo=orderList.filter(o=>o.status==='ordered'),sent=orderList.filter(o=>o.status==='pending_review');
+ const editable=[...todo,...sent,...orderList.filter(o=>['ultrasound','xray'].includes(o.category)&&o.status==='approved'&&o.imaging_report_id)];if(!editable.some(o=>o.id===sel.order))sel.order=todo[0]?.id??null;
  const o=orderList.find(x=>x.id===sel.order);
- const form=o?`<div class="patient-head"><div><b>${esc(o.name)}</b> <span class="muted">${esc(vi(o.category))}</span></div><div class="muted"><span class="r4-name" title="${esc(o.patient_name)}">${esc(o.patient_name)}</span> · ${esc(o.patient_code)} · chỉ định #${o.id}</div><div>${pill(o.status)}</div></div><button type="button" data-s1-result-history="${o.id}">Xem các phiên bản kết quả</button><form data-form="result" class="fields">${hidden('order_id',o.id)}${hidden('result_version',o.result_version||0)}${textarea('Nội dung kết quả','result_text','Mỗi chỉ số một dòng: Tên | Kết quả | Đơn vị | Tham chiếu | Đánh dấu\nVí dụ: Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nDòng cuối: Kết luận: ...')}<p class="hint wide">Xét nghiệm: mỗi chỉ số một dòng, ngăn bằng dấu |. Siêu âm, X-quang, điện tim: mô tả tự do. Dòng bắt đầu bằng "Kết luận:" được in vào mục Kết luận.</p><div class="wide"><button class="btn">Gửi kết quả cho bác sĩ duyệt</button></div></form><form data-form="attach" class="fields" enctype="multipart/form-data">${hidden('attach_order',o.id)}<div class="field"><label for="attachment">Tệp kết quả PDF/PNG/JPG (tối đa 5 MB)</label><input id="attachment" type="file" name="attachment" accept=".pdf,.png,.jpg,.jpeg" required></div><div class="field"><button class="ghost">Đính kèm tệp</button></div></form>`:empty('Chọn một chỉ định trong hàng chờ.');
+ const form=o&&o.imaging_report_id?`<div class="patient-head"><b>${esc(o.patient_name)}</b><span>${esc(o.patient_code)} · ${esc(o.name)}</span></div><button type="button" data-s2d-order="${o.id}">Nhập kết quả hình ảnh</button>`:o?`${['ultrasound','xray'].includes(o.category)&&!(o.result_text||o.file_name)?`<button type="button" data-s2d-order="${o.id}">Nhập kết quả theo mẫu hình ảnh</button>`:''}<div class="patient-head"><div><b>${esc(o.name)}</b> <span class="muted">${esc(vi(o.category))}</span></div><div class="muted"><span class="r4-name" title="${esc(o.patient_name)}">${esc(o.patient_name)}</span> · ${esc(o.patient_code)} · chỉ định #${o.id}</div><div>${pill(o.status)}</div></div><button type="button" data-s1-result-history="${o.id}">Xem các phiên bản kết quả</button><form data-form="result" class="fields">${hidden('order_id',o.id)}${hidden('result_version',o.result_version||0)}${textarea('Nội dung kết quả','result_text','Mỗi chỉ số một dòng: Tên | Kết quả | Đơn vị | Tham chiếu | Đánh dấu\nVí dụ: Glucose | 9,2 | mmol/L | 3,9–5,6 | H\nDòng cuối: Kết luận: ...')}<p class="hint wide">Xét nghiệm: mỗi chỉ số một dòng, ngăn bằng dấu |. Siêu âm, X-quang, điện tim: mô tả tự do. Dòng bắt đầu bằng "Kết luận:" được in vào mục Kết luận.</p><div class="wide"><button class="btn">Gửi kết quả cho bác sĩ duyệt</button></div></form><form data-form="attach" class="fields" enctype="multipart/form-data">${hidden('attach_order',o.id)}<div class="field"><label for="attachment">Tệp kết quả PDF/PNG/JPG (tối đa 5 MB)</label><input id="attachment" type="file" name="attachment" accept=".pdf,.png,.jpg,.jpeg" required></div><div class="field"><button class="ghost">Đính kèm tệp</button></div></form>`:empty('Chọn một chỉ định trong hàng chờ.');
  const items=editable.map(x=>{
   return {id:x.id,name:x.patient_name,sub:x.name+' · '+vi(x.status)};
  });
@@ -879,7 +880,7 @@ async function adminScreen(){
   `<form data-form="account-edit" class="fields" data-had-admin="${u.roles.includes('admin')?'1':'0'}">${hidden('uid',u.id)}<div class="field full"><label for="edit_full_name">Họ tên</label><input id="edit_full_name" name="full_name" value="${esc(u.full_name)}" required></div>${roleChecks(u.roles,'edit')}<div class="wide"><button class="btn">Lưu họ tên và quyền</button><p class="hint">Đổi quyền sẽ đăng xuất mọi phiên cũ của người đó.${ui.controlled_drugs?'':' Quyền thuốc kiểm soát hiện có được giữ nguyên.'}</p></div></form>`+
   practitionerForm(practitioner,practitioners.scopes)+`<form data-form="account-lock" class="fields">${hidden('uid',u.id)}${hidden('active',u.active?'0':'1')}<div class="wide"><button class="${u.active?'btn danger':'btn'}">${u.active?'Khóa tài khoản':'Mở khóa tài khoản'}</button><p class="hint">Khóa/mở chỉ đổi trạng thái, giữ nguyên mọi quyền.</p></div></form>`+
   `<form data-form="account-reset" class="fields">${hidden('uid',u.id)}${field('Mật khẩu mới (ít nhất 12 ký tự)','password','password','',true)}<div class="wide"><button class="ghost">Đặt lại mật khẩu</button></div></form>`:empty('Chọn một nhân viên để sửa họ tên, quyền, khóa/mở hoặc đặt lại mật khẩu.');
- return {html:head+certWarnings+card(create,'Tạo tài khoản')+card(pick+edit,'Sửa tài khoản')+card(t(users.map(x=>`<tr><td>${esc(x.username)}</td><td>${esc(x.full_name)}</td><td>${x.roles.map(r=>esc(roles[r])).join(', ')}</td><td>${x.active?'Hoạt động':'Đã khóa'}</td></tr>`),['Tài khoản','Họ tên','Quyền','Trạng thái']),'Nhân viên'),
+ return {html:`<button type="button" data-s2d-catalog>Danh mục mẫu siêu âm / X-quang</button>`+head+certWarnings+card(create,'Tạo tài khoản')+card(pick+edit,'Sửa tài khoản')+card(t(users.map(x=>`<tr><td>${esc(x.username)}</td><td>${esc(x.full_name)}</td><td>${x.roles.map(r=>esc(roles[r])).join(', ')}</td><td>${x.active?'Hoạt động':'Đã khóa'}</td></tr>`),['Tài khoản','Họ tên','Quyền','Trạng thái']),'Nhân viên'),
   after(){if(u&&$('account_choose'))$('account_choose').value=String(u.id)}}}
 // Ô chọn vai trò: không chọn sẵn gì khi tạo mới; khi sửa thì đánh dấu đúng quyền hiện có.
 function roleChecks(current,prefix){
@@ -1319,3 +1320,178 @@ document.addEventListener('click',async event=>{
  }
 },true);
 Object.assign(LABEL,{document_signed:'Ký phiếu bằng ảnh chữ ký',document_sign_failed:'Xác nhận mật khẩu ký không thành công',clinical_rx:'Đơn thuốc',lab_report:'Phiếu xét nghiệm'});
+
+
+/* Structured imaging results extend the existing order editor. */
+(() => {
+  const message = error => notify(error.message, true);
+  function dialog(title) {
+    const box = document.createElement('dialog');
+    box.className = 's2d-dialog';
+    box.innerHTML = `<div class="multi-actions"><h2>${esc(title)}</h2><button type="button" data-s2d-close>Đóng</button></div><div data-s2d-body></div><p role="alert" data-s2d-error></p>`;
+    box.querySelector('[data-s2d-close]').onclick = () => box.close();
+    box.addEventListener('close', () => {
+      for (const image of box.querySelectorAll('img[data-blob]')) URL.revokeObjectURL(image.src);
+      box.remove();
+    });
+    document.body.append(box);
+    box.showModal();
+    return box;
+  }
+  async function fileRequest(path, file) {
+    const body = new FormData();
+    body.append('file', file);
+    const headers = authHeader();
+    delete headers['Content-Type'];
+    const response = await fetch('/api'+path, {method:'POST', headers, body});
+    if (!response.ok) throw new Error((await response.json()).detail || 'Không tải được ảnh');
+    return response.json();
+  }
+  async function openOrder(oid) {
+    const box = dialog('Kết quả siêu âm / X-quang');
+    box.addEventListener('close',()=>{render().catch(message);});
+    const body = box.querySelector('[data-s2d-body]');
+    const error = e => { box.querySelector('[data-s2d-error]').textContent = e.message; };
+    async function reports() {
+      const state = await api(`/orders/${oid}/imaging-reports`);
+      box.querySelector('h2').textContent='Kết quả hình ảnh · '+state.patient_name+' · '+state.patient_code;
+      if (!state.items.length) {
+        const templates = await api('/imaging/templates?category='+state.category);
+        const sex = state.sex === 'Nữ' ? '(nữ)' : state.sex === 'Nam' ? '(nam)' : '';
+        templates.sort((a,b) => Number(Boolean(sex && b.name.toLowerCase().includes(sex)))-Number(Boolean(sex && a.name.toLowerCase().includes(sex))));
+        body.innerHTML = `<label class="field">Mẫu kết quả<select data-s2d-template>${templates.map(t=>`<option value="${esc(t.code)}">${esc(t.name)}</option>`).join('')}</select></label><p>Gợi ý mẫu theo giới; có thể chọn mẫu khác theo chỉ định.</p><button type="button" data-s2d-create ${templates.length?'':'disabled'}>Lập phiếu</button>`;
+        body.querySelector('[data-s2d-create]').onclick = async () => {
+          try {
+            const created = await api(`/orders/${oid}/imaging-reports`, {method:'POST',body:{template_code:body.querySelector('select').value}});
+            await edit(created.id);
+          } catch(e) { error(e); }
+        };
+      } else {
+        body.innerHTML = state.items.map(r=>`<button type="button" data-s2d-read="${r.id}">Phiếu MD-HA-${String(r.id).padStart(6,'0')} · ${r.snapshot?'Đã ký':'Nháp'}${r.replaces_id?' · Đính chính':''}</button>`).join('');
+        body.querySelectorAll('[data-s2d-read]').forEach(button => {button.onclick = () => edit(Number(button.dataset.s2dRead)).catch(error);});
+      }
+    }
+    async function edit(rid) {
+      for (const image of box.querySelectorAll('img[data-blob]')) URL.revokeObjectURL(image.src);
+      const r = await api(`/imaging/reports/${rid}`);
+      const locked = Boolean(r.snapshot);
+      const t = r.template.content;
+      body.innerHTML = `<button type="button" data-s2d-back>Danh sách phiếu</button><h3>${esc(t.n)} · MD-HA-${String(rid).padStart(6,'0')}</h3>${r.replaces_id?`<p>Đính chính phiếu #${r.replaces_id} · ${esc(r.reason)}</p>`:''}<label class="field">Yêu cầu kiểm tra<textarea data-s2d-request maxlength="2000" ${locked?'readonly':''}>${esc(r.request)}</textarea></label><div data-s2d-sections>${t.rows.map(([label,normal],i)=>`<section><label class="field">${esc(label)}<textarea data-s2d-row="${i}" maxlength="5000" ${locked?'readonly':''}>${esc(r.descriptions[i])}</textarea></label>${locked?'':`<div class="multi-actions"><button type="button" data-s2d-normal="${i}">Chèn câu bình thường</button><button type="button" data-s2d-unclear="${i}">Không khảo sát rõ</button></div>`}</section>`).join('')}</div><label class="field">Kết luận<textarea data-s2d-conclusion maxlength="3000" ${locked?'readonly':''}>${esc(r.conclusion)}</textarea></label>${t.xq?`<label class="field">Lời dặn<textarea data-s2d-advice maxlength="2000" ${locked?'readonly':''}>${esc(r.advice)}</textarea></label>`:''}<div data-s2d-drop tabindex="0" aria-label="Vùng nhận ảnh">${locked?'Ảnh của phiếu đã ký':'Tối đa 2 ảnh JPG/PNG. Kéo thả hoặc nhấn Ctrl+V để dán ảnh vừa chụp màn hình.'}<div data-s2d-images></div>${locked?'':'<label class="field">Tải ảnh<input type="file" data-s2d-upload accept="image/jpeg,image/png"></label>'}</div><div class="multi-actions">${locked?'<button type="button" data-s2d-correct>Lập phiếu đính chính</button>':'<button type="button" data-s2d-save>Lưu nháp</button>'}<button type="button" data-s2d-print="pdf">In / xem PDF</button><button type="button" data-s2d-print="docx">Tải Word</button>${!locked&&cap('doctor')?'<button type="button" data-s2d-sign>Ký phiếu</button>':''}</div>`;
+      body.querySelector('[data-s2d-back]').onclick = () => reports().catch(error);
+      async function save() {
+        if (locked) return;
+        const result = await api(`/imaging/reports/${rid}`, {method:'PUT',body:{version:r.version,
+          request:body.querySelector('[data-s2d-request]').value,
+          descriptions:[...body.querySelectorAll('[data-s2d-row]')].map(x=>x.value),
+          conclusion:body.querySelector('[data-s2d-conclusion]').value,
+          advice:body.querySelector('[data-s2d-advice]')?.value || ''}});
+        r.version = result.version;
+        box.querySelector('[data-s2d-error]').textContent = '';
+      }
+      for (const button of body.querySelectorAll('[data-s2d-normal]')) {
+        button.onclick = () => {
+          const i = Number(button.dataset.s2dNormal);
+          const input = body.querySelector(`[data-s2d-row="${i}"]`);
+          input.value = [input.value,...t.rows[i][1]].filter(Boolean).join('\n');
+        };
+      }
+      for (const button of body.querySelectorAll('[data-s2d-unclear]')) {
+        button.onclick = () => {body.querySelector(`[data-s2d-row="${button.dataset.s2dUnclear}"]`).value = 'Không khảo sát rõ.';};
+      }
+      if (!locked) body.querySelector('[data-s2d-save]').onclick = () => save().then(()=>notify('Đã lưu nháp')).catch(error);
+      async function upload(file) {
+        await save();
+        await fileRequest(`/imaging/reports/${rid}/images`, file);
+        await edit(rid);
+      }
+      const drop = body.querySelector('[data-s2d-drop]');
+      if (!locked) {
+        body.querySelector('[data-s2d-upload]').onchange = event => {
+          const file = event.target.files[0];
+          if (file) upload(file).catch(error);
+        };
+        drop.ondragover = event => {event.preventDefault();};
+        drop.ondrop = async event => {
+          event.preventDefault();
+          try {for (const file of event.dataTransfer.files) await upload(file);} catch(e) {error(e);}
+        };
+        box.onpaste = async event => {
+          const item = [...event.clipboardData.items].find(x=>x.type.startsWith('image/'));
+          if (!item) return;
+          event.preventDefault();
+          try {
+            const file = item.getAsFile();
+            if (file.size>5*1024*1024) throw new Error('Ảnh vượt dung lượng cho phép');
+            const bitmap = await createImageBitmap(file);
+            if (bitmap.width*bitmap.height>20000000) {bitmap.close();throw new Error('Ảnh quá lớn');}
+            const canvas = document.createElement('canvas');
+            canvas.width=bitmap.width;canvas.height=bitmap.height;
+            const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(bitmap,0,0);bitmap.close();
+            const jpg=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.9));
+            if (!jpg) throw new Error('Không chuyển được ảnh dán');
+            await upload(new File([jpg],'anh-dan.jpg',{type:'image/jpeg'}));
+          } catch(e) {error(e);}
+        };
+      } else box.onpaste = null;
+      for (const item of r.images) {
+        const response = await fetch(`/api/imaging/reports/${rid}/images/${item.id}`,{headers:authHeader()});
+        if (!response.ok) throw new Error('Không đọc được ảnh');
+        const url = URL.createObjectURL(await response.blob());
+        const container = document.createElement('div');
+        container.innerHTML = `<img data-blob src="${url}" alt="Ảnh kết quả ${item.id}">${locked?'':'<button type="button">Xóa ảnh</button>'}`;
+        if (!locked) container.querySelector('button').onclick = async () => {
+          try {await save();await api(`/imaging/reports/${rid}/images/${item.id}`,{method:'DELETE'});await edit(rid);} catch(e) {error(e);}
+        };
+        body.querySelector('[data-s2d-images]').append(container);
+      }
+      body.querySelectorAll('[data-s2d-print]').forEach(button => {button.onclick = async () => {
+        try {
+          await save();
+          const response = await fetch(`/api/imaging/reports/${rid}/form?fmt=${button.dataset.s2dPrint}`,{headers:authHeader()});
+          if (!response.ok) throw new Error((await response.json()).detail);
+          const url=URL.createObjectURL(await response.blob());
+          const a=document.createElement('a');a.href=url;a.download=`MD-HA-${rid}.${button.dataset.s2dPrint}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+        } catch(e) {error(e);}
+      };});
+      const sign = body.querySelector('[data-s2d-sign]');
+      if (sign) sign.onclick = async () => {
+        try {
+          await save();
+          const state = await api(`/document-signatures/${r.template.category}/${rid}`);
+          const confirm = dialog('Ký phiếu bằng chữ ký của bạn');
+          confirm.querySelector('[data-s2d-body]').innerHTML = '<form><label class="field">Nhập lại mật khẩu<input type="password" autocomplete="current-password" required></label><button>Ký phiếu</button></form>';
+          confirm.querySelector('form').onsubmit = async event => {
+            event.preventDefault();
+            try {await api(`/document-signatures/${r.template.category}/${rid}`,{method:'POST',body:{content_hash:state.content_hash,password:confirm.querySelector('input').value}});confirm.close();await edit(rid);} catch(e) {confirm.querySelector('[data-s2d-error]').textContent=e.message;}
+          };
+        } catch(e) {error(e);}
+      };
+      const correct = body.querySelector('[data-s2d-correct]');
+      if (correct) correct.onclick = () => {
+        const confirm=dialog('Lập phiếu đính chính');
+        confirm.querySelector('[data-s2d-body]').innerHTML='<form><label class="field">Lý do đính chính<textarea minlength="8" maxlength="1000" required></textarea></label><button>Lập phiếu</button></form>';
+        confirm.querySelector('form').onsubmit=async event=>{
+          event.preventDefault();
+          try {const next=await api(`/imaging/reports/${rid}/corrections`,{method:'POST',body:{reason:confirm.querySelector('textarea').value}});confirm.close();await edit(next.id);} catch(e) {confirm.querySelector('[data-s2d-error]').textContent=e.message;}
+        };
+      };
+    }
+    await reports();
+  }
+  document.addEventListener('click', async event => {
+    const button=event.target.closest('[data-s2d-order],[data-s2d-catalog]');
+    if (!button) return;
+    event.preventDefault();
+    try {
+      if (button.dataset.s2dOrder) await openOrder(Number(button.dataset.s2dOrder));
+      else {
+        const box=dialog('Danh mục mẫu siêu âm / X-quang');
+        const rows=await api('/imaging/templates');
+        box.querySelector('[data-s2d-body]').innerHTML=rows.map(t=>`<section><b>${esc(t.name)}</b><p>${esc(t.content.yc)}</p><button type="button" data-template="${esc(t.code)}" data-active="${t.active}">${t.active?'Tắt mẫu':'Bật mẫu'}</button><details><summary>Xem nội dung gốc</summary>${t.content.rows.map(([label,lines])=>`<p><b>${esc(label)}</b><br>${lines.map(esc).join('<br>')}</p>`).join('')}<p>Kết luận: ${esc(t.content.kl||'')}</p><p>Lời dặn: ${esc(t.content.dan||'')}</p></details></section>`).join('');
+        box.querySelectorAll('[data-template]').forEach(b=>{b.onclick=async()=>{
+          try {const active=b.dataset.active!=='1';await api('/imaging/templates/'+b.dataset.template,{method:'PUT',body:{active}});b.dataset.active=active?'1':'0';b.textContent=active?'Tắt mẫu':'Bật mẫu';} catch(e) {message(e);}
+        };});
+      }
+    } catch(e) {message(e);}
+  });
+})();

@@ -687,3 +687,11 @@ table.table.s2b-table td[data-label]::before{display:none!important}
 .s2c-sign-dialog input{box-sizing:border-box;width:100%;border:1px solid #6F8F7E;min-height:44px}
 .s2c-sign-dialog button{min-height:44px;min-width:88px}
 .s2c-sign-dialog [role=alert]{color:#B42318}
+
+.s2d-dialog { width:min(900px,95vw); max-height:90vh; overflow:auto; color:#0B1F17; font-size:14px; }
+.s2d-dialog textarea { width:100%; min-height:80px; border:1px solid #6F8F7E; font-size:14px; }
+.s2d-dialog button { min-height:44px; min-width:88px; margin:4px; }
+.s2d-dialog section { padding:10px 0; border-bottom:1px solid #6F8F7E; }
+[data-s2d-drop] { padding:12px; border:2px dashed #6F8F7E; }
+[data-s2d-images] { display:flex; flex-wrap:wrap; gap:10px; }
+[data-s2d-images] img { max-width:240px; max-height:180px; object-fit:contain; }

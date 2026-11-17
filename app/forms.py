@@ -182,6 +182,9 @@ def fill_clinic_header(doc, ctx):
                         section.top_margin = Pt(max(section.top_margin.pt, section.header_distance.pt+height+12))
 
 def generate_docx(kind, ctx):
+    if ctx.get('imaging'):
+        from .imaging_forms import render
+        return render(ctx['imaging'], 'docx')
     if kind in ('rx','order','lab'):
         from .s2c_forms import from_context, render
         return render(from_context(kind,ctx), 'docx')
@@ -389,6 +392,9 @@ def font_name():
 def pdf_safe(s):return xml_escape(clean(s)).replace('\n','<br/>')
 
 def generate_pdf(kind,ctx):
+    if ctx.get('imaging'):
+        from .imaging_forms import render
+        return render(ctx['imaging'], 'pdf')
     if kind in ('rx','order','lab'):
         from .s2c_forms import from_context, render
         return render(from_context(kind,ctx), 'pdf')

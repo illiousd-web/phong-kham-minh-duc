@@ -11,7 +11,7 @@ from .auth import verify
 from .clinic_profile import read_profile
 from .s2c_forms import from_context, from_m6, laboratory, printed_content
 
-KINDS = Literal['rx', 'order', 'lab', 'clinical_rx', 'lab_report']
+KINDS = Literal['rx', 'order', 'lab', 'clinical_rx', 'lab_report', 'ultrasound', 'xray']
 
 
 class SignInput(BaseModel):
@@ -53,6 +53,17 @@ def clinical_print_data(c, rx):
 
 
 def load_document(c, kind, object_id):
+    if kind in ('ultrasound','xray'):
+        from .imaging import report, model, complete
+        r = report(c, object_id)
+        m = model(c, r)
+        if m['kind'] != kind:
+            raise HTTPException(404, 'Không có loại phiếu này')
+        complete(m)
+        state = c.execute('SELECT o.status,v.status AS visit_status FROM orders o JOIN visits v ON v.id=o.visit_id WHERE o.id=?',(r['order_id'],)).fetchone()
+        allowed = bool(r['snapshot']) or (state['status'] not in ('cancelled','requested') and state['visit_status']!='cancelled' and (state['visit_status']!='completed' or bool(r['replaces_id'])))
+        return {'models':[m], 'actor':m['actor'], 'visit_id':m['visit_id'], 'allowed':allowed,
+                'locked':bool(r['snapshot']), 'content_hash':content_hash([m])}
     if kind == 'clinical_rx':
         r = c.execute('SELECT * FROM clinical_prescriptions WHERE id=?', (object_id,)).fetchone()
         if not r:
@@ -112,6 +123,10 @@ def signature_notice(c, kind, object_id, signature):
 def install_document_signatures(app, db, principal, require, audit, now):
     def authorized(c, kind, oid, u):
         require(u, 'doctor')
+        if kind in ('ultrasound','xray'):
+            from .imaging import report, access
+            r = report(c, oid)
+            access(c,u,r['order_id'])
         d = load_document(c, kind, oid)
         if d['actor'] != u['id']:
             raise HTTPException(403, 'Chỉ bác sĩ kê đơn / chỉ định hoặc chính người duyệt xét nghiệm được ký phiếu')
@@ -131,7 +146,9 @@ def install_document_signatures(app, db, principal, require, audit, now):
     def sign(kind: KINDS, object_id: int, data: SignInput, u=Depends(principal)):
         # Password hashing is deliberately outside the database write/backup lock.
         with db() as c:
-            authorized(c, kind, object_id, u)
+            initial = authorized(c, kind, object_id, u)
+            if initial.get('locked'):
+                raise HTTPException(409, 'Phiếu đã ký, phải lập phiếu đính chính')
             account = c.execute('SELECT * FROM users WHERE id=? AND active=1', (u['id'],)).fetchone()
         if not account or not verify(data.password, account['salt'], account['password_hash']):
             with db(True) as c:
@@ -147,6 +164,8 @@ def install_document_signatures(app, db, principal, require, audit, now):
             if LAN:
                 c.execute('SELECT id FROM visits WHERE id=? FOR UPDATE', (d['visit_id'],))
                 d = authorized(c, kind, object_id, u)
+            if d.get('locked'):
+                raise HTTPException(409, 'Phiếu đã ký, phải lập phiếu đính chính')
             if not hmac.compare_digest(data.content_hash, d['content_hash']):
                 raise HTTPException(409, 'Nội dung đã thay đổi; mở lại phiếu trước khi ký')
             image = c.execute('SELECT image FROM user_signatures WHERE user_id=?', (u['id'],)).fetchone()
@@ -159,6 +178,19 @@ def install_document_signatures(app, db, principal, require, audit, now):
                 render(model, 'pdf')
             c.execute('INSERT INTO document_signatures(document_kind,document_id,visit_id,signed_by,signed_at,content_hash,image,username) VALUES(?,?,?,?,?,?,?,?)',
                       (kind, object_id, d['visit_id'], u['id'], stamp, d['content_hash'], bytes(image['image']), current['username']))
+            if kind in ('ultrasound','xray'):
+                from .imaging import report
+                from .practitioners import scope_warning
+                from .main import FILES
+                from .ui_settings import read_settings, settings_path
+                scope_warning(c,u,kind,object_id,now,block=read_settings(settings_path(FILES))['block_practitioner_scope'])
+                r = report(c, object_id)
+                frozen = {k:v for k,v in d['models'][0].items() if k not in ('signature','signature_notice','successor')}
+                c.execute('UPDATE imaging_reports SET snapshot=? WHERE id=?', (json.dumps(frozen,ensure_ascii=False),object_id))
+                c.execute("UPDATE orders SET status='approved',approved_by=?,approved_at=?,result_by=?,result_text=? WHERE id=?",
+                          (u['id'],stamp,r['created_by'],'Kết luận: '+r['conclusion'],r['order_id']))
+                from .domain import status_refresh
+                status_refresh(c,d['visit_id'])
             audit(c, u, 'document_signed', kind, object_id, json.dumps({
                 'signed_by': u['id'], 'signed_at': stamp, 'content_hash': d['content_hash'],
                 'signature_sha256': hashlib.sha256(bytes(image['image'])).hexdigest()}))

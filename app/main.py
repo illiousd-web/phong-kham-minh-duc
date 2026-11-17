@@ -92,6 +92,8 @@ def init_db():
         migrate_s2b(c)
         from .s2c_migration import migrate_s2c
         migrate_s2c(c)
+        from .s2d_migration import migrate_s2d
+        migrate_s2d(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -174,7 +176,7 @@ async def security_headers(request:Request,call_next):
     response.headers['X-Frame-Options']='DENY'
     response.headers['Referrer-Policy']='no-referrer'
     response.headers['Cache-Control']='no-store'
-    response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"
     return response
 
 @app.get('/',include_in_schema=False)
@@ -507,7 +509,13 @@ def list_orders(u=Depends(principal),visit_id:int|None=None,history:bool=False):
         if visit_id is None:where.append('NOT ('+ACTIVE_ORDERS+')' if history else ACTIVE_ORDERS)
         rows=[dict(x) for x in c.execute(orders_sql(' AND '.join(where),hide_results,limit=100 if history else None),args)]
         from .m5 import decorate_orders
-        return decorate_orders(c,rows)
+        decorated = decorate_orders(c,rows)
+        if decorated and not hide_results:
+            ids=[item['id'] for item in decorated]
+            reports={item['order_id']:item['id'] for item in c.execute('SELECT order_id,id FROM imaging_reports WHERE replaces_id IS NULL AND order_id IN ('+','.join('?' for _ in ids)+')',ids)}
+            for item in decorated:
+                item['imaging_report_id']=reports.get(item['id'])
+        return decorated
 
 class ResultInput(BaseModel):
     version:int=Field(ge=0)
@@ -522,6 +530,8 @@ def submit_result(order_id:int,data:ResultInput,u=Depends(principal)):
         if not order:raise HTTPException(404,'Không có chỉ định')
         if c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(order_id,)).fetchone():raise HTTPException(409,'Phiếu theo chỉ số phải sửa / điều chỉnh trong Xét nghiệm M5')
         if order['status'] not in ('ordered','pending_review'):raise HTTPException(409,'Kết quả đã duyệt, không được sửa trực tiếp')
+        if c.execute('SELECT 1 FROM imaging_reports WHERE order_id=?', (order_id,)).fetchone():
+            raise HTTPException(409, 'Phiếu hình ảnh phải nhập và ký trong Siêu âm/X-quang')
         from .order_result_versions import save_version
         version=save_version(c,order,data,u,NOW())
         c.execute("UPDATE orders SET result_text=?,result_by=?,status='pending_review' WHERE id=?",(data.result_text,u['id'],order_id))
@@ -538,6 +548,8 @@ def approve_result(order_id:int,u=Depends(principal)):
         if o['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ phụ trách')
         if c.execute("SELECT status FROM visits WHERE id=?",(o['visit_id'],)).fetchone()['status'] in ('completed','cancelled'):raise HTTPException(409,'Lượt khám đã kết thúc')
         if o['status']!='pending_review' or not o['result_text'].strip():raise HTTPException(409,'Chưa có kết quả chờ duyệt')
+        if c.execute('SELECT 1 FROM imaging_reports WHERE order_id=?', (order_id,)).fetchone():
+            raise HTTPException(409, 'Phiếu hình ảnh phải nhập và ký trong Siêu âm/X-quang')
         from .ui_settings import read_settings, settings_path
         warnings=scope_warning(c,u,o['category'],order_id,NOW,block=read_settings(settings_path(FILES))['block_practitioner_scope'])
         from .order_result_versions import approve_version
@@ -566,6 +578,8 @@ def add_attachment(order_id:int,file:UploadFile=File(...),u=Depends(principal)):
             if o and o['visit_status'] in ('completed','cancelled'):raise HTTPException(409,'Lượt khám đã kết thúc')
             if not o:raise HTTPException(404,'Không có chỉ định')
             if c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(order_id,)).fetchone():raise HTTPException(409,'Phiếu theo chỉ số không nhận sửa qua tệp kết quả cũ')
+            if c.execute('SELECT 1 FROM imaging_reports WHERE order_id=?', (order_id,)).fetchone():
+                raise HTTPException(409, 'Phiếu hình ảnh phải nhập và ký trong Siêu âm/X-quang')
             if o['status'] in ('approved','cancelled','requested'):raise HTTPException(409,'Kết quả đã duyệt')
             if LAN:check_upload(FILES,len(raw))
             previous=o['file_key']
@@ -943,7 +957,10 @@ def print_form(kind:str,item_id:int,u=Depends(principal)):
                 data['approved_name']=printed_name(c,data.get('approved_by'))
                 data['result_by_name']=printed_name(c,data.get('result_by'))
         if kind=='clinical':data['addenda']=[dict(x) for x in c.execute("SELECT * FROM visit_addenda WHERE visit_id=? AND status='approved' ORDER BY id",(item_id,))]
-        pdf=pdf_document(kind,data)
+        if kind=='result' and data.get('category') in ('ultrasound','xray') and c.execute('SELECT 1 FROM imaging_reports WHERE order_id=?',(item_id,)).fetchone():
+            pdf=generate_pdf(data['category'],form_context(c,data['category'],item_id))
+        else:
+            pdf=pdf_document(kind,data)
         audit(c,u,'form_pdf_generated_demo',kind,item_id)
         return Response(content=pdf,media_type='application/pdf',headers={
             'Content-Disposition':f'attachment; filename="MinhDuc_{kind}_{item_id}.pdf"',
@@ -983,6 +1000,11 @@ def form_context(c, kind: str, object_id: int):
         context['order']=order
     if kind=='visit':context['addenda']=[dict(x) for x in c.execute("SELECT a.*,u.full_name AS author_name FROM visit_addenda a JOIN users u ON u.id=a.created_by WHERE a.visit_id=? AND a.status='approved' ORDER BY a.id",(visit_id,))]
     for appendix in context.get('addenda',[]):appendix['author_name']=printed_name(c,appendix['created_by'])
+    if kind in ('ultrasound','xray'):
+        from .imaging import print_model
+        imaging = c.execute('SELECT * FROM imaging_reports WHERE order_id=? AND replaces_id IS NULL', (object_id,)).fetchone()
+        if imaging:
+            context['imaging'] = print_model(c, dict(imaging))
     if rx:
         context['rx']=rx
         context['doctor_name']=printed_name(c,rx.get('doctor_id'))
@@ -1000,6 +1022,9 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
     elif kind=='rx':require(u,'doctor','pharmacy')
     else:require(u,'doctor','technician')
     with db('access') as c:
+        if kind in ('ultrasound','xray'):
+            from .imaging import access
+            access(c,u,object_id)
         context=form_context(c,kind,object_id)
         v=context['visit'];o=context.get('order')
         if kind in ('visit','order','followup'):
@@ -1104,3 +1129,6 @@ install_clinic_profile(app, db, principal, require, audit, NOW)
 
 from .document_signatures import install_document_signatures
 install_document_signatures(app, db, principal, require, audit, NOW)
+
+from .imaging import install_imaging
+install_imaging(app,db,principal,require,audit,NOW)
