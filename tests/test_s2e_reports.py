@@ -38,11 +38,12 @@ def sample(tmp_path_factory):
                             'cancelled' if i==2 else 'waiting', at2 if i==1 else at1))
                   for i in range(3)]
         charges = [insert('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',
-                          (vid,label,amount,at2 if idx==3 else at1))
+                          (vid,label,amount,at2 if idx in (3, 6) else at1))
                    for idx,(vid,label,amount) in enumerate([
                        (visits[0],'Khám',100000),(visits[0],'Xét nghiệm',50000),
                        (visits[0],'Thuốc',30000),(visits[1],'Khám',120000),
-                       (visits[2],'Khoản hủy',90000)])]
+                       (visits[2],'Khoản hủy',90000),
+                       (visits[0],'Điện tim',40000),(visits[1],'Thủ thuật',60000)])]
         manual = insert('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,NULL,?)',
                         (visits[0],'Dịch vụ nhập giá tay',at1))
         c.execute("""INSERT INTO manual_charge_prices(charge_id,amount,description,priced_by,priced_at,request_key)
@@ -58,6 +59,15 @@ def sample(tmp_path_factory):
                               VALUES(?,?,?,?,?)""",(visits[0],'lab','Xét nghiệm',doctors[0],at1))
         c.execute("INSERT INTO charge_sources(charge_id,source_type,source_id) VALUES(?,'order',?)",
                   (charges[1],lab_order))
+        for category, label, charge_id, visit_id, doctor_id in (
+            ('ecg', 'Điện tim', charges[5], visits[0], doctors[0]),
+            ('procedure', 'Thủ thuật', charges[6], visits[1], doctors[1]),
+        ):
+            service_order = insert("""INSERT INTO orders(visit_id,category,name,requested_by,created_at)
+                                   VALUES(?,?,?,?,?)""", (visit_id, category, label, doctor_id,
+                                                        at2 if category == 'procedure' else at1))
+            c.execute("INSERT INTO charge_sources(charge_id,source_type,source_id) VALUES(?,'order',?)",
+                      (charge_id, service_order))
         cancelled_order = insert("""INSERT INTO orders(visit_id,category,name,requested_by,status,created_at)
                 VALUES(?,?,?,?,?,?)""",(visits[1],'xray','Chỉ định hủy',doctors[1],'cancelled',at2))
         imaging_order = insert("""INSERT INTO orders(visit_id,category,name,requested_by,created_at)
@@ -112,18 +122,25 @@ def test_amounts_visits_cashier_and_corrections(sample):
     assert revenue.status_code==200,revenue.text
     values = revenue.json()
     assert values['totals']['medicine']==30000
-    assert values['totals']['clinical']==50000
+    assert values['totals']['clinical']==90000  # 50,000 lab + 40,000 ECG
+    assert values['totals']['procedure']==60000
     assert values['totals']['other']==290000  # Includes 70,000 manually priced service
-    assert values['totals']['gross']==370000  # 90,000 void is excluded
+    assert values['totals']['gross']==470000  # 90,000 void is excluded
     assert values['totals']['discount']==20000
-    assert values['totals']['revenue']==350000
+    assert values['totals']['revenue']==450000
     assert values['totals']['payments']==200000
     assert values['totals']['refund']==10000
     assert values['totals']['paid']==190000
-    assert values['totals']['outstanding']==160000
+    assert values['totals']['outstanding']==260000
     assert sum(r['discount'] for r in values['rows'])==20000
     assert sum(r['refund'] for r in values['rows'])==10000
     assert {r['day'] for r in values['rows']}=={'2099-06-18','2099-06-19'}
+    by_day = {row['day']: row for row in values['rows']}
+    assert by_day['2099-06-18']['clinical']==90000  # Both lab and ECG
+    assert by_day['2099-06-18']['procedure']==0
+    assert by_day['2099-06-19']['procedure']==60000
+    assert by_day['2099-06-18']['outstanding']==160000
+    assert by_day['2099-06-19']['outstanding']==100000
     visits = client.get('/api/reports/visits',headers=manager,params=params()).json()
     assert visits['total']==2 and visits['cancelled']==1
     assert len(visits['rows'])==3 and len(visits['by_doctor'])==2
@@ -170,14 +187,22 @@ def test_manual_price_and_effective_adjustments_are_used(sample):
                          (sample['discount'],sample['refund'])).fetchone()[0]==2
     value = client.get('/api/reports/revenue',
                        headers=sample['actors']['quanly'],params=params()).json()
-    assert sum(row['medicine']+row['clinical']+row['other']-row['discount']
+    assert sum(row['medicine']+row['clinical']+row['procedure']+row['other']-row['discount']
                for row in value['rows']) == value['totals']['revenue']
     assert sum(row['payments']-row['refund'] for row in value['rows'])==value['totals']['paid']
     book = load_workbook(BytesIO(client.get('/api/reports/revenue/export',
                          headers=sample['actors']['quanly'],params=params()).content),read_only=True)
     header = [cell.value for cell in book.active[1]]
     assert 'Giảm giá' in header and 'Hoàn tiền' in header
+    assert 'Thủ thuật' in header and 'Chênh lệch trong ngày' in header
+    assert 'Chưa thu' not in header
+    daily_values = list(book.active.iter_rows(values_only=True))
+    assert sum(row[header.index('Thủ thuật')] for row in daily_values[1:])==60000
     total = list(book['Tổng kỳ'].iter_rows(values_only=True))
-    assert total[1][header.index('Phát sinh sau giảm')]==350000
-    assert total[1][header.index('Đã thu thuần')]==190000
+    total_header = total[0]
+    assert 'Chưa thu' in total_header and 'Chênh lệch trong ngày' not in total_header
+    assert total[1][total_header.index('Thủ thuật')]==60000
+    assert total[1][total_header.index('Phát sinh sau giảm')]==450000
+    assert total[1][total_header.index('Đã thu thuần')]==190000
+    assert total[1][total_header.index('Chưa thu')]==260000
     book.close()

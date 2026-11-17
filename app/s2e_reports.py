@@ -36,7 +36,7 @@ def revenue_report(c, start, end):
     days = {}
 
     def bucket(key):
-        return days.setdefault(key, dict(day=key, medicine=0, clinical=0, other=0,
+        return days.setdefault(key, dict(day=key, medicine=0, clinical=0, procedure=0, other=0,
                                          gross=0, discount=0, revenue=0, payments=0,
                                          refund=0, paid=0, outstanding=0))
 
@@ -50,8 +50,14 @@ def revenue_report(c, start, end):
             continue
         row = bucket(day(ch['created_at']))
         value = ch['amount'] or 0
-        group = ('medicine' if ch['source_type'] == 'dispense_item' else
-                 'clinical' if ch['source_type'] == 'order' and ch['category'] in ('lab', 'ultrasound', 'xray') else 'other')
+        if ch['source_type'] == 'dispense_item':
+            group = 'medicine'
+        elif ch['source_type'] == 'order' and ch['category'] in ('lab', 'ultrasound', 'xray', 'ecg'):
+            group = 'clinical'
+        elif ch['source_type'] == 'order' and ch['category'] == 'procedure':
+            group = 'procedure'
+        else:
+            group = 'other'
         row[group] += value
         row['gross'] += value
 
@@ -75,7 +81,7 @@ def revenue_report(c, start, end):
         row['paid'] = row['payments'] - row['refund']
         row['outstanding'] = row['revenue'] - row['paid']
     totals = {key: sum(row[key] for row in rows) for key in
-              ('medicine','clinical','other','gross','discount','revenue','payments','refund','paid','outstanding')}
+              ('medicine','clinical','procedure','other','gross','discount','revenue','payments','refund','paid','outstanding')}
     return {'date_from': start, 'date_to': end, 'rows': rows, 'totals': totals}
 
 
@@ -184,10 +190,11 @@ def corrections_report(c, start, end):
 
 COLS = {
     'revenue': [('day','Ngày',''),('medicine','Thuốc','n'),('clinical','Cận lâm sàng','n'),
-                ('other','Khám và dịch vụ khác','n'),('gross','Tổng phát sinh trước giảm','n'),
+                ('procedure','Thủ thuật','n'),('other','Khám và dịch vụ khác','n'),
+                ('gross','Tổng phát sinh trước giảm','n'),
                 ('discount','Giảm giá','n'),('revenue','Phát sinh sau giảm','n'),
                 ('payments','Tiền thu trước hoàn','n'),('refund','Hoàn tiền','n'),
-                ('paid','Đã thu thuần','n'),('outstanding','Chênh lệch chưa thu','n')],
+                ('paid','Đã thu thuần','n'),('outstanding','Chênh lệch trong ngày','n')],
     'visits': [('day','Ngày',''),('patient_code','Mã người bệnh',''),
                ('patient_name','Họ tên',''),('doctor_name','Bác sĩ',''),
                ('status_name','Trạng thái','')],
@@ -228,7 +235,9 @@ def xlsx(kind, data):
     add_sheet(sheet, COLS[kind], data['rows'])
     if kind == 'revenue':
         total = dict(data['totals'], day='TỔNG KỲ')
-        add_sheet(book.create_sheet('Tổng kỳ'), COLS[kind], [total])
+        total_columns = [(key, 'Chưa thu' if key == 'outstanding' else label, fmt)
+                         for key, label, fmt in COLS[kind]]
+        add_sheet(book.create_sheet('Tổng kỳ'), total_columns, [total])
     if kind == 'visits':
         add_sheet(book.create_sheet('Theo ngày'), [('day','Ngày',''),('visits','Lượt khám','n'),('cancelled','Lượt hủy','n')], data['by_day'])
         add_sheet(book.create_sheet('Theo bác sĩ'), [('doctor_name','Bác sĩ',''),('visits','Lượt khám','n'),('cancelled','Lượt hủy','n')], data['by_doctor'])
