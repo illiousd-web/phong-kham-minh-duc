@@ -713,11 +713,33 @@ function Test-MinhDucProcessIdentity {
 
 function Get-MinhDucVenvProcessTree {
     param([string]$Venv, [hashtable]$Known)
-    # Chỉ tin đường dẫn tệp chạy; không suy luận từ dòng lệnh hoặc quan hệ cha con.
-    $installRoot = Split-Path -Parent $Venv
-    return @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-        Test-MinhDucVenvPythonPath -ExecutablePath $_.ExecutablePath -Venv $installRoot
-    })
+    $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    $selected = @{}
+    $envPath = 'C:\ProgramData\MinhDuc\clinic.env'
+    foreach ($item in $all) {
+        $key = [string]$item.ProcessId
+        $parts = @([regex]::Matches([string]$item.CommandLine, '"[^"\r\n]*"|[^\s]+') | ForEach-Object { $_.Value.Trim('"') })
+        $withEnv = $false
+        for ($i=1; $i -lt $parts.Count-2; $i++) {
+            if ($parts[$i] -ceq '-c' -or -not $parts[$i].StartsWith('-')) { break }
+            if ($parts[$i] -ceq '-m' -and $parts[$i+1] -ceq 'scripts.with_env' -and $parts[$i+2].Replace('/','\') -ieq $envPath) { $withEnv = $true }
+            if ($parts[$i] -ceq '-m') { break }
+        }
+        $root = $item.Name -in @('python.exe','pythonw.exe') -and ((Test-MinhDucVenvPythonPath -ExecutablePath $item.ExecutablePath -Venv $Venv) -or $withEnv)
+        if ($root -or ($Known.ContainsKey($key) -and (Test-MinhDucProcessIdentity $Known[$key] $item))) { $selected[$key] = $item }
+    }
+    do {
+        $added = $false
+        foreach ($item in $all) {
+            $key = [string]$item.ProcessId
+            $parent = $selected[[string]$item.ParentProcessId]
+            if (-not $selected.ContainsKey($key) -and $parent -and (-not $item.CreationDate -or -not $parent.CreationDate -or $item.CreationDate -ge $parent.CreationDate)) {
+                $selected[$key] = $item; $added = $true
+            }
+        }
+    } while ($added)
+    foreach ($key in $selected.Keys) { $Known[$key] = $selected[$key] }
+    return @($selected.Values)
 }
 
 function Wait-MinhDucVenvPythonExit {

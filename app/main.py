@@ -1002,8 +1002,10 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
     with db('access') as c:
         context=form_context(c,kind,object_id)
         v=context['visit'];o=context.get('order')
-        if kind in ('visit','order','followup') or (kind=='rx' and 'doctor' in u['roles']):
+        if kind in ('visit','order','followup'):
             if v['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ được phân công')
+        if kind=='rx' and 'doctor' in u['roles'] and u['id'] not in (v['doctor_id'], context['rx'].get('doctor_id')):
+            raise HTTPException(403,'Không phải bác sĩ kê đơn hoặc phụ trách lượt khám')
         if kind=='rx' and 'doctor' not in u['roles'] and 'pharmacy' not in u['roles']:
             raise HTTPException(403,'Không được truy cập đơn')
         if kind=='lab' and c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(object_id,)).fetchone():raise HTTPException(409,'Chọn nhóm và in phiếu theo chỉ số trong Xét nghiệm M5')

@@ -373,7 +373,7 @@ def test_migration_rejects_legacy_s2c_sqlite(legacy):
             migrate_s2c(c)
 
 
-def test_signature_binds_logo_and_selected_template(actors, tmp_path, monkeypatch):
+def test_signature_survives_logo_and_template_change(actors, tmp_path, monkeypatch):
     import shutil
     import app.s2c_forms as forms
     from tests.s2c_cases import sign_current
@@ -391,19 +391,33 @@ def test_signature_binds_logo_and_selected_template(actors, tmp_path, monkeypatc
     logo_original = logo.read_bytes()
     logo.write_bytes(signature_image('red'))
     changed = clients['doctor'].get(url)
-    assert image_count(changed) == 1
-    assert 'Phiếu đã thay đổi sau khi ký, cần ký lại' in PdfReader(BytesIO(changed.content)).pages[0].extract_text()
+    assert image_count(changed) == 2
+    assert 'cần ký lại' not in PdfReader(BytesIO(changed.content)).pages[0].extract_text()
     logo.write_bytes(logo_original)
     assert image_count(clients['doctor'].get(url)) == 2
     other = templates/forms.TEMPLATES['order']
     other.write_bytes(other.read_bytes()+b'changed')
     assert image_count(clients['doctor'].get(url)) == 2
+    assert 'cần ký lại' not in PdfReader(BytesIO(clients['doctor'].get(url).content)).pages[0].extract_text()
     template = templates/forms.TEMPLATES['rx']
     original = template.read_bytes()
     template.write_bytes(original+b'changed')
-    assert image_count(clients['doctor'].get(url)) == 1
+    assert image_count(clients['doctor'].get(url)) == 2
+    assert 'cần ký lại' not in PdfReader(BytesIO(clients['doctor'].get(url).content)).pages[0].extract_text()
     template.write_bytes(original)
     assert image_count(clients['doctor'].get(url)) == 2
+
+    with db(True) as c:
+        original_instructions = c.execute('SELECT instructions FROM prescriptions WHERE id=?', (rid,)).fetchone()['instructions']
+        c.execute('UPDATE prescriptions SET instructions=? WHERE id=?', ('Lời dặn chuyên môn thay đổi giả lập', rid))
+    changed = clients['doctor'].get(url)
+    assert image_count(changed) == 1
+    assert 'cần ký lại' in PdfReader(BytesIO(changed.content)).pages[0].extract_text()
+    with db(True) as c:
+        c.execute('UPDATE prescriptions SET instructions=? WHERE id=?', (original_instructions, rid))
+    restored = clients['doctor'].get(url)
+    assert image_count(restored) == 2
+    assert 'cần ký lại' not in PdfReader(BytesIO(restored.content)).pages[0].extract_text()
 
 
 def test_migration_installs_replace_guard_on_existing_v17():
