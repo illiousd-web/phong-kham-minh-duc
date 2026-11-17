@@ -780,6 +780,9 @@ def create_payment(data:PaymentInput,u=Depends(principal)):
 from .stock import install_stock
 install_stock(app, db, principal, require, audit, NOW)
 
+from .s2e_reports import install_s2e_reports
+install_s2e_reports(app, db, principal, require)
+
 @app.get('/api/overview')
 def overview(u=Depends(principal)):
     with db() as c:
