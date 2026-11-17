@@ -200,6 +200,10 @@ def install_imaging(app, db, principal, require, audit, now):
                 raise HTTPException(409, 'Phiếu đã được sửa, tải lại trước khi lưu')
             if len(data.descriptions) != len(t['rows']) or any(len(x)>5000 for x in data.descriptions):
                 raise HTTPException(422, 'Số mục hoặc độ dài mô tả không phù hợp')
+            new_request = data.request if data.request is not None else r['request']
+            if (json.dumps(data.descriptions,ensure_ascii=False) == r['descriptions'] and new_request == r['request']
+                    and data.conclusion == r['conclusion'] and data.advice == r['advice']):
+                return {'version': r['version']}
             c.execute('UPDATE imaging_reports SET descriptions=?,request=?,conclusion=?,advice=?,version=version+1,updated_at=?,updated_by=? WHERE id=?',
                       (json.dumps(data.descriptions,ensure_ascii=False),data.request if data.request is not None else r['request'],data.conclusion,data.advice,now(),u['id'],rid))
             audit(c,u,'imaging_saved','imaging_report',rid)
