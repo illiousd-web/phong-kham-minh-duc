@@ -58,6 +58,7 @@ def test_b_stock_dispense_charge_once_and_no_double_issue():
     before=sum(r['quantity'] for r in pre if r['name']==med['name'])
     assert client.put(f"/api/medicines/{med['id']}/price",headers=pharm,json={'unit_price':12000}).status_code==403
     assert client.put(f"/api/medicines/{med['id']}/price",headers=mgr,json={'unit_price':12000}).status_code==200
+    assert med['id'] in [x['id'] for x in client.get('/api/dispensable-medicines', headers=doc).json()]
     rx=client.post('/api/prescriptions',headers=doc,json={'visit_id':v,'items':[{'medicine_id':med['id'],'quantity':3,'directions':'Uong thu nghiem'}]})
     assert rx.status_code==201,rx.text
     rid=rx.json()['id']
@@ -140,3 +141,4 @@ def test_a_retry_same_order_request_key_does_not_bill_twice():
     assert after-before==99000
     bad=client.post('/api/orders',headers=d,json={**body,'category':'ecg'})
     assert bad.status_code==409
+

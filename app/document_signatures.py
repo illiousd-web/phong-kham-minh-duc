@@ -73,7 +73,7 @@ def load_document(c, kind, object_id):
         p = form_context(c, kind, object_id)
         r = p.get('rx') if kind == 'rx' else p.get('order')
         models = [from_context(kind, p)]
-        actor = r.get('approved_by') if kind == 'lab' else p['visit']['doctor_id']
+        actor = r.get('approved_by') if kind == 'lab' else r.get('doctor_id') if kind == 'rx' else p['visit']['doctor_id']
         vid = p['visit']['id']
         allowed = r['status'] == 'approved' if kind == 'lab' else r['status'] != 'cancelled'
         if kind == 'lab' and c.execute('SELECT 1 FROM lab_reports WHERE order_id=?', (object_id,)).fetchone():
@@ -102,6 +102,8 @@ def valid_signature(c, kind, object_id, document=None, *, models=None):
 
 
 def signature_notice(c, kind, object_id, signature):
+    if kind == 'rx' and load_document(c, kind, object_id)['actor'] is None:
+        return 'Đơn thuốc chưa có bác sĩ kê đơn, cần ký lại'
     if signature is None and c.execute('SELECT 1 FROM document_signatures WHERE document_kind=? AND document_id=? LIMIT 1', (kind, object_id)).fetchone():
         return 'Phiếu đã thay đổi sau khi ký, cần ký lại'
     return ''

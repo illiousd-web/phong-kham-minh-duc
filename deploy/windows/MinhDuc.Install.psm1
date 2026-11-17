@@ -801,4 +801,74 @@ function Invoke-MinhDucAccessRetry {
     }
 }
 
+# Phục hồi theo giao dịch: luôn giữ một bản nguyên vẹn cho đến khi xóa xong.
+function Restore-MinhDucOldVenv {
+    param([Parameter(Mandatory=$true)][string]$Venv, [Parameter(Mandatory=$true)][string]$OldVenv)
+    $parent = Split-Path -Parent $Venv
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $pending = New-Object 'System.Collections.Generic.List[string]'
+    for ($attempt=1; $attempt -le 10; $attempt++) {
+        Write-Luu ('Trả môi trường Python: lần thử ' + $attempt + '/10')
+        $tag = [guid]::NewGuid().ToString('N')
+        $temp = Join-Path $parent ('.venv-quay-ve-' + $tag)
+        $snapshot = Join-Path $parent ('.venv-du-phong-' + $tag)
+        $moved = $false; $installed = $false; $saved = $false
+        try {
+            foreach ($pendingPath in @($pending.ToArray())) {
+                Remove-Item -LiteralPath $pendingPath -Recurse -Force -ErrorAction Stop
+                [void]$pending.Remove($pendingPath)
+            }
+            if (-not (Test-Path -LiteralPath $OldVenv -PathType Container)) { throw 'Thiếu môi trường Python cũ.' }
+            if (Test-Path -LiteralPath $Venv) {
+                # Phát hiện tệp đang mở trước khi chuyển hoặc xóa bất kỳ nội dung nào.
+                foreach ($file in Get-ChildItem -LiteralPath $Venv -Recurse -File -Force -ErrorAction Stop) {
+                    try { $handle = [IO.File]::Open($file.FullName, 'Open', 'Read', 'None'); $handle.Dispose() }
+                    catch { throw [IO.IOException]::new(('Không truy cập được tệp: ' + $file.FullName), $_.Exception) }
+                }
+                Copy-Item -LiteralPath $Venv -Destination $snapshot -Recurse -Force -ErrorAction Stop
+                $saved = $true
+                Rename-Item -LiteralPath $Venv -NewName (Split-Path $temp -Leaf) -ErrorAction Stop
+                $moved = $true
+            }
+            Rename-Item -LiteralPath $OldVenv -NewName (Split-Path $Venv -Leaf) -ErrorAction Stop
+            $installed = $true
+            if ($moved) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction Stop }
+            if ($saved) {
+                try { Remove-Item -LiteralPath $snapshot -Recurse -Force -ErrorAction Stop }
+                catch { Write-Luu ('Không xóa được bản dự phòng môi trường tại ' + $snapshot + ': ' + $_.Exception.Message) }
+            }
+            return
+        } catch {
+            $failure = $_
+            # Nếu xóa dở, dùng bản sao nguyên vẹn để trả lại đúng .venv ban đầu.
+            try {
+                if ($installed) { Rename-Item -LiteralPath $Venv -NewName (Split-Path $OldVenv -Leaf) -ErrorAction Stop }
+                if ($moved) {
+                    if (-not $saved) { throw 'Thiếu bản dự phòng môi trường.' }
+                    Rename-Item -LiteralPath $snapshot -NewName (Split-Path $Venv -Leaf) -ErrorAction Stop
+                    $saved = $false
+                }
+                if (Test-Path -LiteralPath $temp) {
+                    try { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction Stop }
+                    catch {
+                        $pending.Add($temp)
+                        Write-Luu ('Giữ thư mục tạm còn khóa: ' + $temp + ': ' + $_.Exception.Message)
+                    }
+                }
+                if (Test-Path -LiteralPath $snapshot) { Remove-Item -LiteralPath $snapshot -Recurse -Force -ErrorAction Stop }
+            } catch { throw ('Không trả lại được môi trường ban đầu; giữ bản dự phòng ' + $snapshot + ' và thư mục tạm ' + $temp + ': ' + $_.Exception.Message) }
+            $exception = $failure.Exception
+            $retryable = $false
+            while ($exception) {
+                if ($exception -is [IO.IOException] -or $exception -is [UnauthorizedAccessException]) { $retryable = $true; break }
+                $exception = $exception.InnerException
+            }
+            if (-not $retryable -or $attempt -eq 10 -or $watch.Elapsed.TotalSeconds + $attempt -gt 60) {
+                throw ('Không thể trả môi trường Python; tệp hoặc đường dẫn bị khóa: ' + $failure.Exception.Message)
+            }
+            Start-Sleep -Seconds $attempt
+        }
+    }
+}
+
 Export-ModuleMember -Function * -Variable @()

@@ -983,7 +983,9 @@ def form_context(c, kind: str, object_id: int):
         context['order']=order
     if kind=='visit':context['addenda']=[dict(x) for x in c.execute("SELECT a.*,u.full_name AS author_name FROM visit_addenda a JOIN users u ON u.id=a.created_by WHERE a.visit_id=? AND a.status='approved' ORDER BY a.id",(visit_id,))]
     for appendix in context.get('addenda',[]):appendix['author_name']=printed_name(c,appendix['created_by'])
-    if rx:context['rx']=rx
+    if rx:
+        context['rx']=rx
+        context['doctor_name']=printed_name(c,rx.get('doctor_id'))
     if kind=='followup':
         r=c.execute('SELECT * FROM prescriptions WHERE visit_id=?',(visit_id,)).fetchone()
         if r:context['rx']=dict(r)
@@ -1000,8 +1002,10 @@ def export_form(kind:str,object_id:int,fmt:Literal['pdf','docx']='pdf',u=Depends
     with db('access') as c:
         context=form_context(c,kind,object_id)
         v=context['visit'];o=context.get('order')
-        if kind in ('visit','order','followup') or (kind=='rx' and 'doctor' in u['roles']):
+        if kind in ('visit','order','followup'):
             if v['doctor_id']!=u['id']:raise HTTPException(403,'Không phải bác sĩ được phân công')
+        if kind=='rx' and 'doctor' in u['roles'] and u['id'] not in (v['doctor_id'], context['rx'].get('doctor_id')):
+            raise HTTPException(403,'Không phải bác sĩ kê đơn hoặc phụ trách lượt khám')
         if kind=='rx' and 'doctor' not in u['roles'] and 'pharmacy' not in u['roles']:
             raise HTTPException(403,'Không được truy cập đơn')
         if kind=='lab' and c.execute('SELECT 1 FROM lab_reports WHERE order_id=?',(object_id,)).fetchone():raise HTTPException(409,'Chọn nhóm và in phiếu theo chỉ số trong Xét nghiệm M5')

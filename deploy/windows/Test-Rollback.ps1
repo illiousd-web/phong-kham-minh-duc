@@ -2,6 +2,7 @@
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'MinhDuc.Install.psm1') -Force -DisableNameChecking
 & (Join-Path $PSScriptRoot 'Test-VenvRecovery.ps1')
+& (Join-Path $PSScriptRoot 'Test-VenvRetry.ps1')
 function Wait-MinhDucVenvPythonExit { param($Venv) }
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'CapNhat.ps1'), [ref]$tokens, [ref]$errors)

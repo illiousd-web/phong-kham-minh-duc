@@ -8,6 +8,7 @@ MODE = os.getenv('CLINIC_MODE', 'demo')
 if MODE not in ('demo', 'lan'):
     raise RuntimeError('CLINIC_MODE must be demo or lan')
 LAN = MODE == 'lan'
+IN_DONG_THU_NGHIEM = os.getenv('IN_DONG_THU_NGHIEM', '1').strip().lower() not in ('0', 'false', 'off', 'no')
 DATABASE_URL = os.getenv('CLINIC_DATABASE_URL', '')
 ORIGIN = os.getenv('CLINIC_ORIGIN', '')
 DATA = Path(os.getenv('CLINIC_DATA_DIR', str(Path(__file__).resolve().parents[1] / 'data'))).resolve()

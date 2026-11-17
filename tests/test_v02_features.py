@@ -146,3 +146,29 @@ def test_admin_cannot_export_unassigned_clinical():
     assert client.get(f'/api/print/rx/999999',headers=token('quantri')).status_code==404  # noqa: F541 - Preserve the existing assertion exactly; no interpolation is needed.
     # Denial must not expose a patient note to an unauthorized cashier
     assert client.get(f'/api/visits/{visit}',headers=token('thungan')).json().get('diagnosis') is None
+
+
+def test_fefo_uses_earliest_unexpired_lots_first():
+    import secrets
+    from app.main import db
+    tag=secrets.token_hex(8)
+    pharmacy=token('duoc')
+    r=client.post('/api/catalog/medicines', headers=token('quanly'), json={'name':'Thuốc FEFO giả lập '+tag, 'base_unit':'viên'})
+    assert r.status_code == 201, r.text
+    med_id=r.json()['id']
+    for label, expiry, quantity in [('far','2099-12-31',40), ('near','2097-12-31',10), ('middle','2098-12-31',20)]:
+        r=client.post('/api/stock/receipts', headers=pharmacy, json={'medicine_id':med_id, 'lot_number':label+tag, 'expiry_date':expiry, 'quantity':quantity})
+        assert r.status_code == 201, r.text
+    with db(True) as c:
+        c.execute('INSERT INTO stock_lots(medicine_id,lot_number,expiry_date,quantity,quarantined) VALUES(?,?,?,?,0)', (med_id, 'expired'+tag, '2000-01-01', 50))
+    before=client.get('/api/stock', headers=pharmacy).json()
+    lots={x['lot_number']:x for x in before if x['medicine_id']==med_id}
+    r=client.post('/api/stock/issues', headers=pharmacy, json={'medicine_id':med_id, 'quantity':35, 'purpose':'Xuất thử giả lập'})
+    assert r.status_code == 201, r.text
+    assert r.json()['lots'] == [{'lot_id':lots['near'+tag]['id'], 'quantity':10}, {'lot_id':lots['middle'+tag]['id'], 'quantity':20}, {'lot_id':lots['far'+tag]['id'], 'quantity':5}]
+    after={x['lot_number']:x for x in client.get('/api/stock',headers=pharmacy).json() if x['medicine_id']==med_id}
+    assert after['near'+tag]['quantity']==0
+    assert after['middle'+tag]['quantity']==0
+    assert after['far'+tag]['quantity']==35
+    assert after['expired'+tag]['quantity']==50
+    assert client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':med_id,'quantity':36,'purpose':'Xuất thử giả lập'}).status_code==409
