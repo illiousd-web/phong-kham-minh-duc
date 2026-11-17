@@ -185,6 +185,9 @@ jobs:
       - name: Five public D0 sources, exact hashes and fail-before-write packaging
         shell: powershell
         run: .\deploy\windows\Test-DanhMucGoc.ps1
+      - name: S2d public imaging template source and exact hash
+        shell: powershell
+        run: .\deploy\windows\Test-S2dTemplates.ps1
       - name: Read-only inventory smoke on hosted Windows (not clinic hardware)
         shell: powershell
         run: |

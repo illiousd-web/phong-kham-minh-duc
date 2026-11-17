@@ -321,7 +321,9 @@ class Day:
         self.audit('order_created', 'order', oid, 'doctor')
         if result:
             text = f'Kết luận: Kết quả {service["category"]} giả lập {self.tag}'
-            if v['ui']:
+            # S2d removes the legacy imaging editor. Keep this C4 ledger fixture's
+            # legacy results via HTTPS; structured imaging UI has its own tests.
+            if v['ui'] and service['category'] not in ('ultrasound', 'xray'):
                 t = self.ui('technician'); pick(t, 'order', oid)
                 t.locator('[data-form="result"] [name="result_text"]').fill(text)
                 submit(t, 'result')

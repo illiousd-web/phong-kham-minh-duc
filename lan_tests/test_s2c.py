@@ -65,7 +65,7 @@ def test_immutable_runtime_role_and_owner(clients):
     with db(True) as c:
         with pytest.raises(ValueError, match='đã có bản ký'):
             migrate_s2c(c, postgres=True, down=True)
-        assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 17
+        assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 19
 
 
 @pytest.mark.parametrize('legacy', ['version', 'column'])

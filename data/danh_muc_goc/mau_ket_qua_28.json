@@ -1,0 +1,892 @@
+[
+ {
+  "xq": false,
+  "n": "Siêu âm ổ bụng (nam)",
+  "yc": "Siêu âm ổ bụng tổng quát",
+  "rows": [
+   [
+    "Gan",
+    [
+     "Kích thước bình thường, bờ đều, nhu mô đều, không có khối khu trú.",
+     "Tĩnh mạch cửa không giãn, không có huyết khối."
+    ]
+   ],
+   [
+    "Đường mật",
+    [
+     "Đường mật trong gan không giãn; OMC không giãn, d = …… mm; không có giun, sỏi."
+    ]
+   ],
+   [
+    "Túi mật",
+    [
+     "Túi mật không to, dịch mật trong, không giãn, không có sỏi."
+    ]
+   ],
+   [
+    "Lách",
+    [
+     "Kích thước bình thường, nhu mô đều, không thấy khối bất thường."
+    ]
+   ],
+   [
+    "Tụy",
+    [
+     "Không to, nhu mô đồng nhất, ống tụy không giãn, không có sỏi."
+    ]
+   ],
+   [
+    "Thận trái",
+    [
+     "Nhu mô đều, kích thước bình thường, đài bể thận không giãn, không có sỏi."
+    ]
+   ],
+   [
+    "Thận phải",
+    [
+     "Nhu mô đều, kích thước bình thường, đài bể thận không giãn, không có sỏi."
+    ]
+   ],
+   [
+    "Niệu quản",
+    [
+     "Hai bên không giãn, không thấy sỏi."
+    ]
+   ],
+   [
+    "Bàng quang",
+    [
+     "Thành mỏng, không có sỏi."
+    ]
+   ],
+   [
+    "Tiền liệt tuyến",
+    [
+     "Kích thước bình thường, nhu mô đều."
+    ]
+   ],
+   [
+    "Khác",
+    [
+     "Không có dịch tự do ổ bụng."
+    ]
+   ]
+  ],
+  "kl": "Hiện tại không phát hiện bất thường trong ổ bụng."
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm ổ bụng (nữ)",
+  "yc": "Siêu âm ổ bụng tổng quát",
+  "rows": [
+   [
+    "Gan",
+    [
+     "Kích thước bình thường, bờ đều, nhu mô đều, không có khối khu trú.",
+     "Tĩnh mạch cửa không giãn, không có huyết khối."
+    ]
+   ],
+   [
+    "Đường mật",
+    [
+     "Đường mật trong gan không giãn; OMC không giãn, d = …… mm; không có giun, sỏi."
+    ]
+   ],
+   [
+    "Túi mật",
+    [
+     "Túi mật không to, dịch mật trong, không giãn, không có sỏi."
+    ]
+   ],
+   [
+    "Lách",
+    [
+     "Kích thước bình thường, nhu mô đều, không thấy khối bất thường."
+    ]
+   ],
+   [
+    "Tụy",
+    [
+     "Không to, nhu mô đồng nhất, ống tụy không giãn, không có sỏi."
+    ]
+   ],
+   [
+    "Thận trái",
+    [
+     "Nhu mô đều, kích thước bình thường, đài bể thận không giãn, không có sỏi."
+    ]
+   ],
+   [
+    "Thận phải",
+    [
+     "Nhu mô đều, kích thước bình thường, đài bể thận không giãn, không có sỏi."
+    ]
+   ],
+   [
+    "Niệu quản",
+    [
+     "Hai bên không giãn, không thấy sỏi."
+    ]
+   ],
+   [
+    "Bàng quang",
+    [
+     "Thành mỏng, không có sỏi."
+    ]
+   ],
+   [
+    "Tử cung – phần phụ",
+    [
+     "Tử cung ngả …… , kích thước bình thường.",
+     "Buồng trứng hai bên không thấy khối bất thường."
+    ]
+   ],
+   [
+    "Khác",
+    [
+     "Không có dịch tự do ổ bụng."
+    ]
+   ]
+  ],
+  "kl": "Hiện tại không phát hiện bất thường trong ổ bụng."
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm tử cung – phần phụ",
+  "yc": "Siêu âm tử cung, phần phụ",
+  "rows": [
+   [
+    "Tử cung",
+    [
+     "Kích thước bình thường.",
+     "Tư thế: ngả …… .",
+     "Mật độ âm vang cơ tử cung đều."
+    ]
+   ],
+   [
+    "Nội mạc",
+    [
+     "Dày …… mm."
+    ]
+   ],
+   [
+    "Buồng trứng phải",
+    [
+     "Kích thước bình thường, không có u nang."
+    ]
+   ],
+   [
+    "Buồng trứng trái",
+    [
+     "Kích thước bình thường, không có u nang."
+    ]
+   ],
+   [
+    "Cùng đồ sau",
+    [
+     "Không có dịch."
+    ]
+   ]
+  ],
+  "kl": "Hiện tại không phát hiện bất thường ở tử cung, buồng trứng."
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm tử cung – phần phụ (có thai)",
+  "yc": "Siêu âm tử cung, phần phụ",
+  "rows": [
+   [
+    "Tử cung",
+    [
+     "Kích thước: to hơn bình thường.",
+     "Tư thế: ngả …… .",
+     "Trong buồng tử cung có hình ảnh túi thai …… ."
+    ]
+   ],
+   [
+    "Buồng trứng phải",
+    [
+     "Kích thước bình thường, không có u nang."
+    ]
+   ],
+   [
+    "Buồng trứng trái",
+    [
+     "Kích thước bình thường, không có u nang."
+    ]
+   ],
+   [
+    "Cùng đồ sau",
+    [
+     "Không có dịch."
+    ]
+   ]
+  ],
+  "kl": null
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm thai nhỏ",
+  "yc": "Siêu âm thai",
+  "rows": [
+   [
+    "Tử cung",
+    [
+     "Có hình ảnh …… thai trong buồng tử cung."
+    ]
+   ],
+   [
+    "Chiều dài đầu mông (CRL)",
+    [
+     "…… mm"
+    ]
+   ],
+   [
+    "Tim thai",
+    [
+     "…… lần/phút"
+    ]
+   ],
+   [
+    "Doppler mạch rốn",
+    [
+     "(+)"
+    ]
+   ],
+   [
+    "Noãn hoàng",
+    [
+     "Tròn, rõ."
+    ]
+   ],
+   [
+    "Cử động thai",
+    [
+     "(+)"
+    ]
+   ],
+   [
+    "Rau thai",
+    [
+     "Bám …… ."
+    ]
+   ],
+   [
+    "Ối",
+    [
+     "Dịch ối trong, lượng ối bình thường."
+    ]
+   ],
+   [
+    "Dự kiến sinh",
+    [
+     "…… / …… / 20……"
+    ]
+   ]
+  ],
+  "kl": "Thai …… tuần …… ngày."
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm thai nhỏ 4D",
+  "yc": "Siêu âm thai 4D",
+  "rows": [
+   [
+    "I. Tử cung – phần phụ",
+    [
+     "Cấu trúc âm đồng nhất, không thấy khối khu trú."
+    ]
+   ],
+   [
+    "Số lượng thai · ngôi thai",
+    [
+     "Số lượng thai: …… · Ngôi thai: …… ."
+    ]
+   ],
+   [
+    "Tim thai",
+    [
+     "…… lần/phút (tim có 4 buồng)."
+    ]
+   ],
+   [
+    "Cử động thai",
+    [
+     "Bình thường."
+    ]
+   ],
+   [
+    "ĐK lưỡng đỉnh (BPD)",
+    [
+     "…… mm"
+    ]
+   ],
+   [
+    "Chu vi vòng đầu (HC)",
+    [
+     "…… mm"
+    ]
+   ],
+   [
+    "Diện tích vòng bụng (FTA)",
+    [
+     "…… mm²"
+    ]
+   ],
+   [
+    "Chiều dài xương đùi (FL)",
+    [
+     "…… mm"
+    ]
+   ],
+   [
+    "Ước lượng cân nặng",
+    [
+     "…… g (± 200 g)"
+    ]
+   ],
+   [
+    "Dự kiến sinh",
+    [
+     "…… / …… / 20…… (± 10 ngày)"
+    ]
+   ],
+   [
+    "Túi ối",
+    [
+     "Hình dạng bình thường; thành túi ối đều, ranh giới rõ, không méo mó, gồ ghề.",
+     "Lượng nước ối bình thường, không có mảng hồi âm."
+    ]
+   ],
+   [
+    "Bánh nhau",
+    [
+     "Bám …… ."
+    ]
+   ]
+  ],
+  "kl": "Thai …… tuần …… ngày."
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm thai 4D",
+  "yc": "Siêu âm thai 4D",
+  "rows": [
+   [
+    "I. Tử cung – phần phụ",
+    [
+     "Cấu trúc âm đồng nhất, không thấy khối khu trú."
+    ]
+   ],
+   [
+    "Số lượng thai · ngôi thai",
+    [
+     "Số lượng thai: …… · Ngôi thai: …… ."
+    ]
+   ],
+   [
+    "Tim thai",
+    [
+     "…… lần/phút (tim có 4 buồng)."
+    ]
+   ],
+   [
+    "Cử động thai",
+    [
+     "Bình thường."
+    ]
+   ],
+   [
+    "ĐK lưỡng đỉnh (BPD)",
+    [
+     "…… mm"
+    ]
+   ],
+   [
+    "Hộp sọ · não",
+    [
+     "Hộp sọ phát triển bình thường. Não thất bên bình thường. Hố sau bình thường.",
+     "Kích thước ngang tiểu não: …… mm."
+    ]
+   ],
+   [
+    "Chu vi vòng đầu (HC)",
+    [
+     "…… mm"
+    ]
+   ],
+   [
+    "Mặt",
+    [
+     "Khoảng cách hai mắt: …… mm."
+    ]
+   ],
+   [
+    "Ngực · bụng",
+    [
+     "Phổi bình thường. Cơ hoành bình thường.",
+     "Diện tích vòng bụng (FTA): …… mm²."
+    ]
+   ],
+   [
+    "Cột sống · chi",
+    [
+     "Cột sống bình thường. Chi trên, chi dưới bình thường.",
+     "Xương cánh tay: …… mm · Xương đùi (FL): …… mm."
+    ]
+   ],
+   [
+    "Các hệ cơ quan",
+    [
+     "Hệ tiêu hóa, tiết niệu, sinh dục bình thường."
+    ]
+   ],
+   [
+    "Rau thai",
+    [
+     "Bám …… ."
+    ]
+   ],
+   [
+    "Nước ối",
+    [
+     "Lượng nước ối bình thường."
+    ]
+   ],
+   [
+    "Ước lượng cân nặng",
+    [
+     "…… g (± 200 g)"
+    ]
+   ],
+   [
+    "Dự kiến sinh",
+    [
+     "…… / …… / 20…… (± 10 ngày)"
+    ]
+   ]
+  ],
+  "kl": "Thai …… tuần …… ngày."
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm sàng lọc dị tật thai",
+  "yc": "Siêu âm sàng lọc, phân tích dị tật hình thái thai nhi",
+  "rows": [
+   [
+    "I. Tử cung – phần phụ",
+    [
+     "Tử cung: cấu trúc âm đồng nhất, không thấy khối bất thường.",
+     "Phần phụ hai bên: kích thước bình thường, không có khối bất thường."
+    ]
+   ],
+   [
+    "Thai",
+    [
+     "Số lượng thai: …… · Ngôi thai: …… · Cử động thai: bình thường."
+    ]
+   ],
+   [
+    "Đầu – não",
+    [
+     "BPD …… mm · HC …… mm · CRL …… mm.",
+     "Đồi thị – vách trong suốt, thể trai, đám rối mạch mạc, thùy nhộng, não thất III–IV, thung lũng Sylvius: bình thường.",
+     "ĐK ngang tiểu não …… mm · Hố sau …… mm · Ngã tư não thất …… mm · Phân số não thất …… (< 0,6) · CS đầu …… % (75–85 %)."
+    ]
+   ],
+   [
+    "Mặt – cổ",
+    [
+     "Khoảng cách 2 hố mắt …… mm · Xương mũi …… mm.",
+     "Khoảng sáng sau gáy (11–13 tuần 6 ngày) …… mm · Độ dày da gáy (> 14 tuần) …… mm."
+    ]
+   ],
+   [
+    "Ngực – tim",
+    [
+     "Cơ hoành bình thường. Tim …… buồng; van 2 lá, van 3 lá, van Vieussens thanh mảnh; vách liên thất, màng ngoài tim, xuất phát mạch máu lớn bình thường.",
+     "Nhịp tim …… lần/phút · Đường kính tim …… mm."
+    ]
+   ],
+   [
+    "Bụng",
+    [
+     "Thực quản – dạ dày (+) · Tá tràng – ruột non – đại tràng (+) · Gan mật, thận 2 bên – bàng quang, thành bụng trước: bình thường.",
+     "Chu vi bụng (AC) …… mm · Diện tích bụng (FTA) …… mm²."
+    ]
+   ],
+   [
+    "Cột sống – chi",
+    [
+     "Cột sống bình thường. Trương lực bàn tay (+).",
+     "Xương đùi (FL) …… mm · Xương cánh tay …… mm · Bàn chân …… mm.",
+     "Điểm cốt hóa đầu dưới xương đùi (> 32 tuần) …… · đầu trên xương chày (> 37 tuần) …… ."
+    ]
+   ],
+   [
+    "Doppler",
+    [
+     "RI động mạch não giữa …… · RI động mạch rốn (> 20 tuần) …… · Tỉ số não/nhau (CPR > 1,0) …… ."
+    ]
+   ],
+   [
+    "Nước ối · nhau",
+    [
+     "Chỉ số ối (AFI): …… mm.",
+     "Nhau bám …… · Mức vôi hóa: …… ."
+    ]
+   ],
+   [
+    "Ước lượng · dự kiến sinh",
+    [
+     "Ước lượng cân nặng …… g (± 200 g) · Dự kiến sinh …… / …… / 20…… (± 10 ngày).",
+     "Số đo tương đương thai …… tuần …… ngày."
+    ]
+   ]
+  ],
+  "kl": "Thai …… tuần …… ngày."
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm tuyến giáp",
+  "yc": "Siêu âm tuyến giáp, vùng cổ",
+  "rows": [
+   [
+    "Thùy phải",
+    [
+     "Kích thước: …… · Nhu mô đều, không thấy khối bất thường."
+    ]
+   ],
+   [
+    "Thùy trái",
+    [
+     "Kích thước: …… · Nhu mô đều, không thấy khối bất thường."
+    ]
+   ],
+   [
+    "Eo giáp",
+    [
+     "Bình thường."
+    ]
+   ],
+   [
+    "Vùng cổ",
+    [
+     "Không thấy bất thường."
+    ]
+   ]
+  ],
+  "kl": "Tuyến giáp và vùng cổ hai bên bình thường."
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm tuyến vú",
+  "yc": "Siêu âm tuyến vú hai bên",
+  "rows": [
+   [
+    "Vú phải",
+    [
+     "Tổ chức tuyến đậm âm đều, không thấy khối thưa hay đậm âm bất thường trong tuyến.",
+     "Dây chằng Cooper không bị co kéo. Không thấy canxi hóa mạch máu."
+    ]
+   ],
+   [
+    "Hạch nách phải",
+    [
+     "Không thấy bất thường."
+    ]
+   ],
+   [
+    "Vú trái",
+    [
+     "Tổ chức tuyến đậm âm đều, không thấy khối thưa hay đậm âm bất thường trong tuyến.",
+     "Dây chằng Cooper không bị co kéo. Không thấy canxi hóa mạch máu."
+    ]
+   ],
+   [
+    "Hạch nách trái",
+    [
+     "Không thấy bất thường."
+    ]
+   ]
+  ],
+  "kl": "Hiện tại không phát hiện bất thường tuyến vú hai bên."
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm hạch vùng cổ",
+  "yc": "Siêu âm hạch cổ, góc hàm",
+  "rows": [
+   [
+    "Cổ và góc hàm",
+    []
+   ]
+  ],
+  "kl": null
+ },
+ {
+  "xq": false,
+  "n": "Siêu âm khớp gối",
+  "yc": "Siêu âm khớp gối …… (trái/phải)",
+  "rows": [
+   [
+    "Khớp gối",
+    []
+   ]
+  ],
+  "kl": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang cột sống cổ",
+  "yc": "Chụp cột sống cổ (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim cột sống cổ (T/N)",
+    [
+     "Đường cong sinh lý cột sống cổ bình thường.",
+     "Không thấy thoái hóa các thân đốt sống.",
+     "Không lún xẹp và trượt các thân đốt sống.",
+     "Các khe khớp không hẹp.",
+     "Không thấy bất thường cung sau và phần mềm cạnh sống cổ."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang cột sống thắt lưng",
+  "yc": "Chụp cột sống thắt lưng (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim cột sống thắt lưng (T/N)",
+    [
+     "Đường cong sinh lý cột sống bình thường.",
+     "Không thấy thoái hóa các thân đốt sống.",
+     "Không lún xẹp và trượt các thân đốt sống.",
+     "Các khe đốt sống không hẹp.",
+     "Không thấy bất thường cung sau và phần mềm cạnh sống."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang tim phổi",
+  "yc": "Chụp tim phổi (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim tim phổi (T/N)",
+    [
+     "Lồng ngực hai bên cân đối, không thấy bất thường xương và phần mềm thành ngực.",
+     "Hình tim không to.",
+     "Không thấy tràn dịch, tràn khí khoang màng phổi hai bên.",
+     "Phế huyết quản hai bên bình thường.",
+     "Góc sườn hoành hai bên sáng nhọn."
+    ]
+   ]
+  ],
+  "kl": "Hình tim không to. Hình phổi hai bên bình thường.",
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang lồng ngực",
+  "yc": "Chụp lồng ngực (thẳng, chếch)",
+  "rows": [
+   [
+    "Phim lồng ngực (thẳng, chếch)",
+    [
+     "Lồng ngực hai bên cân đối.",
+     "Không thấy hình ảnh tổn thương nhu mô phổi và các khoang màng phổi hai bên.",
+     "Không thấy gãy các cung xương sườn."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang ổ bụng không chuẩn bị",
+  "yc": "Chụp ổ bụng không chuẩn bị",
+  "rows": [
+   [
+    "Phim ổ bụng không chuẩn bị",
+    [
+     "Không thấy liềm hơi dưới cơ hoành hai bên.",
+     "Không thấy mức hơi – dịch bất thường."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang sọ não",
+  "yc": "Chụp sọ não (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim sọ não (T/N)",
+    [
+     "Không thấy lún, vỡ xương hộp sọ."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": "Theo dõi trong 48 giờ; nếu đau đầu, chóng mặt, buồn nôn cần đến bệnh viện để chụp cắt lớp vi tính."
+ },
+ {
+  "xq": true,
+  "n": "X-quang khung chậu",
+  "yc": "Chụp khung chậu thẳng",
+  "rows": [
+   [
+    "Phim khung chậu thẳng",
+    [
+     "Không thấy gãy, vỡ xương cánh chậu hai bên.",
+     "Không thấy gãy xương ụ ngồi, khớp mu, ngành ngồi mu.",
+     "Không thấy trật khớp háng hai bên."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang khớp háng",
+  "yc": "Chụp khớp háng hai bên",
+  "rows": [
+   [
+    "Phim khớp háng hai bên",
+    [
+     "Hiện tại không thấy gãy, trật xương khớp háng."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang khớp gối",
+  "yc": "Chụp khớp gối …… (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim khớp gối",
+    [
+     "Hiện tại không thấy hình ảnh tổn thương xương."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang khớp vai",
+  "yc": "Chụp khớp vai …… thẳng",
+  "rows": [
+   [
+    "Phim khớp vai",
+    [
+     "Hiện tại không phát hiện tổn thương khớp vai."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang khuỷu tay",
+  "yc": "Chụp khuỷu tay …… (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim khuỷu tay",
+    [
+     "Không thấy gãy xương và sai khớp khuỷu."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang cẳng tay",
+  "yc": "Chụp cẳng tay …… (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim cẳng tay",
+    [
+     "Không phát hiện tổn thương xương."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang cổ tay",
+  "yc": "Chụp cổ tay …… (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim cổ tay",
+    [
+     "Hiện tại không thấy tổn thương xương cổ tay."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang bàn tay",
+  "yc": "Chụp bàn tay …… (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim bàn tay",
+    []
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang cẳng chân",
+  "yc": "Chụp cẳng chân …… (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim cẳng chân",
+    [
+     "Hiện tại không thấy tổn thương xương cẳng chân."
+    ]
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ },
+ {
+  "xq": true,
+  "n": "X-quang bàn chân",
+  "yc": "Chụp bàn chân …… (thẳng, nghiêng)",
+  "rows": [
+   [
+    "Phim bàn chân",
+    []
+   ]
+  ],
+  "kl": null,
+  "dan": null
+ }
+]

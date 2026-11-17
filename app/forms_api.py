@@ -52,7 +52,7 @@ def mount_forms(app, db, principal, require, audit):
         if 'rx_id' in ctx:
             payload['rx']={'id':ctx['rx_id'],'drug_lines':ctx['drug_lines'],'instructions':ctx['instructions'],
                            'follow_up':ctx.get('follow_up'),'created_at':ctx['rx_created_at']}
-        if k in ('rx','order','lab'):
+        if k in ('rx','order','lab','ultrasound','xray') and 'canonical_context' in ctx:
             payload=ctx['canonical_context']
         if fmt=='docx':
             b=generate_docx(k,payload);mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -121,6 +121,9 @@ def mount_forms(app, db, principal, require, audit):
                 from .s2c_forms import from_context
                 ctx['canonical_context']['signature']=valid_signature(c,render_kind,order_id,models=[from_context(render_kind,ctx['canonical_context'])])
                 ctx['canonical_context']['signature_notice']=signature_notice(c,render_kind,order_id,ctx['canonical_context']['signature'])
+            if render_kind in ('ultrasound','xray'):
+                from .main import form_context
+                ctx['canonical_context']=form_context(c,render_kind,order_id)
             result=response(render_kind,ctx,format)
             audit(c,u,'demo_form_exported','order',order_id,f'{render_kind}.{format}')
             return result
