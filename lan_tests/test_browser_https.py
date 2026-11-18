@@ -65,7 +65,7 @@ def test_real_https_three_browser_roles_and_pdf():
                     assert '__Host-clinic=' not in page.evaluate('document.cookie')
                 # Mỗi vai trò vào thẳng màn hình công việc, chỉ thấy menu của mình, không còn menu mang số phiên bản.
                 # S2b: admin xem kho có giá (mục 1 lệnh S2b)
-                expected={'reception':['reception','prices','m6-list','m5-queue'],'doctor':['doctor','m6-list'],'cashier':['cashier'],'technician':['lab','m5-queue'],'pharmacy':['pharmacy','m6-list'],'admin':['admin','price-management','settings','m6-admin','m5-admin','stock']}
+                expected={'reception':['reception','prices','m6-list','m5-queue'],'doctor':['doctor','m6-list'],'cashier':['cashier'],'technician':['lab','m5-queue'],'pharmacy':['pharmacy','m6-list'],'admin':['admin','price-management','settings','m6-admin','m5-admin','s2e-reports','stock']}
                 for role,page in pages.items():
                     settle(page)
                     nav=page.locator('#navigation [data-action="navigate"]')
