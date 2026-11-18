@@ -30,7 +30,7 @@ def test_report_script_uses_escaped_templates_instead_of_direct_html_assignment(
     assert not re.search(r'\bonclick\s*=|\binnerHTML\s*(?:\+?=)', script, re.IGNORECASE)
     for value in ('data.warning', 'data.note', 'error.message'):
         assert 'esc(' + value + ')' in script
-    assert "esc(format==='money'?money(value):format==='date'?showDay(value):value)" in script
+    assert "esc(value===null?'—':format==='money'?money(value):format==='date'?showDay(value):value)" in script
 
 
 def test_report_script_is_served():

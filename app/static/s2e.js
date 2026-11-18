@@ -1,5 +1,5 @@
 'use strict';
-/* global SCREENS, menus, api, esc, money, t, card, stockDownload, render, notify, vietnamToday, showDay, dateField, parseDay, bindStockTables, auth */
+/* global SCREENS, menus, api, esc, money, t, card, stockDownload, render, notify, vietnamToday, showDay, dateField, parseDay, bindStockTables, auth, renderLogin */
 
 // The smoke harness also loads this asset manually after app.js.
 if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
@@ -11,7 +11,7 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
    const body=rows.map(row=>{
     const cells=columns.map(([,field,format])=>{
      const value=row[field];
-     const display=esc(format==='money'?money(value):format==='date'?showDay(value):value);
+     const display=esc(value===null?'—':format==='money'?money(value):format==='date'?showDay(value):value);
      const align=({money:'r',number:'r',date:'c',center:'c'})[format]||'';
      return `<td class="${align}" title="${display}">${display}</td>`;
     });
@@ -130,10 +130,12 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
   },
 
   async screen(){
-   const period=this.periods.get(auth)||{month:vietnamToday().slice(0,7)};
+   const session=auth;
+   const period=this.periods.get(session)||{month:vietnamToday().slice(0,7)};
    const query=new URLSearchParams(period).toString();
    const filenamePeriod=period.month||period.date_from+'_'+period.date_to;
    const cards=await Promise.all(this.reports.map(([kind,title])=>this.report(kind,title,query)));
+   if(auth!==session)return {html:'',after(){if(!auth)renderLogin();}};
    return {
     html:`<div class="s2b-standalone" data-s2e-query="${esc(query)}" data-s2e-filename-period="${esc(filenamePeriod)}">
      ${this.filter(period)}${cards.join('')}
