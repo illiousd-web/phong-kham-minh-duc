@@ -1,5 +1,9 @@
 """The updater must not turn logged recovery failures into a success result."""
 from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
 
 
 def test_recovery_collects_all_failures_before_reporting_success():
@@ -27,3 +31,15 @@ def test_windows_fault_drill_really_makes_rollback_cli_exit_23():
     def forbidden(*args): raise AssertionError('Không được gọi khôi phục thật khi đã chèn return 23')
     namespace['rollback_database']=forbidden
     assert namespace['main'](['--clinic-env','synthetic','rollback','--file','synthetic','--key','synthetic'])==23
+
+
+def test_venv_lock_diagnostics_at_rollback_failure():
+    powershell = shutil.which('powershell') or shutil.which('pwsh')
+    if not powershell:
+        pytest.skip('PowerShell is required for the rollback diagnostics test')
+    script = Path(__file__).with_name('Test-VenvLockDiagnostics.ps1')
+    result = subprocess.run(
+        [powershell, '-NoProfile', '-NonInteractive', '-File', str(script)],
+        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

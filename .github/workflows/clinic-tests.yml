@@ -591,6 +591,12 @@ jobs:
             Get-Content $log.FullName -Tail 400 -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '(?i)pass|pwd|secret' } | Select-Object -Last 80
           }
           $global:LASTEXITCODE = 0
+      - name: Print rollback Python lock diagnostics
+        if: failure()
+        run: |
+          Get-ChildItem -LiteralPath C:\ProgramData\MinhDuc\nhatky -Filter 'cap-nhat-*.log' -File -ErrorAction SilentlyContinue |
+            Select-String -SimpleMatch '[S2F2-VENV]' -Encoding UTF8 |
+            ForEach-Object { Write-Output ('{0}:{1} {2}' -f $_.Filename, $_.LineNumber, $_.Line) }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
