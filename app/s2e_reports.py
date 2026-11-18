@@ -120,8 +120,15 @@ def revenue_report(c, start, end):
     totals['known_due'] = sum(item['known_due'] or 0 for item in unpaid_visits)
     result = {'date_from': start, 'date_to': end, 'rows': rows,
               'totals': totals, 'unpaid_visits': unpaid_visits, 'note': NOTE}
-    if totals['unpriced_count'] > 0:
-        result['warning'] = UNPRICED_WARNING
+    warnings = []
+    if totals['unpriced_count'] > 0 or any(
+        visit['unpriced_count'] > 0 for visit in unpaid_visits
+    ):
+        warnings.append(UNPRICED_WARNING)
+    if any(visit['note'] == 'Giảm phí vượt phí, cần kiểm tra' for visit in unpaid_visits):
+        warnings.append('Có lượt giảm phí vượt phí, số chưa thu chưa đầy đủ')
+    if warnings:
+        result['warning'] = '\n'.join(warnings)
     return result
 
 
@@ -237,9 +244,9 @@ def corrections_report(c, start, end):
         JOIN patients p ON p.id=v.patient_id
         JOIN users u ON u.id=x.actor_id""", 'Hủy lượt khám')
     collect("""SELECT p.code AS patient_code,
-        (m.name || ': ' || CAST(ri.quantity AS TEXT) || ' ' || m.base_unit
-         || ' (' || r.status || ')') AS content,
-        u.full_name AS actor,r.created_at AS occurred_at,r.reason,
+        (m.name || ': ' || CAST(ri.quantity AS TEXT) || ' ' || m.base_unit) AS content,
+        ('Đề nghị: ' || requester.full_name || ' · Duyệt: ' || reviewer.full_name) AS actor,
+        r.reviewed_at AS occurred_at,r.reason,
         m.name AS medicine_name,ri.quantity,r.status
         FROM medication_returns r
         JOIN medication_return_items ri ON ri.return_id=r.id
@@ -247,7 +254,9 @@ def corrections_report(c, start, end):
         JOIN medicines m ON m.id=di.medicine_id
         JOIN dispensations d ON d.id=r.dispensation_id
         JOIN visits v ON v.id=d.visit_id JOIN patients p ON p.id=v.patient_id
-        JOIN users u ON u.id=r.requested_by""", 'Trả thuốc')
+        JOIN users requester ON requester.id=r.requested_by
+        JOIN users reviewer ON reviewer.id=r.reviewed_by
+        WHERE r.status='approved' AND r.reviewed_at IS NOT NULL""", 'Trả thuốc')
     for kind, label in (('discount', 'Giảm giá'), ('refund', 'Hoàn tiền')):
         collect("""SELECT p.code AS patient_code,
             (a.kind || ' #' || CAST(a.id AS TEXT) || ': ' || CAST(a.amount AS TEXT) || ' đ') AS content,

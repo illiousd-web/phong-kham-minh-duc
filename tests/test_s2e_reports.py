@@ -330,22 +330,50 @@ def test_return_two_tablets_in_corrections(sample):
             medicine_id,stock_lot_id,quantity,unit_price) VALUES(?,?,?,?,?,?)""",
             (disp,pi,mid,lot,5,1000))
         di=c.execute('SELECT last_insert_rowid()').fetchone()[0]
-        c.execute("""INSERT INTO medication_returns(dispensation_id,reason,requested_by,status,
-            created_at,request_key) VALUES(?,? ,?,'approved',?,?)""",
-            (disp,'Trả thuốc chưa sử dụng',user,sample['at2'],'s2e_return_two_pills'))
+        reviewer=c.execute("SELECT id FROM users WHERE username='quanly'").fetchone()[0]
+        c.execute("""INSERT INTO medication_returns(
+            dispensation_id,reason,requested_by,status,reviewed_by,
+            created_at,reviewed_at,request_key
+        ) VALUES(?,? ,?,'approved',?,?,?,?)""",
+            (disp,'Trả thuốc chưa sử dụng',user,reviewer,sample['at1'],
+             sample['at2'],'s2e_return_two_pills'))
         rid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
         c.execute("""INSERT INTO medication_return_items(return_id,dispensation_item_id,quantity)
             VALUES(?,?,2)""",(rid,di))
+        for status, key in (('pending','s2e_pending_return'),('rejected','s2e_rejected_return')):
+            c.execute("""INSERT INTO medication_returns(
+                dispensation_id,reason,requested_by,status,reviewed_by,
+                created_at,reviewed_at,request_key
+            ) VALUES(?,?,?,?,?,?,?,?)""",
+                (disp,'Yêu cầu không được tính',user,status,
+                 reviewer if status=='rejected' else None,
+                 sample['at1'],sample['at2'] if status=='rejected' else None,key))
+            rejected_or_pending=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+            c.execute("""INSERT INTO medication_return_items(
+                return_id,dispensation_item_id,quantity) VALUES(?,?,1)""",
+                (rejected_or_pending,di))
         medicine_name=c.execute('SELECT name FROM medicines WHERE id=?',(mid,)).fetchone()[0]
-    data=client.get('/api/reports/corrections',
-                    headers=sample['actors']['quanly'],params=params()).json()
-    matches=[r for r in data['rows'] if r['type']=='Trả thuốc']
-    assert len(matches)==1
+    manager=sample['actors']['quanly']
+    day_one=client.get('/api/reports/corrections',headers=manager,
+                       params={'date_from':'2099-06-18','date_to':'2099-06-18'}).json()
+    assert not any(row['type']=='Trả thuốc' for row in day_one['rows'])
+    day_two=client.get('/api/reports/corrections',headers=manager,
+                       params={'date_from':'2099-06-19','date_to':'2099-06-19'}).json()
+    matches=[r for r in day_two['rows'] if r['type']=='Trả thuốc']
+    assert len(matches)==1  # Pending and rejected requests do not appear.
     assert matches[0]['medicine_name']==medicine_name
     assert matches[0]['quantity']==2
-    assert matches[0]['actor']=='Thu ngân'
-    assert '2 viên' in matches[0]['content']
+    assert matches[0]['actor']=='Đề nghị: Thu ngân · Duyệt: Quản lý phòng khám'
+    assert matches[0]['occurred_at']=='2099-06-19 09:00:00'
+    assert matches[0]['content']==f'{medicine_name}: 2 viên'
+    assert 'approved' not in matches[0]['content']
     assert matches[0]['reason']=='Trả thuốc chưa sử dụng'
+    workbook=load_workbook(BytesIO(client.get('/api/reports/corrections/export',
+        headers=manager,params={'date_from':'2099-06-19','date_to':'2099-06-19'}).content),
+        read_only=True)
+    export_rows=list(workbook.active.iter_rows(values_only=True))
+    assert any('Đề nghị: Thu ngân · Duyệt: Quản lý phòng khám' in row for row in export_rows)
+    workbook.close()
 
 
 def test_imaging_correction_only_after_signature_and_by_signed_day(sample):
@@ -398,3 +426,64 @@ def test_overdiscount_invoice_409_is_flagged(sample):
     assert item['patient_code']=='S2E-OVER'
     assert item['known_due'] is None
     assert item['note']=='Giảm phí vượt phí, cần kiểm tra'
+    assert data['warning']=='Có lượt giảm phí vượt phí, số chưa thu chưa đầy đủ'
+    workbook=load_workbook(BytesIO(client.get('/api/reports/revenue/export',
+        headers=manager,params={'month':'2099-08'}).content),read_only=True)
+    assert all(sheet['A2'].value==data['warning'] for sheet in workbook.worksheets)
+    workbook.close()
+
+
+def test_visit_with_unpriced_charge_after_period_still_warns(sample):
+    """Period charge count stays zero; invoice sees a later unpriced charge."""
+    manager=sample['actors']['quanly']
+    out_of_period='2099-07-04T02:00:00+00:00'
+    with db(True) as c:
+        c.execute("""INSERT INTO charges(visit_id,label,amount,created_at)
+            VALUES(?,'Dịch vụ chưa có giá sau kỳ',NULL,?)""",
+            (sample['visits'][0],out_of_period))
+    june=client.get('/api/reports/revenue',headers=manager,params=params()).json()
+    assert june['totals']['unpriced_count']==0
+    assert all(row['unpriced_count']==0 for row in june['rows'])
+    unpaid=next(row for row in june['unpaid_visits']
+                if row['visit_id']==sample['visits'][0])
+    assert unpaid['unpriced_count']==1
+    assert june['warning']=='Còn khoản chưa nhập giá, doanh thu chưa đầy đủ'
+    book=load_workbook(BytesIO(client.get('/api/reports/revenue/export',
+        headers=manager,params=params()).content),read_only=True)
+    assert all(sheet['A2'].value==june['warning'] for sheet in book.worksheets)
+    book.close()
+
+
+def test_both_unpriced_and_overdiscount_warnings_are_shown(sample):
+    """A 409 invoice may also contain a charge with an unknown price."""
+    manager=sample['actors']['quanly']
+    stamp='2099-08-10T02:00:00+00:00'
+    after_period='2099-09-11T02:00:00+00:00'
+    with db(True) as c:
+        actor=c.execute("SELECT id FROM users WHERE username='quanly'").fetchone()[0]
+        c.execute("""INSERT INTO patients(code,full_name,sex,created_at)
+            VALUES('S2E-BOTH','Hai loại cảnh báo','Nam',?)""",(stamp,))
+        patient=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO visits(patient_id,doctor_id,created_by,created_at) VALUES(?,?,?,?)",
+                  (patient,sample['doctors'][0],actor,stamp))
+        visit=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,10000,?)",
+                  (visit,'Phí khám',stamp))
+        c.execute("INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,NULL,?)",
+                  (visit,'Chưa nhập giá ngoài kỳ',after_period))
+        c.execute("""INSERT INTO adjustments(visit_id,kind,amount,reason,status,
+            proposed_by,reviewed_by,proposed_at,reviewed_at)
+            VALUES(?,'discount',15000,'Lỗi giảm phí','approved',?,?,?,?)""",
+            (visit,actor,actor,stamp,stamp))
+    result=client.get('/api/reports/revenue',headers=manager,
+                      params={'month':'2099-08'}).json()
+    assert result['totals']['unpriced_count']==0
+    item=next(x for x in result['unpaid_visits'] if x['visit_id']==visit)
+    assert item['unpriced_count']==1 and item['known_due'] is None
+    assert result['warning']==(
+        'Còn khoản chưa nhập giá, doanh thu chưa đầy đủ\n'
+        'Có lượt giảm phí vượt phí, số chưa thu chưa đầy đủ')
+    book=load_workbook(BytesIO(client.get('/api/reports/revenue/export',
+        headers=manager,params={'month':'2099-08'}).content),read_only=True)
+    assert all(ws['A2'].value==result['warning'] for ws in book.worksheets)
+    book.close()
