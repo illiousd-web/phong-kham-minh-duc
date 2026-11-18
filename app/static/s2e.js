@@ -129,6 +129,46 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
    }
   },
 
+  bindControls(root){
+   const form=root.querySelector('[data-s2e-form]');
+   this.updateFields(form);
+   form.elements.period.addEventListener('change',()=>{
+    this.updateFields(form);
+   });
+   form.addEventListener('submit',async event=>{
+    event.preventDefault();
+    try{
+     const fields=new FormData(form);
+     const period=fields.get('period')==='month'?{month:fields.get('month')}:{
+      date_from:parseDay(fields.get('s2e_date_from'),'Từ ngày'),
+      date_to:parseDay(fields.get('s2e_date_to'),'Đến ngày')
+     };
+     if(fields.get('period')==='range'){
+      if(!period.date_from||!period.date_to)throw new Error('Nhập đủ từ ngày và đến ngày.');
+      if(period.date_from>period.date_to)throw new Error('Từ ngày phải trước hoặc bằng đến ngày.');
+     }
+     S2E.periods.set(auth,period);
+     await render();
+    }catch(error){
+     notify(error.message,true);
+    }
+   });
+   for(const button of root.querySelectorAll('[data-s2e-export]')){
+    button.addEventListener('click',async ()=>{
+     const {s2eQuery,s2eFilenamePeriod}=root.dataset;
+     const kind=button.dataset.s2eExport;
+     button.disabled=true;
+     try{
+      await stockDownload(`/reports/${kind}/export?${s2eQuery}`,`Bao_cao_${kind}_${s2eFilenamePeriod}.xlsx`);
+     }catch(error){
+      notify(error.message,true);
+     }finally{
+      button.disabled=false;
+     }
+    });
+   }
+  },
+
   async screen(){
    const session=auth;
    const period=this.periods.get(session)||{month:vietnamToday().slice(0,7)};
@@ -142,7 +182,7 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
     </div>`,
     after(){
      const root=document.querySelector('[data-s2e-query]');
-     S2E.updateFields(root.querySelector('[data-s2e-form]'));
+     S2E.bindControls(root);
      S2E.bindTables(root);
     }
    };
@@ -152,48 +192,4 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
  SCREENS['s2e-reports']=()=>S2E.screen();
  menus.manager.push(['s2e-reports','Báo cáo quản lý']);
  menus.admin.push(['s2e-reports','Báo cáo quản lý']);
-
- document.addEventListener('change',event=>{
-  if(!event.target.matches('[data-s2e-form] [name="period"]'))return;
-  S2E.updateFields(event.target.form);
- },true);
-
- document.addEventListener('submit',async event=>{
-  const form=event.target.closest('[data-s2e-form]');
-  if(!form)return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  try{
-   const fields=new FormData(form);
-   const period=fields.get('period')==='month'?{month:fields.get('month')}:{
-    date_from:parseDay(fields.get('s2e_date_from'),'Từ ngày'),
-    date_to:parseDay(fields.get('s2e_date_to'),'Đến ngày')
-   };
-   if(fields.get('period')==='range'){
-    if(!period.date_from||!period.date_to)throw new Error('Nhập đủ từ ngày và đến ngày.');
-    if(period.date_from>period.date_to)throw new Error('Từ ngày phải trước hoặc bằng đến ngày.');
-   }
-   S2E.periods.set(auth,period);
-   await render();
-  }catch(error){
-   notify(error.message,true);
-  }
- },true);
-
- document.addEventListener('click',async event=>{
-  const button=event.target.closest('[data-s2e-export]');
-  if(!button)return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  const {s2eQuery,s2eFilenamePeriod}=button.closest('[data-s2e-query]').dataset;
-  const kind=button.dataset.s2eExport;
-  button.disabled=true;
-  try{
-   await stockDownload(`/reports/${kind}/export?${s2eQuery}`,`Bao_cao_${kind}_${s2eFilenamePeriod}.xlsx`);
-  }catch(error){
-   notify(error.message,true);
-  }finally{
-   button.disabled=false;
-  }
- },true);
 }
