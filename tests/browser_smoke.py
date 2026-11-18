@@ -50,7 +50,7 @@ with sync_playwright() as p:
   page.add_style_tag(content=(ROOT/'app/static/styles.css').read_text(encoding='utf8'))
   page.evaluate("""() => {let storage={};Object.defineProperty(window,'sessionStorage',{configurable:true,value:{getItem:k=>storage[k]||null,setItem:(k,v)=>storage[k]=String(v),removeItem:k=>delete storage[k]}});window.fetch=async (path,opts={})=>{let o=await window.server_bridge(path,{method:opts.method||'GET',headers:opts.headers||{},body:typeof opts.body==='string'?opts.body:null});let raw=atob(o.base64), bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);return new Response(bytes,{status:o.status,headers:o.headers});};}""")
   page.add_script_tag(content=(ROOT/'app/static/app.js').read_text(encoding='utf8'))
-  for script in ('m6.js','m5.js'):page.add_script_tag(content=(ROOT/'app/static'/script).read_text(encoding='utf8'))
+  for script in ('m6.js','m5.js','s2e.js'):page.add_script_tag(content=(ROOT/'app/static'/script).read_text(encoding='utf8'))
   page.evaluate("document.dispatchEvent(new Event('DOMContentLoaded'));window.dispatchEvent(new Event('load'))")
   page.locator('[data-form=login]').wait_for(timeout=8000)
   assert page.locator('[data-form=login]').is_visible()
