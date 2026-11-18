@@ -145,3 +145,18 @@ def test_boot_checks_session_again_on_retry(https_server, failure):
             assert session in context.cookies()
         finally:
             browser.close()
+
+
+def test_boot_finishes_the_unauthenticated_session_request(https_server):
+    origin, _ = https_server
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'),
+                                             args=['--no-sandbox', '--disable-dev-shm-usage'])
+        try:
+            page = browser.new_page(ignore_https_errors=True)
+            with page.expect_event('requestfinished', lambda request: request.url == origin + '/api/me') as result:
+                page.goto(origin, wait_until='networkidle')
+            assert result.value.response().status == 401
+            expect(page.locator('[data-form="login"]')).to_be_visible()
+        finally:
+            browser.close()

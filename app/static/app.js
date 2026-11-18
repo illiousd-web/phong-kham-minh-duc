@@ -1175,8 +1175,12 @@ async function boot(){
  const headers=authHeader();
  if(token)headers.Authorization='Bearer '+token;
  else delete headers.Authorization;
- let response;
- try{response=await fetch('/api/me',{headers});}catch{showRetry(busyMessage);return;}
+ let response,body;
+ try{
+  response=await fetch('/api/me',{headers});
+  // Chromium 109 can leave an unread response pending, including a 401.
+  body=await response.text();
+ }catch{showRetry(busyMessage);return;}
  if(response.status===401){
   sessionStorage.removeItem('md_token');
   renderLogin();
@@ -1184,7 +1188,7 @@ async function boot(){
  }
  if(!response.ok){showRetry(response.status===503?busyMessage:sessionError);return;}
  let user;
- try{user=await response.json();}catch(e){showRetry(e instanceof TypeError?busyMessage:sessionError);return;}
+ try{user=JSON.parse(body);}catch{showRetry(sessionError);return;}
  if(serverMode==='lan')sessionStorage.removeItem('md_token');
  auth={token,user};
  await render();
