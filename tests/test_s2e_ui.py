@@ -42,6 +42,9 @@ def test_report_script_is_served():
 def test_report_display_limits_and_revenue_labels():
     script = (STATIC / 's2e.js').read_text(encoding='utf-8')
     assert re.search(r'rowLimit:\s*500\b', script)
-    assert 'rows.slice(0,this.rowLimit)' in script
+    assert 'rows.slice(-this.rowLimit).reverse()' in script
+    assert "this.limitedTable('unpaid',unpaid,data.unpaid_visits)" in script
+    assert 'dòng mới nhất, tải Excel để xem đủ' in script
+    assert "['Chưa thu – lượt khám trong kỳ',money(data.totals.known_due)]" in script
     assert 'totals.known_due' in script
     assert 'Đã thu thuần (sau hoàn tiền)' in script

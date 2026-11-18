@@ -69,10 +69,10 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
     ['Khoản chưa có giá','unpriced_count','number'],['Ghi chú','note']
    ];
    return stats([
-    ['Chưa thu thực tế',money(data.totals.known_due)],
+    ['Chưa thu – lượt khám trong kỳ',money(data.totals.known_due)],
     ['Chênh lệch thu – phát sinh trong kỳ',money(data.totals.outstanding)]
    ])+'<h3>Theo ngày</h3>'+this.table('revenue',columns,[...data.rows,{...data.totals,day:'Tổng kỳ'}])+
-    '<h3>Lượt khám còn thiếu tiền</h3>'+this.table('unpaid',unpaid,data.unpaid_visits);
+    '<h3>Lượt khám còn thiếu tiền</h3>'+this.limitedTable('unpaid',unpaid,data.unpaid_visits);
   },
 
   visits(data){
@@ -105,8 +105,8 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
 
   limitedTable(key,columns,rows){
    const hint=rows.length>this.rowLimit
-    ?`<p class="hint">Hiển thị ${this.rowLimit}/${rows.length} dòng, tải Excel để xem đủ</p>`:'';
-   return hint+this.table(key,columns,rows.slice(0,this.rowLimit));
+    ?`<p class="hint">Hiển thị ${this.rowLimit}/${rows.length} dòng mới nhất, tải Excel để xem đủ</p>`:'';
+   return hint+this.table(key,columns,rows.slice(-this.rowLimit).reverse());
   },
 
   filter(period){
