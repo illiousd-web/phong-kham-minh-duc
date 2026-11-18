@@ -1,11 +1,20 @@
 """Validated resource limits; security and transaction guarantees are unchanged."""
 from dataclasses import dataclass
 from functools import wraps
+import logging
 import os
 import inspect
 import threading
 
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
+
 MIB = 1024*1024
+SECURITY_HEADERS = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+}
 
 
 def integer(name, default, low, high):
@@ -23,6 +32,7 @@ class Limits:
     pool_max:int
     threads:int
     concurrency:int
+    max_connections:int
     export_slots:int
     export_bytes:int
     upload_bytes:int
@@ -35,7 +45,8 @@ def read_limits():
     result=Limits(
         integer('CLINIC_WORKERS',1,1,2),integer('CLINIC_POOL_MIN',1,0,8),
         integer('CLINIC_POOL_MAX',4,1,8),integer('CLINIC_THREAD_LIMIT',8,4,32),
-        integer('CLINIC_CONCURRENCY',48,8,80),integer('CLINIC_EXPORT_SLOTS',1,1,2),
+        integer('CLINIC_CONCURRENCY',48,8,80),integer('CLINIC_MAX_CONNECTIONS',200,100,500),
+        integer('CLINIC_EXPORT_SLOTS',1,1,2),
         integer('CLINIC_EXPORT_MAX_MB',10,1,10)*MIB,
         integer('CLINIC_UPLOAD_MAX_MB',5,1,5)*MIB,
         integer('CLINIC_UPLOAD_TOTAL_MB',2048,16,16384)*MIB,
@@ -49,6 +60,34 @@ def read_limits():
 
 LIMITS=read_limits()
 _exports=threading.BoundedSemaphore(LIMITS.export_slots)
+
+
+class HttpConcurrencyLimit:
+    """Limit active HTTP requests per worker, independently of keep-alive sockets."""
+
+    def __init__(self, app: ASGIApp, limit: int):
+        self.app = app
+        self.limit = limit
+        self.active = 0
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope['type'] != 'http':
+            return await self.app(scope, receive, send)
+        path = scope['path']
+        if scope['method'] in ('GET', 'HEAD') and (path in ('/', '/api/health') or path.startswith('/assets/')):
+            return await self.app(scope, receive, send)
+        if self.active >= self.limit:
+            logging.getLogger('clinic').warning('Exceeded HTTP concurrency limit')
+            response = JSONResponse({'detail': 'Hệ thống đang bận, vui lòng thử lại'}, status_code=503,
+                                    headers={**SECURITY_HEADERS, 'Cache-Control': 'no-store',
+                                             'Connection': 'close', 'Retry-After': '1'})
+            return await response(scope, receive, send)
+        # Check and increment without yielding to another request on this worker.
+        self.active += 1
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self.active -= 1
 
 
 def export_slot(function):
