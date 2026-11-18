@@ -11,7 +11,7 @@ from .charge_queries import DUES_SQL,orders_sql
 from .work_queues import visit_predicate, ACTIVE_ORDERS, approval_predicate, history_limit
 from contextlib import asynccontextmanager
 from starlette.concurrency import run_in_threadpool
-from .resources import LIMITS, export_slot
+from .resources import LIMITS, SECURITY_HEADERS, HttpConcurrencyLimit, export_slot
 from .storage import check_upload, StorageLimitError
 from datetime import datetime, timedelta, timezone, date
 from pathlib import Path
@@ -172,14 +172,19 @@ async def security_headers(request:Request,call_next):
                     import logging
                     logging.getLogger('clinic').error('Supplemental access audit unavailable')
 
-    response.headers['X-Content-Type-Options']='nosniff'
-    response.headers['X-Frame-Options']='DENY'
-    response.headers['Referrer-Policy']='no-referrer'
-    response.headers['Cache-Control']='no-store'
+    response.headers.update(SECURITY_HEADERS)
+    if (request.url.path.startswith('/assets/') and response.status_code in (200, 206, 304)
+            and 'etag' in response.headers):
+        response.headers['Cache-Control']='no-cache'
+    else:
+        response.headers['Cache-Control']='no-store'
     response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"
     return response
 
-@app.get('/',include_in_schema=False)
+if LAN:
+    app.add_middleware(HttpConcurrencyLimit, limit=LIMITS.concurrency)
+
+@app.api_route('/',methods=['GET','HEAD'],include_in_schema=False)
 def index():return FileResponse(BASE/'static'/'index.html',headers={'Cache-Control':'no-store'})
 
 @app.get('/api/health')
