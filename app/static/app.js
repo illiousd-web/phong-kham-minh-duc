@@ -1158,11 +1158,36 @@ document.addEventListener('input',ev=>{const el=ev.target;
 $('logout').addEventListener('click',async()=>{document.querySelector('.account-menu').open=false;try{await api('/logout',{method:'POST'})}catch{}sessionStorage.removeItem('md_token');auth=null;selectedRole=null;renderLogin()});
 $('change-password').addEventListener('click',async()=>{document.querySelector('.account-menu').open=false;active='password';try{await render()}catch(e){notify(e.message,true)}});
 async function boot(){
+ const busyMessage='Hệ thống đang bận, vui lòng thử lại';
+ const sessionError='Không kiểm tra được phiên đăng nhập';
+ function showRetry(message){
+  const workspace=$('workspace');
+  workspace.innerHTML=`<section class="r4-state r4-state-error" role="alert"><h3>${esc(message)}</h3><button type="button">Thử lại</button></section>`;
+  const retry=workspace.querySelector('button');
+  retry.addEventListener('click',async()=>{
+   retry.disabled=true;
+   try{await boot();}finally{retry.disabled=false;}
+  });
+ }
  try{const health=await api('/health');serverMode=health.mode||'demo';}catch(e){notify(e.message,true);return;}
- const token=sessionStorage.getItem('md_token');
+ const token=serverMode==='lan'?null:sessionStorage.getItem('md_token');
+ if(serverMode!=='lan'&&!token){renderLogin();return;}
+ const headers=authHeader();
+ if(token)headers.Authorization='Bearer '+token;
+ else delete headers.Authorization;
+ let response;
+ try{response=await fetch('/api/me',{headers});}catch{showRetry(busyMessage);return;}
+ if(response.status===401){
+  sessionStorage.removeItem('md_token');
+  renderLogin();
+  return;
+ }
+ if(!response.ok){showRetry(response.status===503?busyMessage:sessionError);return;}
+ let user;
+ try{user=await response.json();}catch(e){showRetry(e instanceof TypeError?busyMessage:sessionError);return;}
  if(serverMode==='lan')sessionStorage.removeItem('md_token');
- if(serverMode==='lan'||token){try{auth={token:serverMode==='lan'?null:token,user:null};const user=await api('/me');auth={token:serverMode==='lan'?null:token,user};await render();return}catch{}sessionStorage.removeItem('md_token');auth=null}
- renderLogin();
+ auth={token,user};
+ await render();
 }
 
 // Only the doctor workspace handles these keys; modified browser shortcuts pass through.

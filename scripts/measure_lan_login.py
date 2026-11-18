@@ -27,6 +27,8 @@ import psutil
 import psycopg
 from psycopg import sql
 
+from app.resources import LIMITS
+
 BROWSERS = 10
 TIMEOUT_MS = 10_000
 SAMPLE_INTERVAL = 0.01
@@ -150,7 +152,7 @@ async def open_login(page, origin, username, password):
 async def submit_login(page):
     try:
         await page.locator('[data-form="login"] button').click(timeout=TIMEOUT_MS)
-        await page.locator('.account-trigger').wait_for(timeout=TIMEOUT_MS)
+        await page.locator('body:not(.login-view) #workspace[aria-busy="false"]').wait_for(timeout=TIMEOUT_MS)
     except Error:
         return False
     return True
@@ -190,7 +192,7 @@ async def measure(origin, port, pid, passwords, rounds):
                     # Separate Chromium contexts have separate caches, cookies and socket pools.
                     cold = await run_wave(contexts, origin, pid, port, passwords)
                     await asyncio.gather(*(context.clear_cookies() for context in contexts))
-                    # New pages in the same contexts reuse the cache for another sign-in.
+                    # New pages in the same contexts can revalidate cached assets with ETags.
                     warm = await run_wave(contexts, origin, pid, port, passwords)
                     waves.append({'cold': cold, 'warm': warm})
                 finally:
@@ -210,7 +212,8 @@ def main():
         with lan_server(database_url, Path(root)) as (origin, port, pid, passwords):
             result = asyncio.run(measure(origin, port, pid, passwords, args.rounds))
     waves = [wave for pair in result['waves'] for wave in pair.values()]
-    result.update(peak_server_tcp_connections=max(w['peak_server_tcp_connections'] for w in waves),
+    result.update(clinic_max_connections=LIMITS.max_connections,
+                  peak_server_tcp_connections=max(w['peak_server_tcp_connections'] for w in waves),
                   http_503=sum(w['http_503'] for w in waves),
                   successful_logins=sum(w['successful_logins'] for w in waves),
                   expected_logins=BROWSERS * len(waves))
