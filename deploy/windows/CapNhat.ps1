@@ -86,7 +86,7 @@ function Invoke-QuayVe {
             if (-not $State.backup_task_snapshot.Count) { throw 'Thiếu snapshot lịch ban đầu; không chụp lại trong quay về.' }
             $State.backup_tasks_changed = $true
             Suspend-MinhDucBackupTasks
-            Wait-MinhDucVenvPythonExit -Venv $P.Venv
+            Wait-MinhDucVenvPythonExit -Venv $P.Venv -LogLockDiagnostics
         }
     }
     $recovery.Code = Invoke-RecoveryStep 'Trả mã nguồn cũ' {
@@ -113,8 +113,8 @@ function Invoke-QuayVe {
         if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả môi trường Python.' }
         if ($State.venv_moved) {
             if (-not (Test-Path -LiteralPath $OldVenv -PathType Container)) { throw 'Thiếu môi trường Python cũ.' }
-            Wait-MinhDucVenvPythonExit -Venv $P.Venv
-            Restore-MinhDucOldVenv -Venv $P.Venv -OldVenv $OldVenv
+            Wait-MinhDucVenvPythonExit -Venv $P.Venv -LogLockDiagnostics
+            Restore-MinhDucOldVenv -Venv $P.Venv -OldVenv $OldVenv -LogLockDiagnostics
             if (Test-Path -LiteralPath $OldVenv) { throw 'Chưa chuyển xong môi trường Python cũ.' }
         }
         if (-not (Test-Path -LiteralPath $P.VenvPython -PathType Leaf)) { throw 'Không có trình Python của bản cũ.' }

@@ -698,6 +698,82 @@ function Get-MinhDucPythonScriptLabel {
     return 'script/module=[đã che]'
 }
 
+function Write-MinhDucVenvLockDiagnostics {
+    param([string]$Venv, [string]$Context, [object[]]$ObservedProcesses = @())
+    $prefix = '[S2F2-VENV] '
+    Write-Host ($prefix + $Context)
+    $processes = @{}
+    $observed = @{}
+    foreach ($item in $ObservedProcesses) {
+        $processes[[int]$item.ProcessId] = $item
+        $observed[[int]$item.ProcessId] = $true
+    }
+    $loaded = @{}
+    $unreadable = 0
+    try {
+        foreach ($process in Get-Process -ErrorAction Stop) {
+            $modules = @()
+            try { $modules = @($process.Modules | Where-Object { $_ }) } catch { }
+            if (-not $modules.Count) { $unreadable++ }
+            $rust = @($modules | Where-Object { $_.ModuleName -eq '_rust.pyd' } | ForEach-Object { $_.FileName })
+            if ($rust.Count) {
+                $loaded[$process.Id] = $rust
+                if (-not $processes.ContainsKey($process.Id)) {
+                    $path = $null
+                    try { $path = $process.Path } catch { }
+                    $processes[$process.Id] = [pscustomobject]@{
+                        Name = $process.ProcessName
+                        ParentProcessId = $null
+                        ExecutablePath = $path
+                        CommandLine = $null
+                    }
+                }
+            }
+        }
+    } catch { Write-Host ($prefix + 'Không quét hết tiến trình bằng Get-Process.') }
+    try {
+        foreach ($item in Get-CimInstance Win32_Process -ErrorAction Stop) {
+            $processId = [int]$item.ProcessId
+            if (-not $observed.ContainsKey($processId)) { $processes[$processId] = $item }
+        }
+    } catch { Write-Host ($prefix + 'Không đọc hết thông tin từ CIM Win32_Process.') }
+
+    $venvPath = [regex]::Escape($Venv.Replace('/','\').TrimEnd('\'))
+    $pathPattern = $venvPath + '(?:-quay-ve-[^\\\s"'']+)?(?=[\\\s"'']|$)'
+    $count = 0
+    foreach ($processId in ($processes.Keys | Sort-Object)) {
+        $item = $processes[$processId]
+        $path = [string]$item.ExecutablePath
+        $commandLine = [string]$item.CommandLine
+        $matchesPath = $path.Replace('/','\') -match $pathPattern -or $commandLine.Replace('/','\') -match $pathPattern
+        if (-not ($matchesPath -or $loaded.ContainsKey($processId) -or $observed.ContainsKey($processId))) { continue }
+
+        # Nhật ký máy phòng khám chỉ ghi tên script/module để tránh lộ đối số.
+        if (-not $commandLine) {
+            $commandLine = '[không đọc được]'
+        } elseif ($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_TEMP) {
+            $commandLine = $commandLine -replace '(?i)(\b[a-z][a-z0-9+.-]*://)[^/\s"@]+@', '$1[đã che]@'
+            $commandLine = $commandLine -replace '(?i)(?<!\S)(-{1,2}|/)[\w-]*(password|passwd|pwd|secret|token|credential|key)[\w-]*(?:[=:]|\s+)(?:"[^"]*"|\S+)', '[đã che tham số bí mật]'
+            $commandLine = $commandLine -replace '(?i)(?<!\S)(-c|-command|-encodedcommand)\s+.*', '$1 [đã che mã lệnh]'
+        } else {
+            $commandLine = Get-MinhDucPythonScriptLabel -CommandLine $commandLine
+        }
+        $record = [ordered]@{
+            PID = $processId
+            ParentPID = $item.ParentProcessId
+            Name = $item.Name
+            ExecutablePath = $path
+            CommandLine = $commandLine
+            LoadedRust = @($loaded[$processId] | Where-Object { $_ })
+            MatchesVenvPath = $matchesPath
+            ObservedInWait = $observed.ContainsKey($processId)
+        }
+        Write-Host ($prefix + ($record | ConvertTo-Json -Compress))
+        $count++
+    }
+    Write-Host ($prefix + ('Ứng viên={0}; tiến trình thiếu danh sách module={1}.' -f $count, $unreadable))
+}
+
 function Test-MinhDucVenvPythonPath {
     param([string]$ExecutablePath, [string]$Venv)
     if (-not $ExecutablePath) { return $false }
@@ -743,7 +819,7 @@ function Get-MinhDucVenvProcessTree {
 }
 
 function Wait-MinhDucVenvPythonExit {
-    param([Parameter(Mandatory=$true)][string]$Venv, [ValidateRange(0,30)][int]$Seconds=30)
+    param([Parameter(Mandatory=$true)][string]$Venv, [ValidateRange(0,30)][int]$Seconds=30, [switch]$LogLockDiagnostics)
     $known = @{}
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
@@ -756,7 +832,7 @@ function Wait-MinhDucVenvPythonExit {
         if ($watch.Elapsed.TotalSeconds -ge $Seconds) { break }
         Start-Sleep -Milliseconds 200
     } while ($true)
-    $unverified = $false
+    $unverified = @()
     foreach ($candidate in $remaining) {
         try { $process = Get-Process -Id $candidate.ProcessId -ErrorAction Stop }
         catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
@@ -767,19 +843,36 @@ function Wait-MinhDucVenvPythonExit {
         $now = @(Get-CimInstance Win32_Process -Filter ("ProcessId=" + $candidate.ProcessId) -ErrorAction Stop | Where-Object { $_.ProcessId -eq $candidate.ProcessId })
         if (-not $candidate.CreationDate -or ($now.Count -eq 1 -and -not $now[0].CreationDate)) {
             Write-Luu ('Không xác minh được CreationDate; không dừng PID=' + $candidate.ProcessId)
-            $unverified = $true
+            $unverified += $candidate
             continue
         }
         if ($now.Count -ne 1 -or -not (Test-MinhDucProcessIdentity $candidate $now[0]) -or $process.Path -ne $candidate.ExecutablePath) { continue }
         Write-Luu ('Quá hạn chờ Python 30 giây; dừng tiến trình ' + $process.ProcessName + '; PID=' + $process.Id + '; ExecutablePath=' + $now[0].ExecutablePath + '; ' + (Get-MinhDucPythonScriptLabel -CommandLine $now[0].CommandLine))
-        Stop-Process -InputObject $process -Force -ErrorAction Stop
-        if (-not $process.WaitForExit(5000)) { throw 'Python trong môi trường phòng khám chưa thoát; dừng phục hồi.' }
+        try {
+            Stop-Process -InputObject $process -Force -ErrorAction Stop
+            if (-not $process.WaitForExit(5000)) { throw 'Python trong môi trường phòng khám chưa thoát; dừng phục hồi.' }
+        } catch {
+            if ($LogLockDiagnostics) {
+                Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context ('Lỗi khi dừng hoặc chờ tiến trình thoát: ' + $_.Exception.Message) -ObservedProcesses @($candidate)
+            }
+            throw
+        }
     }
     $left = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
-    if ($unverified -or $left.Count) { throw 'Còn tiến trình đang giữ môi trường phòng khám; dừng phục hồi.' }
+    if ($unverified.Count -or $left.Count) {
+        if ($LogLockDiagnostics) {
+            Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context 'Còn tiến trình giữ môi trường Python hoặc chưa xác minh được.' -ObservedProcesses @($unverified + $left)
+        }
+        throw 'Còn tiến trình đang giữ môi trường phòng khám; dừng phục hồi.'
+    }
     Start-Sleep -Seconds 2
     $left = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
-    if ($left.Count) { throw 'Có tiến trình xuất hiện lại sau lần quét rỗng; dừng phục hồi.' }
+    if ($left.Count) {
+        if ($LogLockDiagnostics) {
+            Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context 'Có tiến trình xuất hiện lại sau lần quét rỗng.' -ObservedProcesses $left
+        }
+        throw 'Có tiến trình xuất hiện lại sau lần quét rỗng; dừng phục hồi.'
+    }
 }
 
 function Invoke-MinhDucAccessRetry {
@@ -803,7 +896,7 @@ function Invoke-MinhDucAccessRetry {
 
 # Phục hồi theo giao dịch: luôn giữ một bản nguyên vẹn cho đến khi xóa xong.
 function Restore-MinhDucOldVenv {
-    param([Parameter(Mandatory=$true)][string]$Venv, [Parameter(Mandatory=$true)][string]$OldVenv)
+    param([Parameter(Mandatory=$true)][string]$Venv, [Parameter(Mandatory=$true)][string]$OldVenv, [switch]$LogLockDiagnostics)
     $parent = Split-Path -Parent $Venv
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $pending = New-Object 'System.Collections.Generic.List[string]'
@@ -840,6 +933,17 @@ function Restore-MinhDucOldVenv {
             return
         } catch {
             $failure = $_
+            $exception = $failure.Exception
+            $retryable = $false
+            while ($exception) {
+                if ($exception -is [IO.IOException] -or $exception -is [UnauthorizedAccessException]) { $retryable = $true; break }
+                $exception = $exception.InnerException
+            }
+            if ($LogLockDiagnostics -and $retryable) {
+                try {
+                    Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context ('Lần trả Python {0}/10; thư mục tạm={1}; đích={2}; lỗi={3}' -f $attempt, $temp, $failure.TargetObject, $failure.Exception.Message)
+                } catch { Write-Host '[S2F2-VENV] Không ghi hết thông tin chẩn đoán khóa môi trường Python.' }
+            }
             # Nếu xóa dở, dùng bản sao nguyên vẹn để trả lại đúng .venv ban đầu.
             try {
                 if ($installed) { Rename-Item -LiteralPath $Venv -NewName (Split-Path $OldVenv -Leaf) -ErrorAction Stop }
@@ -857,12 +961,6 @@ function Restore-MinhDucOldVenv {
                 }
                 if (Test-Path -LiteralPath $snapshot) { Remove-Item -LiteralPath $snapshot -Recurse -Force -ErrorAction Stop }
             } catch { throw ('Không trả lại được môi trường ban đầu; giữ bản dự phòng ' + $snapshot + ' và thư mục tạm ' + $temp + ': ' + $_.Exception.Message) }
-            $exception = $failure.Exception
-            $retryable = $false
-            while ($exception) {
-                if ($exception -is [IO.IOException] -or $exception -is [UnauthorizedAccessException]) { $retryable = $true; break }
-                $exception = $exception.InnerException
-            }
             if (-not $retryable -or $attempt -eq 10 -or $watch.Elapsed.TotalSeconds + $attempt -gt 60) {
                 throw ('Không thể trả môi trường Python; tệp hoặc đường dẫn bị khóa: ' + $failure.Exception.Message)
             }
