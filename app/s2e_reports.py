@@ -2,7 +2,7 @@
 from datetime import datetime
 from io import BytesIO
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from fastapi.responses import Response
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -10,6 +10,11 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from .labels import local_day, VN_TZ, vi, METHOD
 from .resources import export_slot
 from .stock import period
+from .domain import invoice
+
+
+NOTE = 'Số liệu theo giá hiện hành tại thời điểm xuất báo cáo; khoản sửa giá được tính vào ngày phát sinh khoản phí.'
+UNPRICED_WARNING = 'Còn khoản chưa nhập giá, doanh thu chưa đầy đủ'
 
 
 def day(stamp):
@@ -38,7 +43,7 @@ def revenue_report(c, start, end):
     def bucket(key):
         return days.setdefault(key, dict(day=key, medicine=0, clinical=0, procedure=0, other=0,
                                          gross=0, discount=0, revenue=0, payments=0,
-                                         refund=0, paid=0, outstanding=0))
+                                         refund=0, paid=0, outstanding=0, unpriced_count=0))
 
     for ch in c.execute("""SELECT ch.amount,ch.created_at,cs.source_type,o.category
         FROM effective_charges ch
@@ -49,7 +54,10 @@ def revenue_report(c, start, end):
         if not in_period(ch['created_at'], start, end):
             continue
         row = bucket(day(ch['created_at']))
-        value = ch['amount'] or 0
+        value = ch['amount']
+        if value is None:
+            row['unpriced_count'] += 1
+            continue
         if ch['source_type'] == 'dispense_item':
             group = 'medicine'
         elif ch['source_type'] == 'order' and ch['category'] in ('lab', 'ultrasound', 'xray', 'ecg'):
@@ -81,8 +89,40 @@ def revenue_report(c, start, end):
         row['paid'] = row['payments'] - row['refund']
         row['outstanding'] = row['revenue'] - row['paid']
     totals = {key: sum(row[key] for row in rows) for key in
-              ('medicine','clinical','procedure','other','gross','discount','revenue','payments','refund','paid','outstanding')}
-    return {'date_from': start, 'date_to': end, 'rows': rows, 'totals': totals}
+              ('medicine','clinical','procedure','other','gross','discount','revenue',
+               'payments','refund','paid','outstanding','unpriced_count')}
+
+    # Daily outstanding is an accounting flow; actual debt comes from a whole-visit invoice.
+    unpaid_visits = []
+    for visit in c.execute("""SELECT v.id,v.created_at,p.code AS patient_code,
+        p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id
+        WHERE v.status <> 'cancelled' ORDER BY v.created_at,v.id"""):
+        if not in_period(visit['created_at'], start, end):
+            continue
+        item = {'visit_id': visit['id'], 'patient_code': visit['patient_code'],
+                'patient_name': visit['patient_name'], 'visit_date': day(visit['created_at']),
+                'note': ''}
+        try:
+            bill = invoice(c, visit['id'])
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            item.update(charged=None, paid=None, known_due=None,
+                        unpriced_count=c.execute("""SELECT COUNT(*) FROM effective_charges
+                            WHERE visit_id=? AND amount IS NULL""", (visit['id'],)).fetchone()[0],
+                        note='Giảm phí vượt phí, cần kiểm tra')
+            unpaid_visits.append(item)
+            continue
+        item.update(charged=bill['charged'], paid=bill['paid'],
+                    known_due=bill['known_due'], unpriced_count=bill['unpriced_count'])
+        if bill['known_due'] > 0 or bill['unpriced_count'] > 0:
+            unpaid_visits.append(item)
+    totals['known_due'] = sum(item['known_due'] or 0 for item in unpaid_visits)
+    result = {'date_from': start, 'date_to': end, 'rows': rows,
+              'totals': totals, 'unpaid_visits': unpaid_visits, 'note': NOTE}
+    if totals['unpriced_count'] > 0:
+        result['warning'] = UNPRICED_WARNING
+    return result
 
 
 def visits_report(c, start, end):
@@ -113,7 +153,7 @@ def visits_report(c, start, end):
             'by_day': [by_day[k] for k in sorted(by_day)],
             'by_doctor': sorted(by_doctor.values(), key=lambda r: (r['doctor_name'], r['doctor_id'])),
             'by_status': sorted(by_status.values(), key=lambda r: r['status']),
-            'total': active, 'cancelled': cancelled}
+            'total': active, 'cancelled': cancelled, 'note': NOTE}
 
 
 def cashier_report(c, start, end):
@@ -140,7 +180,7 @@ def cashier_report(c, start, end):
         method['amount'] += item['amount']
     return {'date_from': start, 'date_to': end, 'rows': rows, 'total': sum(r['amount'] for r in rows),
             'by_cashier': sorted(by_cashier.values(), key=lambda r: (r['cashier_name'], r['cashier_id'])),
-            'by_method': sorted(by_method.values(), key=lambda r: r['method'])}
+            'by_method': sorted(by_method.values(), key=lambda r: r['method']), 'note': NOTE}
 
 
 def corrections_report(c, start, end):
@@ -150,9 +190,13 @@ def corrections_report(c, start, end):
         for event in c.execute(sql):
             if not in_period(event['occurred_at'], start, end):
                 continue
-            rows.append(dict(type=kind, patient_code=event['patient_code'],
-                             content=event['content'], actor=event['actor'],
-                             occurred_at=local_stamp(event['occurred_at']), reason=event['reason']))
+            item = dict(type=kind, patient_code=event['patient_code'],
+                        content=event['content'], actor=event['actor'],
+                        occurred_at=local_stamp(event['occurred_at']), reason=event['reason'])
+            for extra in ('medicine_name', 'quantity', 'status'):
+                if extra in event.keys():
+                    item[extra] = event[extra]
+            rows.append(item)
 
     collect("""SELECT p.code AS patient_code,ch.label AS content,u.full_name AS actor,
         cv.created_at AS occurred_at,cv.reason FROM charge_voids cv
@@ -173,10 +217,37 @@ def corrections_report(c, start, end):
         JOIN patients p ON p.id=v.patient_id JOIN users u ON u.id=rx.doctor_id
         WHERE rx.status='cancelled' AND rx.cancelled_at IS NOT NULL""", 'Hủy đơn thuốc lâm sàng')
     collect("""SELECT p.code AS patient_code,('Phiếu hình ảnh #' || CAST(r.replaces_id AS TEXT)) AS content,
-        u.full_name AS actor,r.created_at AS occurred_at,r.reason
+        u.full_name AS actor,s.signed_at AS occurred_at,r.reason
         FROM imaging_reports r JOIN orders o ON o.id=r.order_id
         JOIN visits v ON v.id=o.visit_id JOIN patients p ON p.id=v.patient_id
-        JOIN users u ON u.id=r.created_by WHERE r.replaces_id IS NOT NULL""", 'Đính chính hình ảnh')
+        JOIN document_signatures s ON s.id=(SELECT s2.id FROM document_signatures s2
+            WHERE s2.document_kind=o.category AND s2.document_id=r.id ORDER BY s2.id DESC LIMIT 1)
+        JOIN users u ON u.id=s.signed_by
+        WHERE r.replaces_id IS NOT NULL AND r.snapshot IS NOT NULL""", 'Đính chính hình ảnh')
+    collect("""SELECT p.code AS patient_code,
+        ('Giảm giá #' || CAST(a.id AS TEXT) || ': ' || CAST(a.amount AS TEXT) || ' đ') AS content,
+        u.full_name AS actor,r.created_at AS occurred_at,r.reason
+        FROM adjustment_reversals r JOIN adjustments a ON a.id=r.adjustment_id
+        JOIN visits v ON v.id=a.visit_id JOIN patients p ON p.id=v.patient_id
+        JOIN users u ON u.id=r.reversed_by WHERE a.kind='discount'""", 'Hoàn tác giảm giá')
+    collect("""SELECT p.code AS patient_code,
+        ('Lượt khám #' || CAST(v.id AS TEXT)) AS content,
+        u.full_name AS actor,x.created_at AS occurred_at,x.reason
+        FROM visit_cancellations x JOIN visits v ON v.id=x.visit_id
+        JOIN patients p ON p.id=v.patient_id
+        JOIN users u ON u.id=x.actor_id""", 'Hủy lượt khám')
+    collect("""SELECT p.code AS patient_code,
+        (m.name || ': ' || CAST(ri.quantity AS TEXT) || ' ' || m.base_unit
+         || ' (' || r.status || ')') AS content,
+        u.full_name AS actor,r.created_at AS occurred_at,r.reason,
+        m.name AS medicine_name,ri.quantity,r.status
+        FROM medication_returns r
+        JOIN medication_return_items ri ON ri.return_id=r.id
+        JOIN dispensation_items di ON di.id=ri.dispensation_item_id
+        JOIN medicines m ON m.id=di.medicine_id
+        JOIN dispensations d ON d.id=r.dispensation_id
+        JOIN visits v ON v.id=d.visit_id JOIN patients p ON p.id=v.patient_id
+        JOIN users u ON u.id=r.requested_by""", 'Trả thuốc')
     for kind, label in (('discount', 'Giảm giá'), ('refund', 'Hoàn tiền')):
         collect("""SELECT p.code AS patient_code,
             (a.kind || ' #' || CAST(a.id AS TEXT) || ': ' || CAST(a.amount AS TEXT) || ' đ') AS content,
@@ -185,7 +256,7 @@ def corrections_report(c, start, end):
             JOIN patients p ON p.id=v.patient_id JOIN users u ON u.id=a.reviewed_by
             WHERE a.status='approved' AND a.kind=?""".replace('a.kind=?', "a.kind='" + kind + "'"), label)
     rows.sort(key=lambda r: (r['occurred_at'],r['type'],r['patient_code']))
-    return {'date_from': start, 'date_to': end, 'rows': rows, 'total': len(rows)}
+    return {'date_from': start, 'date_to': end, 'rows': rows, 'total': len(rows), 'note': NOTE}
 
 
 COLS = {
@@ -194,7 +265,12 @@ COLS = {
                 ('gross','Tổng phát sinh trước giảm','n'),
                 ('discount','Giảm giá','n'),('revenue','Phát sinh sau giảm','n'),
                 ('payments','Tiền thu trước hoàn','n'),('refund','Hoàn tiền','n'),
-                ('paid','Đã thu thuần','n'),('outstanding','Chênh lệch trong ngày','n')],
+                ('paid','Đã thu thuần','n'),('outstanding','Chênh lệch trong ngày','n'),
+                ('unpriced_count','Khoản chưa có giá','n')],
+    'unpaid_visits': [('patient_code','Mã NB',''),('patient_name','Họ tên',''),
+                     ('visit_date','Ngày khám',''),('charged','Phải thu','n'),
+                     ('paid','Đã thu','n'),('known_due','Còn thiếu','n'),
+                     ('unpriced_count','Khoản chưa có giá','n'),('note','Ghi chú','')],
     'visits': [('day','Ngày',''),('patient_code','Mã người bệnh',''),
                ('patient_name','Họ tên',''),('doctor_name','Bác sĩ',''),
                ('status_name','Trạng thái','')],
@@ -203,7 +279,9 @@ COLS = {
                 ('method_name','Phương thức',''),('cashier_name','Người thu','')],
     'corrections': [('type','Loại',''),('patient_code','Mã người bệnh',''),
                     ('content','Nội dung',''),('actor','Người thực hiện / duyệt',''),
-                    ('occurred_at','Thời gian (Việt Nam)',''),('reason','Lý do','')],
+                    ('occurred_at','Thời gian (Việt Nam)',''),('reason','Lý do',''),
+                    ('medicine_name','Tên thuốc',''),('quantity','Số lượng','n'),
+                    ('status','Trạng thái yêu cầu','')],
 }
 
 
@@ -212,19 +290,25 @@ def xlsx(kind, data):
     sheet = book.active
 
     def add_sheet(ws, columns, rows):
+        ws.append([data['note']])
+        if kind == 'revenue' and data.get('warning'):
+            ws.append([data['warning']])
+            ws.cell(2, 1).font = Font(bold=True, color='B91C1C')
+        header_row = ws.max_row + 1
         ws.append([title for _, title, _ in columns])
         for entry in rows:
             ws.append([entry.get(key, '') for key, _, _ in columns])
-        ws.freeze_panes = 'A2'
-        ws.auto_filter.ref = ws.dimensions
+        ws.freeze_panes = f'A{header_row + 1}'
+        ws.auto_filter.ref = f'A{header_row}:{ws.cell(header_row, len(columns)).column_letter}{ws.max_row}'
+        ws.cell(1, 1).font = Font(italic=True, color='475569')
         for cells in ws.columns:
             column = cells[0].column_letter
             ws.column_dimensions[column].width = min(48, max(18, max(len(str(cell.value or '')) for cell in cells) + 2))
             for cell in cells:
-                if cell.row == 1:
+                if cell.row == header_row:
                     cell.font = Font(bold=True, color='FFFFFF')
                     cell.fill = PatternFill('solid', fgColor='008249')
-                else:
+                elif cell.row > header_row:
                     if cell.data_type == 'f' or (isinstance(cell.value, str) and cell.value.startswith(('=', '+', '-', '@'))):
                         cell.data_type = 's'
                     if isinstance(cell.value, (int, float)):
@@ -235,9 +319,11 @@ def xlsx(kind, data):
     add_sheet(sheet, COLS[kind], data['rows'])
     if kind == 'revenue':
         total = dict(data['totals'], day='TỔNG KỲ')
-        total_columns = [(key, 'Chưa thu' if key == 'outstanding' else label, fmt)
-                         for key, label, fmt in COLS[kind]]
+        total_columns = [(key, 'Chênh lệch thu – phát sinh trong kỳ' if key == 'outstanding'
+                          else label, fmt) for key, label, fmt in COLS[kind]]
+        total_columns.append(('known_due', 'Chưa thu', 'n'))
         add_sheet(book.create_sheet('Tổng kỳ'), total_columns, [total])
+        add_sheet(book.create_sheet('Lượt khám còn thiếu tiền'), COLS['unpaid_visits'], data['unpaid_visits'])
     if kind == 'visits':
         add_sheet(book.create_sheet('Theo ngày'), [('day','Ngày',''),('visits','Lượt khám','n'),('cancelled','Lượt hủy','n')], data['by_day'])
         add_sheet(book.create_sheet('Theo bác sĩ'), [('doctor_name','Bác sĩ',''),('visits','Lượt khám','n'),('cancelled','Lượt hủy','n')], data['by_doctor'])

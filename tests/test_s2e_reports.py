@@ -8,7 +8,7 @@ from app.main import db
 from tests.test_workflows import client, token
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture
 def sample(tmp_path_factory):
     # Isolate the entire DB: S2d deliberately forbids deleting imaging reports
     # even when unsigned. Never leave synthetic rows in other tests' DB.
@@ -85,7 +85,7 @@ def sample(tmp_path_factory):
         orig = insert("""INSERT INTO imaging_reports(order_id,template_code,descriptions,request,
              created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)""",
              (imaging_order,template,'[]','',doctors[0],at1,at1))
-        insert("""INSERT INTO imaging_reports(order_id,template_code,descriptions,request,
+        draft_correction = insert("""INSERT INTO imaging_reports(order_id,template_code,descriptions,request,
             created_by,created_at,updated_at,replaces_id,reason) VALUES(?,?,?,?,?,?,?,?,?)""",
             (imaging_order,template,'[]','',doctors[0],at1,at1,orig,'Sửa kết luận'))
         first_payment = None
@@ -106,7 +106,8 @@ def sample(tmp_path_factory):
 
     try:
         yield dict(actors=actors, visits=visits, patients=patients, doctors=doctors,
-                   manual=manual, discount=discount, refund=refund, cashier2=cashier2)
+                   manual=manual, discount=discount, refund=refund, cashier2=cashier2,
+                   draft_correction=draft_correction, at1=at1, at2=at2)
     finally:
         database_module.DB = original_database
         main_module.DB = original_main
@@ -132,6 +133,12 @@ def test_amounts_visits_cashier_and_corrections(sample):
     assert values['totals']['refund']==10000
     assert values['totals']['paid']==190000
     assert values['totals']['outstanding']==260000
+    assert values['totals']['known_due']==260000
+    assert values['totals']['unpriced_count']==0
+    assert len(values['unpaid_visits'])==2
+    assert sum(item['known_due'] for item in values['unpaid_visits'])==260000
+    assert 'warning' not in values
+    assert values['note'].startswith('Số liệu theo giá hiện hành')
     assert sum(r['discount'] for r in values['rows'])==20000
     assert sum(r['refund'] for r in values['rows'])==10000
     assert {r['day'] for r in values['rows']}=={'2099-06-18','2099-06-19'}
@@ -151,8 +158,9 @@ def test_amounts_visits_cashier_and_corrections(sample):
     assert all(r['count']==1 for r in cashier['by_cashier'])
     assert {r['method'] for r in cashier['by_method']}=={'cash','transfer'}
     corrections = client.get('/api/reports/corrections',headers=manager,params=params()).json()
-    assert {'Hủy khoản thu','Hủy đơn thuốc','Hủy chỉ định','Đính chính hình ảnh',
+    assert {'Hủy khoản thu','Hủy đơn thuốc','Hủy chỉ định',
             'Giảm giá','Hoàn tiền'} <= {x['type'] for x in corrections['rows']}
+    assert not any(x['type']=='Đính chính hình ảnh' for x in corrections['rows'])
     assert next(r for r in corrections['rows'] if r['type']=='Giảm giá')['actor']=='Quản lý phòng khám'
     assert next(r for r in corrections['rows'] if r['type']=='Hoàn tiền')['reason']=='Hoàn tiền thử nghiệm'
 
@@ -173,8 +181,10 @@ def test_excel_matches_json_rows_and_admin_access(sample):
         assert json_data.status_code==response.status_code==200
         assert response.content[:2]==b'PK'
         book=load_workbook(BytesIO(response.content),read_only=True)
-        assert book.worksheets[0].max_row==len(json_data.json()['rows'])+1
-        assert all(isinstance(cell.value,str) for cell in next(book.worksheets[0].iter_rows(max_row=1)))
+        assert book.worksheets[0].max_row==len(json_data.json()['rows'])+2
+        assert book.worksheets[0]['A1'].value==json_data.json()['note']
+        assert all(isinstance(cell.value,str) for cell in next(book.worksheets[0].iter_rows(min_row=2,max_row=2)))
+        assert all(ws['A1'].value==json_data.json()['note'] for ws in book.worksheets)
         book.close()
 
 
@@ -192,17 +202,199 @@ def test_manual_price_and_effective_adjustments_are_used(sample):
     assert sum(row['payments']-row['refund'] for row in value['rows'])==value['totals']['paid']
     book = load_workbook(BytesIO(client.get('/api/reports/revenue/export',
                          headers=sample['actors']['quanly'],params=params()).content),read_only=True)
-    header = [cell.value for cell in book.active[1]]
+    header = [cell.value for cell in book.active[2]]
     assert 'Giảm giá' in header and 'Hoàn tiền' in header
     assert 'Thủ thuật' in header and 'Chênh lệch trong ngày' in header
     assert 'Chưa thu' not in header
-    daily_values = list(book.active.iter_rows(values_only=True))
+    daily_values = list(book.active.iter_rows(min_row=3, values_only=True))
     assert sum(row[header.index('Thủ thuật')] for row in daily_values[1:])==60000
     total = list(book['Tổng kỳ'].iter_rows(values_only=True))
-    total_header = total[0]
+    total_header, summary = total[1], total[2]
     assert 'Chưa thu' in total_header and 'Chênh lệch trong ngày' not in total_header
-    assert total[1][total_header.index('Thủ thuật')]==60000
-    assert total[1][total_header.index('Phát sinh sau giảm')]==450000
-    assert total[1][total_header.index('Đã thu thuần')]==190000
-    assert total[1][total_header.index('Chưa thu')]==260000
+    assert 'Chênh lệch thu – phát sinh trong kỳ' in total_header
+    assert 'Khoản chưa có giá' in total_header
+    assert summary[total_header.index('Thủ thuật')]==60000
+    assert summary[total_header.index('Phát sinh sau giảm')]==450000
+    assert summary[total_header.index('Đã thu thuần')]==190000
+    assert summary[total_header.index('Chênh lệch thu – phát sinh trong kỳ')]==260000
+    assert summary[total_header.index('Chưa thu')]==260000
+    assert summary[total_header.index('Khoản chưa có giá')]==0
+    due_sheet = book['Lượt khám còn thiếu tiền']
+    assert due_sheet.max_row==2+len(value['unpaid_visits'])
+    assert due_sheet['A1'].value==value['note']
     book.close()
+
+
+def test_paid_on_day_two_is_not_unpaid(sample):
+    manager = sample['actors']['quanly']
+    first = '2099-07-01T00:00:00+00:00'
+    second = '2099-07-02T00:00:00+00:00'
+    with db(True) as c:
+        doctor = sample['doctors'][0]
+        user = c.execute("SELECT id FROM users WHERE username='quanly'").fetchone()[0]
+        cashier = c.execute("SELECT id FROM users WHERE username='thungan'").fetchone()[0]
+        c.execute("INSERT INTO patients(code,full_name,sex,created_at) VALUES('S2E-PAID','Đã trả đủ','Nam',?)", (first,))
+        pid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO visits(patient_id,doctor_id,created_by,created_at) VALUES(?,?,?,?)",
+                  (pid,doctor,user,first))
+        vid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)",
+                  (vid,'Phí khám tháng 7',88000,first))
+        c.execute("""INSERT INTO payments(visit_id,amount,method,created_by,created_at,idempotency_key)
+            VALUES(?,88000,'cash',?,?,'s2e_paid_next_day')""",(vid,cashier,second))
+    full = client.get('/api/reports/revenue',headers=manager,
+                      params={'date_from':'2099-07-01','date_to':'2099-07-02'}).json()
+    assert full['totals']['known_due']==0
+    assert full['unpaid_visits']==[]
+    next_day = client.get('/api/reports/revenue',headers=manager,
+                          params={'date_from':'2099-07-02','date_to':'2099-07-02'}).json()
+    assert next_day['totals']['known_due']==0
+    assert next_day['unpaid_visits']==[]
+    assert next_day['totals']['outstanding']==-88000  # Day-flow is not actual debt
+
+
+def test_unpriced_charge_warns_and_is_listed(sample):
+    manager = sample['actors']['quanly']
+    stamp = '2099-07-03T02:00:00+00:00'
+    with db(True) as c:
+        user = c.execute("SELECT id FROM users WHERE username='quanly'").fetchone()[0]
+        c.execute("""INSERT INTO patients(code,full_name,sex,created_at)
+            VALUES('S2E-UNPRICED','Chưa nhập giá','Nam',?)""",(stamp,))
+        pid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute('INSERT INTO visits(patient_id,doctor_id,created_by,created_at) VALUES(?,?,?,?)',
+                  (pid,sample['doctors'][0],user,stamp))
+        vid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("""INSERT INTO charges(visit_id,label,amount,created_at)
+            VALUES(?,'Chưa định giá',NULL,?)""",(vid,stamp))
+    value = client.get('/api/reports/revenue',headers=manager,
+                       params={'date_from':'2099-07-03','date_to':'2099-07-03'}).json()
+    assert value['totals']['unpriced_count']==1
+    assert value['rows'][0]['unpriced_count']==1
+    assert value['rows'][0]['gross']==0
+    assert value['totals']['known_due']==0
+    assert len(value['unpaid_visits'])==1
+    assert value['unpaid_visits'][0]['patient_code']=='S2E-UNPRICED'
+    assert value['unpaid_visits'][0]['unpriced_count']==1
+    assert value['warning']=='Còn khoản chưa nhập giá, doanh thu chưa đầy đủ'
+    response = client.get('/api/reports/revenue/export',headers=manager,
+                          params={'date_from':'2099-07-03','date_to':'2099-07-03'})
+    book = load_workbook(BytesIO(response.content),read_only=True)
+    for sheet in book.worksheets:
+        assert sheet['A1'].value==value['note']
+        assert sheet['A2'].value==value['warning']
+    assert 'Khoản chưa có giá' in [cell.value for cell in book['Tổng kỳ'][3]]
+    book.close()
+
+
+def test_discount_reversal_appears_in_corrections(sample):
+    manager = sample['actors']['quanly']
+    with db(True) as c:
+        uid = c.execute("SELECT id FROM users WHERE username='quanly'").fetchone()[0]
+        c.execute("""INSERT INTO adjustment_reversals(adjustment_id,reason,reversed_by,created_at)
+            VALUES(?,?,?,?)""",(sample['discount'],'Hoàn tác giảm phí thử nghiệm',uid,sample['at2']))
+    rows = client.get('/api/reports/corrections',headers=manager,params=params()).json()['rows']
+    matches = [r for r in rows if r['type']=='Hoàn tác giảm giá']
+    assert len(matches)==1
+    assert matches[0]['actor']=='Quản lý phòng khám'
+    assert matches[0]['reason']=='Hoàn tác giảm phí thử nghiệm'
+    assert '20000' in matches[0]['content']
+
+
+def test_cancelled_visit_appears_in_corrections(sample):
+    with db(True) as c:
+        uid = c.execute("SELECT id FROM users WHERE username='quanly'").fetchone()[0]
+        c.execute("""INSERT INTO visit_cancellations(visit_id,actor_id,reason,created_at)
+            VALUES(?,?,?,?)""",(sample['visits'][2],uid,'Hủy lượt khám theo yêu cầu',sample['at2']))
+    rows = client.get('/api/reports/corrections',
+                      headers=sample['actors']['quanly'],params=params()).json()['rows']
+    matches = [r for r in rows if r['type']=='Hủy lượt khám']
+    assert len(matches)==1
+    assert matches[0]['patient_code']=='S2E-GIA-3'
+    assert matches[0]['reason']=='Hủy lượt khám theo yêu cầu'
+
+
+def test_return_two_tablets_in_corrections(sample):
+    with db(True) as c:
+        vid=sample['visits'][0]
+        rxid=c.execute('SELECT id FROM prescriptions WHERE visit_id=?',(vid,)).fetchone()[0]
+        user=c.execute("SELECT id FROM users WHERE username='thungan'").fetchone()[0]
+        mid=c.execute("SELECT id FROM medicines WHERE base_unit='viên' LIMIT 1").fetchone()[0]
+        lot=c.execute('SELECT id FROM stock_lots WHERE medicine_id=? LIMIT 1',(mid,)).fetchone()[0]
+        c.execute('INSERT INTO prescription_items(prescription_id,medicine_id,quantity) VALUES(?,?,?)',
+                  (rxid,mid,5))
+        pi=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute('INSERT INTO dispensations(prescription_id,visit_id,dispensed_by,dispensed_at) VALUES(?,?,?,?)',
+                  (rxid,vid,user,sample['at1']))
+        disp=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("""INSERT INTO dispensation_items(dispensation_id,prescription_item_id,
+            medicine_id,stock_lot_id,quantity,unit_price) VALUES(?,?,?,?,?,?)""",
+            (disp,pi,mid,lot,5,1000))
+        di=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("""INSERT INTO medication_returns(dispensation_id,reason,requested_by,status,
+            created_at,request_key) VALUES(?,? ,?,'approved',?,?)""",
+            (disp,'Trả thuốc chưa sử dụng',user,sample['at2'],'s2e_return_two_pills'))
+        rid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("""INSERT INTO medication_return_items(return_id,dispensation_item_id,quantity)
+            VALUES(?,?,2)""",(rid,di))
+        medicine_name=c.execute('SELECT name FROM medicines WHERE id=?',(mid,)).fetchone()[0]
+    data=client.get('/api/reports/corrections',
+                    headers=sample['actors']['quanly'],params=params()).json()
+    matches=[r for r in data['rows'] if r['type']=='Trả thuốc']
+    assert len(matches)==1
+    assert matches[0]['medicine_name']==medicine_name
+    assert matches[0]['quantity']==2
+    assert matches[0]['actor']=='Thu ngân'
+    assert '2 viên' in matches[0]['content']
+    assert matches[0]['reason']=='Trả thuốc chưa sử dụng'
+
+
+def test_imaging_correction_only_after_signature_and_by_signed_day(sample):
+    manager=sample['actors']['quanly']
+    rid=sample['draft_correction']
+    before=client.get('/api/reports/corrections',headers=manager,
+                      params={'date_from':'2099-06-19','date_to':'2099-06-19'}).json()
+    assert not any(row['type']=='Đính chính hình ảnh' for row in before['rows'])
+    with db(True) as c:
+        doctor=sample['doctors'][0]
+        c.execute("UPDATE imaging_reports SET snapshot='{}' WHERE id=?",(rid,))
+        c.execute("""INSERT INTO document_signatures(document_kind,document_id,visit_id,
+            signed_by,signed_at,content_hash,image,username)
+            VALUES('ultrasound',?,?,?,?,?,?,?)""",
+            (rid,sample['visits'][0],doctor,sample['at2'],'a'*64,b'synthetic_signature','bs_noi'))
+    first_day=client.get('/api/reports/corrections',headers=manager,
+                         params={'date_from':'2099-06-18','date_to':'2099-06-18'}).json()
+    assert not any(row['type']=='Đính chính hình ảnh' for row in first_day['rows'])
+    signed_day=client.get('/api/reports/corrections',headers=manager,
+                          params={'date_from':'2099-06-19','date_to':'2099-06-19'}).json()
+    matches=[row for row in signed_day['rows'] if row['type']=='Đính chính hình ảnh']
+    assert len(matches)==1
+    assert matches[0]['occurred_at']=='2099-06-19 09:00:00'
+    assert matches[0]['actor']=='BS Nội'
+
+
+def test_overdiscount_invoice_409_is_flagged(sample):
+    manager = sample['actors']['quanly']
+    stamp='2099-08-10T02:00:00+00:00'
+    with db(True) as c:
+        uid=c.execute("SELECT id FROM users WHERE username='quanly'").fetchone()[0]
+        doctor=sample['doctors'][0]
+        c.execute("""INSERT INTO patients(code,full_name,sex,created_at)
+            VALUES('S2E-OVER','Giảm vượt phí','Nam',?)""",(stamp,))
+        patient=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO visits(patient_id,doctor_id,created_by,created_at) VALUES(?,?,?,?)",
+                  (patient,doctor,uid,stamp))
+        vid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute("INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,10000,?)",
+                  (vid,'Phí đã giảm quá mức',stamp))
+        c.execute("""INSERT INTO adjustments(visit_id,kind,amount,reason,status,
+            proposed_by,reviewed_by,proposed_at,reviewed_at)
+            VALUES(?,'discount',15000,'Thử lỗi nghiệp vụ','approved',?,?,?,?)""",
+            (vid,uid,uid,stamp,stamp))
+    data=client.get('/api/reports/revenue',headers=manager,
+                    params={'month':'2099-08'}).json()
+    assert data['totals']['known_due']==0
+    assert len(data['unpaid_visits'])==1
+    item=data['unpaid_visits'][0]
+    assert item['patient_code']=='S2E-OVER'
+    assert item['known_due'] is None
+    assert item['note']=='Giảm phí vượt phí, cần kiểm tra'
