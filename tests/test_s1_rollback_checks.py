@@ -43,3 +43,15 @@ def test_venv_lock_diagnostics_at_rollback_failure():
         capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_venv_rollback_process_tree_and_lock_ownership():
+    powershell = shutil.which('powershell') or shutil.which('pwsh')
+    if not powershell:
+        pytest.skip('PowerShell is required for the process-tree test')
+    script = Path(__file__).with_name('Test-VenvRollbackTree.ps1')
+    result = subprocess.run(
+        [powershell, '-NoProfile', '-NonInteractive', '-File', str(script)],
+        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

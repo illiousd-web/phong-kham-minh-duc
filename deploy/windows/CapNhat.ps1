@@ -60,9 +60,11 @@ function Save-InitialBackupTaskSnapshot {
 }
 
 function Invoke-QuayVe {
+    param([switch]$GuardServiceStartup)
     Write-Buoc 'TỰ QUAY VỀ BẢN CŨ'
     $failures = New-Object System.Collections.Generic.List[string]
-    $recovery = @{ Code = $false; Venv = $false; Database = $false; Tasks = $false; Stopped = $true }
+    $recovery = @{ Code = $false; Venv = $false; Database = $false; Tasks = $false; Stopped = $true; ServiceConfig = $null }
+    $venvScan = @{ Venv = $P.Venv; ClinicEnv = $P.ClinicEnv; Known = @{} }
     function Invoke-RecoveryStep([string]$Label, [scriptblock]$Action) {
         try {
             & $Action | Out-Null
@@ -75,9 +77,25 @@ function Invoke-QuayVe {
             return $false
         }
     }
+    function Set-RecoveryServiceStartMode($Service, [string]$Mode) {
+        # ChangeStartMode leaves DelayedAutoStart and SCM failure actions intact.
+        $result = Invoke-CimMethod -InputObject $Service -MethodName ChangeStartMode -Arguments @{ StartMode = $Mode } -ErrorAction Stop
+        if ($result.ReturnValue -ne 0) { throw ('Không đổi được chế độ khởi động dịch vụ sang ' + $Mode + ', mã ' + $result.ReturnValue) }
+    }
     $needsRecovery = $State.stopped -or $State.code_replaced -or $State.venv_moved -or $State.migrated -or $State.backup_tasks_changed
     if ($needsRecovery) {
         $recovery.Stopped = Invoke-RecoveryStep 'Dừng dịch vụ trước phục hồi' {
+            if ($GuardServiceStartup) {
+                $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Names.Service + "'") -ErrorAction Stop
+                $startupModes = @{ Auto = 'Automatic'; Manual = 'Manual'; Disabled = 'Disabled' }
+                if (-not $config -or -not $startupModes.ContainsKey([string]$config.StartMode)) { throw 'Không xác định được chế độ khởi động của dịch vụ.' }
+                # SCM may have queued a restart while the broken service was stopped.
+                $recovery.StartupMode = $startupModes[$config.StartMode]
+                Set-RecoveryServiceStartMode $config 'Disabled'
+                $recovery.ServiceConfig = $config
+                $observed = @(Get-MinhDucVenvProcessTree @venvScan)
+                Write-MinhDucVenvLockDiagnostics -Venv $P.Venv -Context ('Đã khóa khởi động dịch vụ trong lúc quay về; PID trình bọc=' + $config.ProcessId) -ObservedProcesses $observed
+            }
             $service = Get-Service -Name $Names.Service -ErrorAction Stop
             if ($service.Status -ne 'Stopped') { Stop-Service -Name $Names.Service -Force -ErrorAction Stop }
             $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
@@ -86,7 +104,9 @@ function Invoke-QuayVe {
             if (-not $State.backup_task_snapshot.Count) { throw 'Thiếu snapshot lịch ban đầu; không chụp lại trong quay về.' }
             $State.backup_tasks_changed = $true
             Suspend-MinhDucBackupTasks
-            Wait-MinhDucVenvPythonExit -Venv $P.Venv -LogLockDiagnostics
+            Wait-MinhDucVenvPythonExit @venvScan -LogLockDiagnostics
+            $service.Refresh()
+            if ($service.Status -ne 'Stopped') { throw 'Dịch vụ đã chạy lại trong lúc chờ Python thoát.' }
         }
     }
     $recovery.Code = Invoke-RecoveryStep 'Trả mã nguồn cũ' {
@@ -113,7 +133,7 @@ function Invoke-QuayVe {
         if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả môi trường Python.' }
         if ($State.venv_moved) {
             if (-not (Test-Path -LiteralPath $OldVenv -PathType Container)) { throw 'Thiếu môi trường Python cũ.' }
-            Wait-MinhDucVenvPythonExit -Venv $P.Venv -LogLockDiagnostics
+            Wait-MinhDucVenvPythonExit @venvScan -LogLockDiagnostics
             Restore-MinhDucOldVenv -Venv $P.Venv -OldVenv $OldVenv -LogLockDiagnostics
             if (Test-Path -LiteralPath $OldVenv) { throw 'Chưa chuyển xong môi trường Python cũ.' }
         }
@@ -140,8 +160,16 @@ function Invoke-QuayVe {
     $recovery.Tasks = Invoke-RecoveryStep 'Khôi phục lịch sao lưu cũ' {
         if ($State.backup_tasks_changed) { Restore-MinhDucBackupTasks -Snapshot $State.backup_task_snapshot }
     }
+    $startupRestored = $true
+    if ($recovery.ServiceConfig) {
+        $startupRestored = Invoke-RecoveryStep 'Trả chế độ khởi động dịch vụ' {
+            Set-RecoveryServiceStartMode $recovery.ServiceConfig $recovery.StartupMode
+            Write-Host ('[S2F2-VENV] Đã trả chế độ khởi động dịch vụ: ' + $recovery.StartupMode)
+        }
+    }
     [void](Invoke-RecoveryStep 'Khởi động và kiểm HTTPS bản cũ' {
         if (-not $recovery.Code -or -not $recovery.Venv -or -not $recovery.Database) { throw 'Mã/Python/CSDL chưa đạt; giữ dịch vụ dừng để tránh dùng sai phiên bản.' }
+        if (-not $startupRestored) { throw 'Chưa trả được chế độ khởi động của dịch vụ cũ.' }
         if ($needsRecovery) { Start-Service -Name $Names.Service -ErrorAction Stop }
         $service = Get-Service -Name $Names.Service -ErrorAction Stop
         $service.WaitForStatus('Running', (New-TimeSpan -Seconds 30))
@@ -285,7 +313,7 @@ try {
         $rollbackError = ''
         Write-Loi ('Cập nhật lỗi: ' + $updateError)
         $rollbackOk = $true
-        try { Invoke-QuayVe } catch { $rollbackOk = $false; $rollbackError = $_.Exception.Message; Write-Loi ('Quay về bản cũ gặp lỗi: ' + $rollbackError) }
+        try { Invoke-QuayVe -GuardServiceStartup } catch { $rollbackOk = $false; $rollbackError = $_.Exception.Message; Write-Loi ('Quay về bản cũ gặp lỗi: ' + $rollbackError) }
         if ($rollbackOk) {
             Write-Result 'da_quay_ve' $updateError
             Write-Host 'CẬP NHẬT KHÔNG THÀNH CÔNG — ĐÃ QUAY VỀ BẢN CŨ. Gửi nhật ký cho người hỗ trợ.' -ForegroundColor Yellow

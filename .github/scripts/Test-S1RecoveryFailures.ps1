@@ -6,6 +6,11 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or -not $env:RUNNER_TEMP) { throw 'CI-only s
 Import-Module C:\MinhDuc\deploy\windows\MinhDuc.Install.psm1 -Force -DisableNameChecking
 $paths = Get-MinhDucPaths
 $names = Get-MinhDucNames
+if ($Mode -eq 'Database') {
+    & (Join-Path $PSScriptRoot '../../tests/Test-VenvRollbackTree.ps1') -RealVenvLock
+}
+$serviceKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\' + $names.Service
+$startupBefore = Get-ItemProperty -LiteralPath $serviceKey
 $files = @((Join-Path $paths.Code 'scripts\install_db.py'), (Join-Path $paths.Code 'app\main.py'))
 $original = @{}
 foreach ($file in $files) { $original[$file] = [IO.File]::ReadAllBytes($file) }
@@ -42,6 +47,10 @@ try {
     if (@($failedResult.rollback_errors).Count -eq 0) { throw 'Recovery did not retain failed steps' }
     if ($Mode -eq 'Database' -and ($failedResult.rollback_errors -join ' ') -notmatch '23') { throw 'CLI exit 23 was not recorded as a recovery failure' }
     if ($Mode -eq 'Service' -and ($failedResult.rollback_errors -join ' ') -notmatch 'HTTPS') { throw 'Service/HTTPS failure was not recorded' }
+    $startupAfter = Get-ItemProperty -LiteralPath $serviceKey
+    if ($startupBefore.Start -ne $startupAfter.Start -or $startupBefore.DelayedAutoStart -ne $startupAfter.DelayedAutoStart) {
+        throw 'The rollback did not restore the original service startup configuration'
+    }
     Write-Output ('PASS: ' + $Mode + ' fault -> quay_ve_that_bai and nonzero exit, with failed steps retained')
 } catch {
     Write-Output ('PRIMARY FAULT-DRILL FAILURE: ' + $_.Exception.Message)
