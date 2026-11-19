@@ -6,7 +6,7 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($module, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in @('Get-MinhDucPythonScriptLabel', 'Write-MinhDucVenvLockDiagnostics', 'Wait-MinhDucVenvPythonExit', 'Restore-MinhDucOldVenv')) {
+foreach ($name in @('Get-MinhDucPythonScriptLabel', 'Get-MinhDucProcessParents', 'Write-MinhDucVenvLockDiagnostics', 'Wait-MinhDucVenvPythonExit', 'Restore-MinhDucOldVenv')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -16,16 +16,18 @@ $python = "$venv\Scripts\python.exe"
 $rust = "$venv-quay-ve-tag\Lib\site-packages\cryptography\hazmat\bindings\_rust.pyd"
 $late = [pscustomobject]@{
     ProcessId = 606; ParentProcessId = 605; Name = 'python.exe'; ExecutablePath = 'C:\Python\python.exe'
-    CommandLine = 'python.exe -m scripts.with_env C:\ProgramData\MinhDuc\clinic.env scripts.run_lan'; CreationDate = 1
+    CommandLine = 'python.exe -m scripts.with_env C:\ProgramData\MinhDuc\clinic.env scripts.run_lan'; CreationDate = 1; CanStop = $true; TreeDepth = 1
 }
 function Get-CimInstance {
     param($ClassName, $Filter, $ErrorAction)
     if ($ClassName -ne 'Win32_Process') { throw 'CIM phải truy vấn Win32_Process.' }
     if ($Filter) { return }
-    [pscustomobject]@{ProcessId=601; ParentProcessId=500; Name='python.exe'; ExecutablePath=$python; CommandLine=('"'+$python+'" -m scripts.install_db fingerprint --token "secret token value" postgresql://user:secret@localhost/db')}
-    [pscustomobject]@{ProcessId=602; ParentProcessId=100; Name='system-tool.exe'; ExecutablePath='C:\Tools\system-tool.exe'; CommandLine='system-tool.exe --scan'}
-    [pscustomobject]@{ProcessId=603; ParentProcessId=100; Name='tool.exe'; ExecutablePath='C:\Tools\tool.exe'; CommandLine='tool.exe "C:/Minh Duc/.venv-quay-ve-tag/Lib"'}
-    [pscustomobject]@{ProcessId=604; ParentProcessId=100; Name='tool.exe'; ExecutablePath='C:\Tools\tool.exe'; CommandLine='tool.exe "C:\Minh Duc\.venv-other\Lib"'}
+    [pscustomobject]@{ProcessId=601; ParentProcessId=500; CreationDate=3; Name='python.exe'; ExecutablePath=$python; CommandLine=('"'+$python+'" -m scripts.install_db fingerprint --token "secret token value" postgresql://user:secret@localhost/db')}
+    [pscustomobject]@{ProcessId=500; ParentProcessId=100; CreationDate=2; Name='MinhDuc.exe'; ExecutablePath='C:\ProgramData\MinhDuc\service\MinhDuc.exe'; CommandLine='MinhDuc.exe --token parent-secret'}
+    [pscustomobject]@{ProcessId=100; ParentProcessId=0; CreationDate=1; Name='services.exe'; ExecutablePath='C:\Windows\System32\services.exe'; CommandLine='services.exe'}
+    [pscustomobject]@{ProcessId=602; ParentProcessId=100; CreationDate=2; Name='system-tool.exe'; ExecutablePath='C:\Tools\system-tool.exe'; CommandLine='system-tool.exe --scan'}
+    [pscustomobject]@{ProcessId=603; ParentProcessId=100; CreationDate=2; Name='tool.exe'; ExecutablePath='C:\Tools\tool.exe'; CommandLine='tool.exe "C:/Minh Duc/.venv-quay-ve-tag/Lib"'}
+    [pscustomobject]@{ProcessId=604; ParentProcessId=100; CreationDate=2; Name='tool.exe'; ExecutablePath='C:\Tools\tool.exe'; CommandLine='tool.exe "C:\Minh Duc\.venv-other\Lib"'}
 }
 function Get-Process {
     param($Id, $ErrorAction)
@@ -55,6 +57,7 @@ $records = @(Get-DiagnosticRecords $lines)
 if (($records.PID -join ',') -ne '601,602,603,605') { throw 'Bỏ sót tiến trình ứng viên hoặc ghi nhầm thư mục cùng cấp.' }
 $venvPython, $systemTool, $pathOnly, $moduleOnly = $records
 if ($venvPython.ExecutablePath -ne $python -or $venvPython.CommandLine -notmatch 'scripts.install_db fingerprint') { throw 'Thiếu đường dẫn hoặc lệnh chạy từ .venv.' }
+if (($venvPython.Ancestors.PID -join ',') -ne '500,100' -or $venvPython.Ancestors[0].Name -ne 'MinhDuc.exe' -or ($lines -join ' ') -match 'parent-secret') { throw 'Thiếu chuỗi tổ tiên WinSW hoặc lộ đối số.' }
 if (($lines -join ' ') -match 'secret token value|user:secret') { throw 'Lộ tham số bí mật trong nhật ký.' }
 if ($systemTool.ParentPID -ne 100 -or $systemTool.Name -ne 'system-tool.exe' -or $systemTool.LoadedRust[0] -ne $rust -or $systemTool.MatchesVenvPath) { throw 'Không nhận diện đúng tiến trình ngoài phần mềm có nạp _rust.pyd.' }
 if (-not $pathOnly.MatchesVenvPath -or $pathOnly.LoadedRust.Count) { throw 'Không nhận diện đúng đường dẫn .venv-quay-ve trong CommandLine.' }

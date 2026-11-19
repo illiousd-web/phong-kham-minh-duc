@@ -698,6 +698,19 @@ function Get-MinhDucPythonScriptLabel {
     return 'script/module=[đã che]'
 }
 
+function Get-MinhDucProcessParents {
+    param($Process, [hashtable]$Processes)
+    $seen = @{ ([int]$Process.ProcessId) = $true }
+    while ($Process.ParentProcessId -and $Processes.ContainsKey([int]$Process.ParentProcessId)) {
+        $parent = $Processes[[int]$Process.ParentProcessId]
+        if ($seen.ContainsKey([int]$parent.ProcessId) -or -not $Process.CreationDate -or
+            -not $parent.CreationDate -or $parent.CreationDate -gt $Process.CreationDate) { break }
+        $parent
+        $seen[[int]$parent.ProcessId] = $true
+        $Process = $parent
+    }
+}
+
 function Write-MinhDucVenvLockDiagnostics {
     param([string]$Venv, [string]$Context, [object[]]$ObservedProcesses = @())
     $prefix = '[S2F2-VENV] '
@@ -722,8 +735,10 @@ function Write-MinhDucVenvLockDiagnostics {
                     $path = $null
                     try { $path = $process.Path } catch { }
                     $processes[$process.Id] = [pscustomobject]@{
+                        ProcessId = $process.Id
                         Name = $process.ProcessName
                         ParentProcessId = $null
+                        CreationDate = $null
                         ExecutablePath = $path
                         CommandLine = $null
                     }
@@ -758,6 +773,7 @@ function Write-MinhDucVenvLockDiagnostics {
         } else {
             $commandLine = Get-MinhDucPythonScriptLabel -CommandLine $commandLine
         }
+        $modules = $item.PSObject.Properties['LoadedVenvModules']
         $record = [ordered]@{
             PID = $processId
             ParentPID = $item.ParentProcessId
@@ -765,6 +781,10 @@ function Write-MinhDucVenvLockDiagnostics {
             ExecutablePath = $path
             CommandLine = $commandLine
             LoadedRust = @($loaded[$processId] | Where-Object { $_ })
+            LoadedVenvModules = @(if ($modules) { $modules.Value })
+            Ancestors = @(Get-MinhDucProcessParents -Process $item -Processes $processes | ForEach-Object {
+                @{ PID = $_.ProcessId; ParentPID = $_.ParentProcessId; Name = $_.Name; ExecutablePath = $_.ExecutablePath }
+            })
             MatchesVenvPath = $matchesPath
             ObservedInWait = $observed.ContainsKey($processId)
         }
@@ -788,56 +808,121 @@ function Test-MinhDucProcessIdentity {
 }
 
 function Get-MinhDucVenvProcessTree {
-    param([string]$Venv, [hashtable]$Known)
-    $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-    $selected = @{}
-    $envPath = 'C:\ProgramData\MinhDuc\clinic.env'
-    foreach ($item in $all) {
-        $key = [string]$item.ProcessId
+    param([string]$Venv, [hashtable]$Known = @{}, [string]$ClinicEnv = 'C:\ProgramData\MinhDuc\clinic.env')
+    $root = [IO.Path]::GetFullPath($Venv).TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar
+    $all = @{}
+    $venvExecutables = @{}
+    $venvPython = @{}
+    foreach ($item in Get-CimInstance Win32_Process -ErrorAction Stop) {
+        $processId = [int]$item.ProcessId
+        $all[$processId] = $item
+        if ($item.ExecutablePath -and $item.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+            $venvExecutables[$processId] = $true
+        }
+        if ((Test-MinhDucVenvPythonPath -ExecutablePath $item.ExecutablePath -Venv $Venv) -or
+            ($Known.ContainsKey($processId) -and (Test-MinhDucProcessIdentity $Known[$processId] $item))) {
+            $venvPython[$processId] = $true
+        }
+    }
+
+    # Get-Process supplies loaded image paths, including base Python after its launcher has exited.
+    $loaded = Get-MinhDucVenvModules -Root $root
+    foreach ($processId in $loaded.Keys) {
+        if (-not $all.ContainsKey($processId)) { $all[$processId] = $loaded[$processId] }
+    }
+    foreach ($item in $all.Values) {
+        $processId = [int]$item.ProcessId
+        $parents = @(Get-MinhDucProcessParents -Process $item -Processes $all)
+        $fromVenv = $venvExecutables.ContainsKey($processId)
+        $fromVenvPython = $venvPython.ContainsKey($processId)
+        foreach ($parent in $parents) {
+            $fromVenv = $fromVenv -or $venvExecutables.ContainsKey([int]$parent.ProcessId)
+            $fromVenvPython = $fromVenvPython -or $venvPython.ContainsKey([int]$parent.ProcessId)
+        }
+        $modules = @()
+        if ($loaded.ContainsKey($processId)) { $modules = $loaded[$processId].LoadedVenvModules }
+        if ($fromVenvPython) { $Known[$processId] = $item }
+
+        # A module match is evidence of a lock, never authorization to stop its owner.
         $parts = @([regex]::Matches([string]$item.CommandLine, '"[^"\r\n]*"|[^\s]+') | ForEach-Object { $_.Value.Trim('"') })
         $withEnv = $false
-        for ($i=1; $i -lt $parts.Count-2; $i++) {
-            if ($parts[$i] -ceq '-c' -or -not $parts[$i].StartsWith('-')) { break }
-            if ($parts[$i] -ceq '-m' -and $parts[$i+1] -ceq 'scripts.with_env' -and $parts[$i+2].Replace('/','\') -ieq $envPath) { $withEnv = $true }
-            if ($parts[$i] -ceq '-m') { break }
-        }
-        $root = $item.Name -in @('python.exe','pythonw.exe') -and ((Test-MinhDucVenvPythonPath -ExecutablePath $item.ExecutablePath -Venv $Venv) -or $withEnv)
-        if ($root -or ($Known.ContainsKey($key) -and (Test-MinhDucProcessIdentity $Known[$key] $item))) { $selected[$key] = $item }
-    }
-    do {
-        $added = $false
-        foreach ($item in $all) {
-            $key = [string]$item.ProcessId
-            $parent = $selected[[string]$item.ParentProcessId]
-            if (-not $selected.ContainsKey($key) -and $parent -and (-not $item.CreationDate -or -not $parent.CreationDate -or $item.CreationDate -ge $parent.CreationDate)) {
-                $selected[$key] = $item; $added = $true
+        if ($item.Name -in @('python.exe','pythonw.exe')) {
+            for ($i=1; $i -lt $parts.Count-2; $i++) {
+                if ($parts[$i] -ceq '-c' -or -not $parts[$i].StartsWith('-')) { break }
+                if ($parts[$i] -ceq '-m') {
+                    $withEnv = $parts[$i+1] -ceq 'scripts.with_env' -and $parts[$i+2].Replace('/','\') -ieq $ClinicEnv.Replace('/','\')
+                    break
+                }
             }
         }
-    } while ($added)
-    foreach ($key in $selected.Keys) { $Known[$key] = $selected[$key] }
-    return @($selected.Values)
+        if ($fromVenv -or $fromVenvPython -or $withEnv -or $modules.Count) {
+            $item | Add-Member -NotePropertyMembers @{
+                CanStop = $fromVenvPython -or $withEnv
+                TreeDepth = $parents.Count
+                LoadedVenvModules = $modules
+            } -Force -PassThru
+        }
+    }
+}
+
+function Get-MinhDucVenvModules {
+    param([string]$Root)
+    $loaded = @{}
+    foreach ($process in Microsoft.PowerShell.Management\Get-Process -ErrorAction Stop) {
+        try {
+            $paths = @($process.Modules | Where-Object { $_ -and $_.FileName -and $_.FileName.StartsWith($Root, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object FileName)
+            if ($paths.Count) {
+                $image = $null
+                try { $image = $process.Path } catch { }
+                $loaded[[int]$process.Id] = [pscustomobject]@{
+                    ProcessId = $process.Id; Name = $process.ProcessName; ParentProcessId = $null
+                    CreationDate = $null; ExecutablePath = $image; CommandLine = $null
+                    LoadedVenvModules = $paths
+                }
+            }
+        } catch {
+            # A process may have exited or be protected. The file operations still check for locks.
+        } finally { $process.Dispose() }
+    }
+    return $loaded
 }
 
 function Wait-MinhDucVenvPythonExit {
-    param([Parameter(Mandatory=$true)][string]$Venv, [ValidateRange(0,30)][int]$Seconds=30, [switch]$LogLockDiagnostics)
-    $known = @{}
+    param(
+        [Parameter(Mandatory=$true)][string]$Venv, [ValidateRange(0,30)][int]$Seconds=30,
+        [switch]$LogLockDiagnostics, [hashtable]$Known = @{}, [string]$ClinicEnv = 'C:\ProgramData\MinhDuc\clinic.env'
+    )
+    $scan = @{ Venv = $Venv; Known = $Known; ClinicEnv = $ClinicEnv }
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
-        $remaining = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
+        $remaining = @(Get-MinhDucVenvProcessTree @scan)
         if (-not $remaining.Count) {
             Start-Sleep -Seconds 2
-            $remaining = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
+            $remaining = @(Get-MinhDucVenvProcessTree @scan)
             if (-not $remaining.Count) { return }
         }
-        if ($watch.Elapsed.TotalSeconds -ge $Seconds) { break }
+        $outside = @($remaining | Where-Object { -not $_.CanStop })
+        if ($outside.Count -or $watch.Elapsed.TotalSeconds -ge $Seconds) { break }
         Start-Sleep -Milliseconds 200
     } while ($true)
+    if ($outside.Count) {
+        $message = 'Phát hiện tiến trình ngoài phạm vi được phép dừng; PID=' + ($outside.ProcessId -join ',') + '; dừng phục hồi.'
+        if ($LogLockDiagnostics) { Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context $message -ObservedProcesses $outside }
+        throw $message
+    }
     $unverified = @()
-    foreach ($candidate in $remaining) {
+    $logged = $false
+    foreach ($candidate in ($remaining | Sort-Object TreeDepth -Descending)) {
+        if ($watch.Elapsed.TotalSeconds -ge 58) { break } # Giữ hai giây cho lần quét xác nhận.
         try { $process = Get-Process -Id $candidate.ProcessId -ErrorAction Stop }
         catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
             if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { continue }
             throw
+        }
+        # Giữ handle của chính tiến trình đã kiểm để tránh dừng nhầm khi PID được cấp lại.
+        if ($process -is [Diagnostics.Process]) {
+            try { $null = $process.Handle }
+            catch { if ($process.HasExited) { continue }; throw }
         }
         # Refresh CIM identity immediately before stopping: PID alone is never trusted.
         $now = @(Get-CimInstance Win32_Process -Filter ("ProcessId=" + $candidate.ProcessId) -ErrorAction Stop | Where-Object { $_.ProcessId -eq $candidate.ProcessId })
@@ -847,10 +932,17 @@ function Wait-MinhDucVenvPythonExit {
             continue
         }
         if ($now.Count -ne 1 -or -not (Test-MinhDucProcessIdentity $candidate $now[0]) -or $process.Path -ne $candidate.ExecutablePath) { continue }
+        if ($LogLockDiagnostics -and -not $logged) {
+            Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context 'Cây tiến trình Python trước khi dừng.' -ObservedProcesses $remaining
+            $logged = $true
+        }
         Write-Luu ('Quá hạn chờ Python 30 giây; dừng tiến trình ' + $process.ProcessName + '; PID=' + $process.Id + '; ExecutablePath=' + $now[0].ExecutablePath + '; ' + (Get-MinhDucPythonScriptLabel -CommandLine $now[0].CommandLine))
         try {
+            $exitWait = [int][Math]::Min(5000, 58000 - $watch.ElapsedMilliseconds)
+            if ($exitWait -le 0) { break }
+            if ($process -is [Diagnostics.Process] -and $process.HasExited) { continue }
             Stop-Process -InputObject $process -Force -ErrorAction Stop
-            if (-not $process.WaitForExit(5000)) { throw 'Python trong môi trường phòng khám chưa thoát; dừng phục hồi.' }
+            if (-not $process.WaitForExit($exitWait)) { throw 'Python trong môi trường phòng khám chưa thoát; dừng phục hồi.' }
         } catch {
             if ($LogLockDiagnostics) {
                 Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context ('Lỗi khi dừng hoặc chờ tiến trình thoát: ' + $_.Exception.Message) -ObservedProcesses @($candidate)
@@ -858,7 +950,7 @@ function Wait-MinhDucVenvPythonExit {
             throw
         }
     }
-    $left = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
+    $left = @(Get-MinhDucVenvProcessTree @scan)
     if ($unverified.Count -or $left.Count) {
         if ($LogLockDiagnostics) {
             Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context 'Còn tiến trình giữ môi trường Python hoặc chưa xác minh được.' -ObservedProcesses @($unverified + $left)
@@ -866,7 +958,7 @@ function Wait-MinhDucVenvPythonExit {
         throw 'Còn tiến trình đang giữ môi trường phòng khám; dừng phục hồi.'
     }
     Start-Sleep -Seconds 2
-    $left = @(Get-MinhDucVenvProcessTree -Venv $Venv -Known $known)
+    $left = @(Get-MinhDucVenvProcessTree @scan)
     if ($left.Count) {
         if ($LogLockDiagnostics) {
             Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context 'Có tiến trình xuất hiện lại sau lần quét rỗng.' -ObservedProcesses $left
