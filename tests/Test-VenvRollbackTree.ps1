@@ -6,6 +6,9 @@ Import-Module (Join-Path $PSScriptRoot '../deploy/windows/MinhDuc.Install.psm1')
 if ($RealVenvLock) {
     if ($env:OS -ne 'Windows_NT' -or $env:GITHUB_ACTIONS -ne 'true' -or -not $env:RUNNER_TEMP) { throw 'Chỉ kiểm khóa venv thật trên Windows CI giả lập.' }
     $paths = Get-MinhDucPaths
+    $serviceName = (Get-MinhDucNames).Service
+    $service = Get-Service -Name $serviceName -ErrorAction Stop
+    $wasRunning = $service.Status -eq 'Running'
     $root = Join-Path $env:RUNNER_TEMP ('minhduc-venv-' + [guid]::NewGuid())
     $venv = Join-Path $root '.venv'
     $oldVenv = Join-Path $root '.venv-cu'
@@ -14,6 +17,8 @@ if ($RealVenvLock) {
     $fixture = Join-Path $root 'hold_rust.py'
     $launcher = $null
     try {
+        # Lần quét venv thử cũng nhận diện Python đang chạy clinic.env thật.
+        Stop-MinhDucService -Name $serviceName -Paths $paths
         New-Item -ItemType Directory -Path $root | Out-Null
         Copy-Item -LiteralPath $paths.Venv -Destination $venv -Recurse
         & $paths.BasePython -m venv --without-pip $oldVenv
@@ -57,11 +62,18 @@ while not (root / 'quit.txt').exists() and time.monotonic() < deadline:
         if ($LASTEXITCODE -ne 0) { throw 'Môi trường Python cũ không chạy được.' }
         Write-Output 'PASS: Python gốc nạp _rust.pyd trong venv, cây thoát và môi trường cũ được trả.'
     } finally {
-        if ($launcher -and -not $launcher.HasExited) {
-            Set-Content -LiteralPath $quit -Value 'quit'
-            if (-not $launcher.WaitForExit(5000)) { throw 'Tiến trình kiểm thử chưa thoát.' }
+        try {
+            if ($launcher -and -not $launcher.HasExited) {
+                Set-Content -LiteralPath $quit -Value 'quit'
+                if (-not $launcher.WaitForExit(5000)) { throw 'Tiến trình kiểm thử chưa thoát.' }
+            }
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        } finally {
+            if ($wasRunning) {
+                Start-Service -Name $serviceName -ErrorAction Stop
+                $service.WaitForStatus('Running', (New-TimeSpan -Seconds 30))
+            }
         }
-        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }
     return
 }
@@ -71,7 +83,7 @@ $module = Join-Path $PSScriptRoot '../deploy/windows/MinhDuc.Install.psm1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($module, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in 'Get-MinhDucVenvProcessTree', 'Wait-MinhDucVenvPythonExit') {
+foreach ($name in 'Get-MinhDucVenvProcessTree', 'Wait-MinhDucVenvPythonExit', 'Set-RecoveryServiceStartMode') {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }

@@ -77,11 +77,6 @@ function Invoke-QuayVe {
             return $false
         }
     }
-    function Set-RecoveryServiceStartMode($Service, [string]$Mode) {
-        # ChangeStartMode leaves DelayedAutoStart and SCM failure actions intact.
-        $result = Invoke-CimMethod -InputObject $Service -MethodName ChangeStartMode -Arguments @{ StartMode = $Mode } -ErrorAction Stop
-        if ($result.ReturnValue -ne 0) { throw ('Không đổi được chế độ khởi động dịch vụ sang ' + $Mode + ', mã ' + $result.ReturnValue) }
-    }
     $needsRecovery = $State.stopped -or $State.code_replaced -or $State.venv_moved -or $State.migrated -or $State.backup_tasks_changed
     if ($needsRecovery) {
         $recovery.Stopped = Invoke-RecoveryStep 'Dừng dịch vụ trước phục hồi' {

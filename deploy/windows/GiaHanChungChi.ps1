@@ -9,7 +9,8 @@
 #   2. Ghi cặp chứng chỉ/khóa mới bằng tên tạm cạnh tệp cũ (server.*.moi-<stamp>).
 #   3. Đặt quyền cho tài khoản dịch vụ, KIỂM TRA tài khoản dịch vụ đọc được, kiểm cặp khớp nhau.
 #   4. Mới thay tệp (tệp cũ thành server.*.cu-<stamp>), khởi động lại dịch vụ, kiểm HTTPS dùng đúng chứng chỉ mới.
-#   5. Lỗi ở bất kỳ bước nào: khôi phục; chỉ báo "đã trả chứng chỉ cũ" khi HTTPS sau khôi phục thực sự đạt.
+#   5. Khi phục hồi, nếu khởi động lại lỗi sau khi thay tệp, thử thêm một lần với cặp mới.
+#      Nếu cần trả tệp cũ, chỉ báo "đã trả chứng chỉ cũ" khi HTTPS sau khôi phục thực sự đạt.
 # Biến MINHDUC_TEST_LOI chỉ dùng cho kiểm thử tự động (CI) để gây lỗi có chủ đích; không đặt khi dùng thật.
 [CmdletBinding()]
 param([switch]$KhongHoi, [string]$ThuMucMa = 'C:\MinhDuc', [string]$ThuMucDuLieu = 'C:\ProgramData\MinhDuc')
@@ -112,7 +113,14 @@ try {
     $r = Invoke-Cert @('commit', '--tls-dir', $P.Tls, '--stamp', $stamp)
     if (-not $r.Ok) { throw ('Lỗi khi thay tệp: ' + (($r.Output | Select-Object -Last 1) -join '')) }
     if ($Fault -eq 'khoi-phuc-loi') { throw 'Lỗi giả lập sau khi thay tệp (kiểm thử khôi phục thất bại).' }
-    Restart-Service -Name $Names.Service -Force
+    # Restart-Service không chờ cây Python cũ thoát sau khi WinSW báo Stopped.
+    try {
+        Restart-MinhDucService -Name $Names.Service -Paths $P
+    } catch {
+        if (-not $recovery -or $_.Exception.Data['MinhDucExternalProcess']) { throw }
+        Write-Luu ('Khởi động lại lần đầu lỗi: ' + $_.Exception.Message + '. Thử thêm một lần với chứng chỉ mới.')
+        Restart-MinhDucService -Name $Names.Service -Paths $P
+    }
 
     Write-Buoc 'Bước 4/4: Kiểm tra HTTPS dùng đúng chứng chỉ mới'
     if (-not (Wait-Https -Origin $origin -Seconds 120)) { Show-ServiceDiagnostics -Paths $P; throw 'Dịch vụ web không trả lời sau 2 phút.' }
@@ -130,15 +138,28 @@ try {
     } else {
         $reason = $_.Exception.Message
         Write-Loi ('Gia hạn lỗi: ' + $reason)
-        Write-Buoc 'KHÔI PHỤC CHỨNG CHỈ CŨ'
-        $r = Invoke-Cert @('rollback', '--tls-dir', $P.Tls, '--stamp', $stamp)
-        $rollbackOk = $r.Ok
-        if ($rollbackOk) { Write-Thongtin 'Đã đặt lại tệp chứng chỉ cũ; đang kiểm tra...' } else { Write-Loi ('Không đặt lại được tệp chứng chỉ cũ: ' + (($r.Output | Select-Object -Last 1) -join '')) }
-        Set-SecureAcl -Path $P.Tls -Directory -Readers @($Names.ServiceAcct)
-        foreach ($f in @('server.crt', 'server.key')) { Invoke-Native -FilePath 'icacls.exe' -Arguments @((Join-Path $P.Tls $f), '/reset') -Quiet | Out-Null }
-        Restart-Service -Name $Names.Service -Force -ErrorAction SilentlyContinue
-        $httpsOk = Wait-Https -Origin $origin -Seconds 120
-        $servedNow = if ($httpsOk) { Get-ServedSerial $origin $ca } else { $null }
+        $rollbackOk = $false
+        $httpsOk = $false
+        $servedNow = $null
+        if (-not $_.Exception.Data['MinhDucExternalProcess']) {
+            Write-Buoc 'KHÔI PHỤC CHỨNG CHỈ CŨ'
+            $r = Invoke-Cert @('rollback', '--tls-dir', $P.Tls, '--stamp', $stamp)
+            $rollbackOk = $r.Ok
+            if ($rollbackOk) { Write-Thongtin 'Đã đặt lại tệp chứng chỉ cũ; đang kiểm tra...' } else { Write-Loi ('Không đặt lại được tệp chứng chỉ cũ: ' + (($r.Output | Select-Object -Last 1) -join '')) }
+            Set-SecureAcl -Path $P.Tls -Directory -Readers @($Names.ServiceAcct)
+            foreach ($f in @('server.crt', 'server.key')) { Invoke-Native -FilePath 'icacls.exe' -Arguments @((Join-Path $P.Tls $f), '/reset') -Quiet | Out-Null }
+            $outsideProcess = $false
+            try {
+                Restart-MinhDucService -Name $Names.Service -Paths $P
+            } catch {
+                Write-Loi ('Khởi động lại khi trả chứng chỉ cũ lỗi: ' + $_.Exception.Message)
+                $outsideProcess = $_.Exception.Data['MinhDucExternalProcess']
+            }
+            if (-not $outsideProcess) {
+                $httpsOk = Wait-Https -Origin $origin -Seconds 120
+                if ($httpsOk) { $servedNow = Get-ServedSerial $origin $ca }
+            }
+        }
         # Chỉ coi là đã trả chứng chỉ cũ khi: khôi phục tệp đạt, HTTPS đạt, và đúng chứng chỉ cũ đang chạy.
         $restoreOk = $rollbackOk -and $httpsOk -and ($null -ne $servedNow) -and (($null -eq $oldSerial) -or ($servedNow -eq $oldSerial))
         Write-Host ''
