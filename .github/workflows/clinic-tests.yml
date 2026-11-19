@@ -217,6 +217,8 @@ jobs:
           fetch-depth: 0
       - name: Installer logic checks (PowerShell 5.1)
         run: .\deploy\windows\Test-Installer.ps1
+      - name: Update data safety fault drills (PowerShell 5.1)
+        run: .\tests\Test-UpdateDataSafety.ps1
       - name: Synthetic CI administrator credential (masked, never committed)
         run: |
           $pw = [guid]::NewGuid().ToString('N') + 'Ci!9x'

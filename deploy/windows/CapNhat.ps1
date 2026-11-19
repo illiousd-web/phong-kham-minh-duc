@@ -1,7 +1,7 @@
 ﻿# Cập nhật phần mềm Minh Đức từ tệp .zip tải về.
-# Trình tự: sao lưu -> kiểm bản sao lưu -> dừng dịch vụ -> thay mã -> cài thư viện
-# -> migration -> bật dịch vụ -> kiểm tra sức khỏe. Lỗi ở bất kỳ bước nào sau khi dừng
-# dịch vụ: tự đưa mã, thư viện và (nếu CSDL đã đổi) cơ sở dữ liệu về bản cũ.
+# Trình tự: dừng dịch vụ -> sao lưu -> kiểm bản sao lưu -> thay mã -> cài thư viện
+# -> migration -> bật dịch vụ -> kiểm tra sức khỏe. Nếu đã gọi migration, quay về
+# phải khôi phục cả CSDL, tệp đính kèm và cài đặt giao diện từ bản sao lưu.
 [CmdletBinding()]
 param(
     [string]$TepZip = '',
@@ -135,14 +135,12 @@ function Invoke-QuayVe {
             if (-not $recovery.Code -or -not $recovery.Venv) { throw 'Mã hoặc Python chưa phục hồi đúng; chưa thể phục hồi CSDL.' }
             if ($State.migrated) {
                 if (-not $State.fingerprint) { throw 'Thiếu dấu vân tay CSDL trước cập nhật.' }
-                $now = Get-Fingerprint
-                if (-not $now -or $now -ne $State.fingerprint) {
-                    $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, '--owner-env', $P.OwnerEnv,
-                        '--super-env', $P.SuperEnv, 'rollback', '--file', $State.backup, '--key', $P.BackupKey)
-                    if (-not $r.Ok) { throw ('Lệnh khôi phục CSDL trả mã ' + $r.Code + '; KHÔNG dùng phần mềm.') }
-                    Set-SecureAcl -Path $P.Attachments -Directory -Writers @($Names.ServiceAcct)
-                    if (Test-Path -LiteralPath $P.Settings) { Set-SecureAcl -Path $P.Settings -Directory -Writers @($Names.ServiceAcct) }
-                }
+                # Dấu vân tay chỉ kiểm cấu trúc và quyền, nên migration sửa dữ liệu vẫn phải phục hồi.
+                $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, '--owner-env', $P.OwnerEnv,
+                    '--super-env', $P.SuperEnv, 'rollback', '--file', $State.backup, '--key', $P.BackupKey)
+                if (-not $r.Ok) { throw ('Lệnh khôi phục CSDL trả mã ' + $r.Code + '; KHÔNG dùng phần mềm.') }
+                Set-SecureAcl -Path $P.Attachments -Directory -Writers @($Names.ServiceAcct)
+                if (Test-Path -LiteralPath $P.Settings) { Set-SecureAcl -Path $P.Settings -Directory -Writers @($Names.ServiceAcct) }
                 $verified = Get-Fingerprint
                 if (-not $verified -or $verified -ne $State.fingerprint) { throw 'Dấu vân tay CSDL chưa khớp bản trước cập nhật.' }
             }
@@ -228,21 +226,54 @@ try {
     Get-ChildItem -LiteralPath $newRoot -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
     Write-Dat ('Phiên bản hiện tại: ' + (Get-AppVersion $P.Code) + '  →  bản mới: ' + (Get-AppVersion $newRoot))
 
-    Write-Buoc 'Bước 3/8: Sao lưu và kiểm tra bản sao lưu'
-    $alert = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) $Names.AlertFile
-    $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 3) -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_job', '--key', $P.BackupKey,
-        '--directory', $P.Backups, '--state', $P.BackupState, '--external-config', $P.ExternalCfg, '--alert-file', $alert)
-    if (-not $r.Ok) { Stop-CaiDat 'Sao lưu trước cập nhật thất bại; chưa thay đổi gì.' ($r.Output | Select-Object -Last 4) 6 }
-    $last = (Get-Content -LiteralPath $P.BackupState -Raw | ConvertFrom-Json).last_file
-    $State.backup = Join-Path $P.Backups $last
-    Write-Dat ('Bản sao lưu đã kiểm tra: ' + $last)
-    $State.fingerprint = Get-Fingerprint
-    if (-not $State.fingerprint) { Stop-CaiDat 'Không đọc được dấu vân tay CSDL trước cập nhật; chưa thay đổi mã/dữ liệu.' @('Kiểm tra PostgreSQL rồi chạy lại.') 6 }
+    Write-Buoc 'Bước 3/8: Dừng dịch vụ web'
+    Write-Luu 'Máy trạm tạm thời không vào được phần mềm từ lúc dừng dịch vụ, kể cả trong lúc sao lưu và kiểm tra bản sao lưu.'
+    try {
+        Stop-MinhDucService -Name $Names.Service -Paths $P -ScriptName 'CapNhat.ps1'
+        $State.stopped = $true
+    } catch {
+        # WinSW có thể đã dừng trước khi bước chờ Python thoát báo lỗi.
+        $service = Get-Service -Name $Names.Service -ErrorAction SilentlyContinue
+        $State.stopped = $service.Status -in @('Stopped', 'StopPending')
+        throw
+    }
+    Write-Dat 'Đã dừng dịch vụ web.'
 
-    Write-Buoc 'Bước 4/8: Dừng dịch vụ web'
-    Stop-Service -Name $Names.Service -Force
-    $State.stopped = $true
-    Write-Dat 'Đã dừng dịch vụ (máy trạm tạm thời không vào được).'
+    Write-Buoc 'Bước 4/8: Sao lưu và kiểm tra bản sao lưu'
+    $failure = 'Sao lưu trước cập nhật thất bại'
+    $guidance = @()
+    try {
+        $alert = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) $Names.AlertFile
+        $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 3) -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_job', '--key', $P.BackupKey,
+            '--directory', $P.Backups, '--state', $P.BackupState, '--external-config', $P.ExternalCfg, '--alert-file', $alert)
+        if (-not $r.Ok) {
+            $guidance = @($r.Output | Select-Object -Last 4)
+            throw ('Lệnh sao lưu trả mã ' + $r.Code)
+        }
+        # Dùng kết quả của chính lệnh này vì lịch sao lưu cũng ghi vào backup-status.json.
+        $verified = $r.Output | Select-String -Pattern '^Sao luu va kiem tra ban sao luu: DAT (minhduc-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\.mdbackup)$'
+        if (-not $verified) { throw 'Lệnh sao lưu chưa xác nhận bản mới đã kiểm tra.' }
+        $last = $verified.Matches[0].Groups[1].Value
+        $backup = Join-Path $P.Backups $last
+        if (-not (Test-Path -LiteralPath $backup -PathType Leaf) -or -not (Test-Path -LiteralPath ($backup + '.verified') -PathType Leaf)) {
+            throw 'Thiếu bản sao lưu mới hoặc tệp đánh dấu đã kiểm tra.'
+        }
+        $State.backup = $backup
+        Write-Dat ('Bản sao lưu đã kiểm tra: ' + $last)
+
+        $failure = 'Không đọc được dấu vân tay CSDL trước cập nhật'
+        $guidance = @('Kiểm tra PostgreSQL rồi chạy lại.')
+        $State.fingerprint = Get-Fingerprint
+        if (-not $State.fingerprint) { throw $failure }
+    } catch {
+        Write-Loi $_.Exception.Message
+        Start-Service -Name $Names.Service -ErrorAction Stop
+        $origin = (Read-EnvFile -Path $P.ClinicEnv)['CLINIC_ORIGIN']
+        if (-not (Wait-Https -Origin $origin -Seconds 120)) { throw 'HTTPS bản cũ không lên sau khi khởi động.' }
+        $State.stopped = $false
+        Write-Dat 'Dịch vụ web đã chạy lại và HTTPS đã kiểm tra.'
+        Stop-CaiDat ($failure + '; chưa thay đổi gì.') $guidance 6
+    }
 
     Write-Buoc 'Bước 5/8: Thay mã nguồn'
     $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($P.Code, $OldCode, '/MIR', '/R:2', '/W:2', '/XD', '.venv', '.venv-cu', '__pycache__', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')

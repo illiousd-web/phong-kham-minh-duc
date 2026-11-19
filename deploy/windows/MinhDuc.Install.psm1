@@ -560,10 +560,11 @@ function Invoke-WithMinhDucServiceStartupDisabled {
 function Stop-MinhDucService {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
-        [Parameter(Mandatory=$true)]$Paths
+        [Parameter(Mandatory=$true)]$Paths,
+        [ValidateSet('CapNhat.ps1','GiaHanChungChi.ps1')][string]$ScriptName = 'GiaHanChungChi.ps1'
     )
     $service = Get-Service -Name $Name -ErrorAction Stop
-    Invoke-WithMinhDucServiceStartupDisabled -Name $Name -Paths $Paths -ScriptName 'GiaHanChungChi.ps1' -Action {
+    Invoke-WithMinhDucServiceStartupDisabled -Name $Name -Paths $Paths -ScriptName $ScriptName -Action {
         $service.Refresh()
         if ($service.Status -notin @('Stopped', 'StopPending')) {
             try {
