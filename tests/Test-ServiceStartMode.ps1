@@ -10,7 +10,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windows 'M
 if ($errors.Count) { throw ($errors | Out-String) }
 foreach ($name in @('Set-RecoveryServiceStartMode', 'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile',
                     'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode', 'Resume-MinhDucServiceStartMode',
-                    'Invoke-WithMinhDucServiceStartupDisabled', 'Invoke-HealthReport')) {
+                    'Invoke-WithMinhDucServiceStartupDisabled', 'Disable-MinhDucServiceStartup', 'Invoke-HealthReport')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -23,6 +23,7 @@ function Get-MinhDucPaths {
     @{
         Journal = $Data
         ServiceStartModePending = Join-Path $Data 'service-startmode-pending.json'
+        MaintenanceLockBase = Join-Path $Data 'service-startmode-pending.json'
         VenvPython = Join-Path $Data 'python.exe'
         ClinicEnv = Join-Path $Data 'clinic.env'
         BackupState = Join-Path $Data 'backup-status.json'

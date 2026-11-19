@@ -6,7 +6,7 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windowsDir 'CapNhat.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in @('Get-Fingerprint', 'Write-Result', 'Invoke-QuayVe')) {
+foreach ($name in @('Get-AppVersion', 'Get-Fingerprint', 'Write-Result', 'Add-UpdateWarning', 'Invoke-QuayVe')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $false)
     Invoke-Expression $definition.Extent.Text
 }
@@ -16,7 +16,8 @@ $statements = $main.Body.Statements
 $start = $statements | Where-Object { $_.Extent.Text -like 'Write-Dat *Phiên bản hiện tại*' }
 if (-not $start) { throw 'Không tìm thấy phần bảo trì của CapNhat.ps1.' }
 $body = $statements | Select-Object -Skip ($statements.IndexOf($start) + 1) | ForEach-Object { $_.Extent.Text }
-$maintenance = [scriptblock]::Create((@('try {') + @($body) + @('}', $main.CatchClauses[0].Extent.Text)) -join [Environment]::NewLine)
+$body = $body -replace '(?m)^        Import-Module .*$', ''
+$maintenance = [scriptblock]::Create((@('try {') + @($body) + @('}', $main.CatchClauses[0].Extent.Text, ('finally ' + $main.Finally.Extent.Text))) -join [Environment]::NewLine)
 
 function Join-Path {
     param($Path, $ChildPath)
@@ -25,14 +26,16 @@ function Join-Path {
     Microsoft.PowerShell.Management\Join-Path -Path $Path -ChildPath $ChildPath
 }
 function Stop-MinhDucService {
-    param($Name, $Paths, $ScriptName)
-    if ($ScriptName -ne 'CapNhat.ps1') { throw 'Sai tên script trong dấu phục hồi chế độ khởi động.' }
+    param($Window)
+    if ($Window.ScriptName -ne 'CapNhat.ps1') { throw 'Sai tên script trong dấu phục hồi chế độ khởi động.' }
+    Suspend-MinhDucMaintenanceWindow -Window $Window
     $scenario.Service = 'Stopped'
     $scenario.Calls.Add('stop')
     if ($case -eq 'StopError') { throw 'Lỗi chờ Python thoát sau khi dịch vụ đã dừng.' }
 }
 function Start-Service {
     param($Name, $ErrorAction)
+    if ($scenario.Startup -ne 'Auto' -or $scenario.Tasks -contains 'Disabled') { throw 'Chưa trả cấu hình bảo trì trước khi bật web.' }
     $scenario.Service = 'Running'
     $scenario.Calls.Add('start')
 }
@@ -49,19 +52,58 @@ function Wait-Https {
     $scenario.Calls.Add('https')
     return ($scenario.Service -eq 'Running')
 }
-function Invoke-WithMinhDucServiceStartupDisabled {
-    param($Name, $Paths, $ScriptName, $Action, [switch]$AllowAlreadyDisabled)
-    & $Action
+function Suspend-MinhDucMaintenanceWindow {
+    param($Window, [switch]$AllowAlreadyDisabled)
+    $scenario.Startup = 'Disabled'
+    $scenario.Tasks = @('Disabled', 'Disabled')
+}
+function Resume-MinhDucMaintenanceWindow {
+    param($Window)
+    $scenario.Startup = 'Auto'
+    $scenario.Tasks = @('Enabled', 'Enabled')
+}
+function Exit-MinhDucMaintenanceWindow { param($Window) Resume-MinhDucMaintenanceWindow -Window $Window }
+function Set-MinhDucBackupTasks {
+    param($Paths, [switch]$Disabled)
+    if (-not $Disabled -or $scenario.Tasks -contains 'Enabled') { throw 'Đăng ký lịch mới trước khi mở lại web phải ở Disabled.' }
+}
+function Invoke-HealthReport {
+    param($Paths, $Output, $Title)
+    $result = Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json
+    if ($case -ne 'WriteAfterHttps' -and $result.status -ne 'thanh_cong') { throw 'Chưa ghi thành công trước báo cáo.' }
+    if (-not (Test-Path -LiteralPath $OldVenv)) { throw 'Dọn venv cũ trước khi lập báo cáo.' }
+    $scenario.HealthChecked = $true
+    # Mô phỏng dữ liệu máy trạm vừa nhập sau khi HTTPS bản mới trả lời.
+    $scenario.Row = 'máy trạm vừa ghi'
+    if ($case -eq 'HealthError') { throw 'Lỗi báo cáo sức khỏe giả lập' }
+    return $true
+}
+function Set-Content {
+    [CmdletBinding()]
+    param($LiteralPath, [Parameter(ValueFromPipeline=$true)]$Value, $Encoding = 'UTF8')
+    process {
+        if ($Value -match '"status": "dang_cap_nhat"' -and $case -eq 'WriteBeforeStart') {
+            if (-not (Test-Path -LiteralPath $OldVenv) -or $scenario.Startup -ne 'Disabled') { throw 'Thiếu venv cũ hoặc web đã mở tại điểm ghi kết quả trước khởi động.' }
+            $scenario.WriteFault = $true
+            throw 'Lỗi ghi kết quả trước khi bật web'
+        }
+        if ($Value -match '"status": "thanh_cong"' -and $case -eq 'WriteAfterHttps' -and -not $scenario.WriteFault) {
+            $scenario.WriteFault = $true
+            throw 'Lỗi ghi kết quả sau khi HTTPS đạt'
+        }
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $LiteralPath -Value $Value -Encoding $Encoding
+    }
 }
 function Wait-MinhDucVenvPythonExit { param($Venv, $ClinicEnv, [switch]$LogLockDiagnostics) }
 function Set-SecureAcl { param($Path, [switch]$Directory, $Writers) }
 function Suspend-MinhDucBackupTasks { }
-function Restore-MinhDucBackupTasks { param($Snapshot) }
+function Restore-MinhDucBackupTasks { param($Snapshot, [switch]$Disabled) }
 function Assert-MinhDucBackupTaskSnapshot { param($Snapshot, [switch]$RequireBoth) }
 function Copy-D0PublicCatalogs { param($SourceRoot, $DestinationRoot) }
 function Copy-S2dPublicTemplate { param($SourceRoot, $DestinationRoot) }
 function Restore-MinhDucOldVenv {
     param($Venv, $OldVenv, [switch]$LogLockDiagnostics)
+    if (Test-Path -LiteralPath $Venv) { Remove-Item -LiteralPath $Venv -Recurse -Force }
     Rename-Item -LiteralPath $OldVenv -NewName '.venv'
 }
 function Invoke-Native {
@@ -76,18 +118,24 @@ function Invoke-Native {
         if ($case -eq 'BeforeMigration') { return @{ Ok = $false; Code = 16 } }
     } elseif ($Arguments[0] -eq $OldCode) {
         Copy-Item -LiteralPath (Join-Path $OldCode 'app/main.py') -Destination (Join-Path $P.Code 'app/main.py')
-    } elseif ($FilePath -ne $P.BasePython) {
+    } elseif ($FilePath -eq $P.BasePython) {
+        New-Item -ItemType Directory -Path (Join-Path $P.Venv 'Scripts') | Out-Null
+        Set-Content -LiteralPath $P.VenvPython -Value 'Python mới' -Encoding UTF8
+    } else {
         throw "Lệnh ngoài chưa giả lập: $FilePath"
     }
     return @{ Ok = $true }
 }
 function Invoke-Python {
-    param($Paths, $Arguments, [switch]$Quiet, $OkCodes)
+    param($Paths, $Arguments, [switch]$Quiet, $OkCodes, $WorkingDirectory)
     $code = 0
     $output = @()
     if ($Arguments -contains 'scripts.backup_job') {
         $scenario.Calls.Add('backup')
         if ($scenario.Service -ne 'Stopped' -or -not $State.stopped) { throw 'Web còn chạy khi sao lưu.' }
+        if ($scenario.Startup -ne 'Disabled' -or ($scenario.Tasks -join ',') -ne 'Disabled,Disabled' -or
+            $Arguments -notcontains '--no-prune' -or $WorkingDirectory -ne $newRoot) { throw 'Sao lưu bên ngoài cửa sổ bảo trì hoặc có thể dọn bản cũ.' }
+        $scenario.BackupGuarded = $true
         if ($case -eq 'BackupError') { $code = 1 }
         else {
             $snapshot = [pscustomobject]@{ Row = $scenario.Row; Attachment = $scenario.Attachment }
@@ -104,7 +152,9 @@ function Invoke-Python {
         $scenario.Calls.Add('migrate')
         $scenario.Row = 'đã sửa'
         $scenario.Attachment = 'đã sửa'
-        $code = 1
+        if ($case -notin @('WriteBeforeStart', 'HealthError', 'WriteAfterHttps')) { $code = 1 }
+    } elseif ($Arguments -contains 'grant') {
+        $output = @('{"managed_changed":[]}')
     } elseif ($Arguments -contains 'rollback') {
         $scenario.Calls.Add('restore')
         $file = $Arguments[[array]::IndexOf($Arguments, '--file') + 1]
@@ -119,9 +169,9 @@ function Invoke-Python {
 
 $root = Microsoft.PowerShell.Management\Join-Path ([IO.Path]::GetTempPath()) ('minhduc-update-' + [guid]::NewGuid().ToString('N'))
 try {
-    foreach ($case in @('StopError', 'BackupError', 'MissingVerification', 'FingerprintError', 'BeforeMigration', 'DataOnlyMigration', 'BadRestoredFingerprint')) {
+    foreach ($case in @('StopError', 'BackupError', 'MissingVerification', 'FingerprintError', 'BeforeMigration', 'DataOnlyMigration', 'BadRestoredFingerprint', 'WriteBeforeStart', 'HealthError', 'WriteAfterHttps')) {
         $homeForCase = Join-Path $root $case
-        $scenario = @{ Service = 'Running'; Row = 'ban đầu'; Attachment = 'ban đầu'; Fingerprint = 'baseline'; Calls = [Collections.Generic.List[string]]::new() }
+        $scenario = @{ Service = 'Running'; Startup = 'Auto'; Tasks = @('Enabled', 'Enabled'); Row = 'ban đầu'; Attachment = 'ban đầu'; Fingerprint = 'baseline'; Calls = [Collections.Generic.List[string]]::new() }
         $P = @{
             Code = (Join-Path $homeForCase 'live'); Venv = (Join-Path $homeForCase 'live/.venv')
             VenvPython = (Join-Path $homeForCase 'live/.venv/Scripts/python.exe'); BasePython = 'base-python'
@@ -132,8 +182,15 @@ try {
         }
         $Names = @{ Service = 'FakeMinhDuc'; AlertFile = 'alert.txt'; ServiceAcct = 'fake' }
         $State = @{ rollback_errors = @(); stopped = $false; code_replaced = $false; venv_moved = $false; migrated = $false; backup_tasks_changed = $false; backup_task_snapshot = @('fake'); backup = $null; fingerprint = $null }
+        $window = @{ ScriptName = 'CapNhat.ps1' }
+        $transcript = $false
+        $committed = $false
+        $Stamp = 'ci'
+        $P.Journal = $homeForCase
+        $State.warnings = @()
         $OldCode = Join-Path $homeForCase 'old'
         $newRoot = Join-Path $homeForCase 'new'
+        $NewDir = $newRoot
         $OldVenv = Join-Path $P.Code '.venv-cu'
         $ResultFile = Join-Path $P.Updates 'ket-qua-cap-nhat.json'
         $backupName = 'minhduc-20261119T010000Z-1234abcd.mdbackup'
@@ -146,6 +203,26 @@ try {
         $exitCode = 0
         . $maintenance
         $result = Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json
+        if ($scenario.Startup -ne 'Auto' -or $scenario.Tasks -contains 'Disabled') {
+            throw "Cấu hình bảo trì chưa được trả sau ca $case."
+        }
+        if ($case -ne 'StopError' -and -not $scenario.BackupGuarded) { throw 'Chưa kiểm được trạng thái dịch vụ và lịch tại bước sao lưu.' }
+        if ($case -in @('HealthError', 'WriteAfterHttps')) {
+            if ($exitCode -ne 0 -or $result.status -ne 'thanh_cong' -or -not $scenario.HealthChecked -or
+                $scenario.Calls.Contains('restore') -or $scenario.Row -ne 'máy trạm vừa ghi' -or
+                $scenario.Service -ne 'Running' -or (Get-Content -LiteralPath (Join-Path $P.Code 'app/main.py')) -ne 'mã mới') {
+                throw "Không giữ được bản mới/dữ liệu máy trạm sau lỗi hậu kiểm $case."
+            }
+            if ($case -eq 'HealthError' -and ($result.warnings -notmatch 'Lỗi báo cáo sức khỏe giả lập')) { throw 'Thiếu cảnh báo trong kết quả thành công.' }
+            if ($case -eq 'WriteAfterHttps' -and (-not $scenario.WriteFault -or -not (Test-Path -LiteralPath $OldVenv))) {
+                throw 'Đã dọn venv cũ dù lần ghi thành công đầu tiên gặp lỗi.'
+            }
+            Write-Output "PASS: $case"
+            continue
+        }
+        if ($case -eq 'WriteBeforeStart' -and (-not $scenario.WriteFault -or (Get-Content -LiteralPath $P.VenvPython) -ne 'Python giả lập')) {
+            throw 'Lỗi ghi kết quả trước khi bật web chưa quay về được với venv cũ.'
+        }
         $calls = $scenario.Calls -join ','
         $expected = switch ($case) {
             'StopError'              { @(50, 'da_quay_ve', 'stop,start,https') }
@@ -154,6 +231,7 @@ try {
             'FingerprintError'      { @(6, 'dung_truoc_khi_thay_doi', 'stop,backup,fingerprint,start,https') }
             'BeforeMigration'       { @(50, 'da_quay_ve', 'stop,backup,fingerprint,save-code,replace-code,start,https') }
             'DataOnlyMigration'     { @(50, 'da_quay_ve', 'stop,backup,fingerprint,save-code,replace-code,migrate,restore,fingerprint,start,https') }
+            'WriteBeforeStart'       { @(50, 'da_quay_ve', 'stop,backup,fingerprint,save-code,replace-code,migrate,restore,fingerprint,start,https') }
             'BadRestoredFingerprint' { @(50, 'quay_ve_that_bai', 'stop,backup,fingerprint,save-code,replace-code,migrate,restore,fingerprint') }
         }
         if ($exitCode -ne $expected[0] -or $result.status -ne $expected[1] -or $calls -ne $expected[2]) {

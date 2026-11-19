@@ -288,6 +288,7 @@ def run(args, now=None):
     now = now or now_utc()
     directory = Path(args.directory)
     state_path = Path(args.state)
+    no_prune = getattr(args, 'no_prune', False)
     try:
         state = json.loads(state_path.read_text(encoding='utf-8'))
     except (OSError, ValueError):
@@ -313,6 +314,11 @@ def run(args, now=None):
         need = space_required(directory)
         free = disk_free(directory)
         if free < need:
+            if no_prune:
+                state['space_error'] = True
+                raise RuntimeError(
+                    f'Ổ đĩa không đủ chỗ tạo bản sao lưu mới (cần {need / GIB:.1f} GB trống, còn {free / GIB:.1f} GB). '
+                    'Giữ nguyên các bản sao lưu cũ. Báo người hỗ trợ dọn ổ đĩa.')
             listed = list_backups(directory)
             corrupt.update(i['name'] for i in listed if i['corrupt'])
             plan = plan_space(listed, need - free)
@@ -346,7 +352,11 @@ def run(args, now=None):
         keep = int(os.getenv('CLINIC_BACKUP_KEEP', '14'))
         listed = list_backups(directory)
         corrupt.update(i['name'] for i in listed if i['corrupt'])
-        to_delete, over = plan_prune(listed, keep, LIMITS.backup_total_bytes)
+        if no_prune:
+            to_delete = []
+            over = sum(item['size'] for item in listed) > LIMITS.backup_total_bytes
+        else:
+            to_delete, over = plan_prune(listed, keep, LIMITS.backup_total_bytes)
         for item in to_delete:
             _delete(item)
         items = [i for i in listed if i not in to_delete]
@@ -372,9 +382,10 @@ def run(args, now=None):
             state['external_present'] = True
             try:
                 copy_offsite(target, folder)
-                keep = int(os.getenv('CLINIC_OFFSITE_KEEP', '30'))
-                for old in sorted(folder.glob('minhduc-*.mdbackup'), key=lambda p: p.stat().st_mtime, reverse=True)[keep:]:
-                    old.unlink()
+                if not no_prune:
+                    keep = int(os.getenv('CLINIC_OFFSITE_KEEP', '30'))
+                    for old in sorted(folder.glob('minhduc-*.mdbackup'), key=lambda p: p.stat().st_mtime, reverse=True)[keep:]:
+                        old.unlink()
                 state['external_last_copy_utc'] = now.isoformat()
             except Exception as error:
                 state['external_error'] = _error_text(error)
@@ -402,6 +413,7 @@ def main(argv=None):
     parser.add_argument('--state', required=True)
     parser.add_argument('--external-config')
     parser.add_argument('--alert-file')
+    parser.add_argument('--no-prune', action='store_true', help='Giữ nguyên các bản sao lưu cũ, kể cả khi thiếu chỗ trống')
     schedule = parser.add_mutually_exclusive_group()
     schedule.add_argument('--daily', '--scheduled', dest='daily', action='store_true', help='Lịch 20:00, luôn chạy kể cả trong giờ làm việc')
     schedule.add_argument('--catchup', action='store_true', help='Chạy bù; hoãn trong giờ làm nếu bản tốt chưa quá 48 giờ')

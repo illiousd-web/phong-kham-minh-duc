@@ -41,19 +41,16 @@ function Get-ServedSerial([string]$Origin, [string]$Ca) {
 
 $exitCode = 0
 $stamp = $null
+$window = $null
 $changed = $false   # đã có tệp tạm hoặc đã thay tệp: cần khôi phục khi lỗi
 try {
     $admin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { Stop-CaiDat 'Cần quyền Administrator.' @('Bấm đúp GIA_HAN_CHUNG_CHI.bat và chọn "Yes".') 30 }
-    try { Resume-MinhDucServiceStartMode -Paths $P -ScriptName 'GiaHanChungChi.ps1' | Out-Null }
-    catch {
-        Write-Loi $_.Exception.Message
-        Stop-CaiDat 'Chưa trả được chế độ khởi động dịch vụ web.' @('Báo người hỗ trợ và gửi nội dung lỗi ở trên.') 1
-    }
+    if (-not (Test-Path -LiteralPath $P.ClinicEnv)) { Stop-CaiDat 'Máy này chưa cài đặt bằng CAI_DAT.bat (thiếu tệp cấu hình).' @('Chạy CAI_DAT.bat.') 2 }
+    $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'GiaHanChungChi.ps1'
     $cert = Join-Path $P.Tls 'server.crt'
     $key = Join-Path $P.Tls 'server.key'
     $ca = Join-Path $P.Tls 'ca.crt'
-    if (-not (Test-Path -LiteralPath $P.ClinicEnv)) { Stop-CaiDat 'Máy này chưa cài đặt bằng CAI_DAT.bat (thiếu tệp cấu hình).' @('Chạy CAI_DAT.bat.') 2 }
     $cfg = Read-EnvFile -Path $P.ClinicEnv
     $origin = $cfg['CLINIC_ORIGIN']
     $ip = $cfg['CLINIC_BIND_IP']
@@ -115,16 +112,17 @@ try {
     Write-Dat 'Tài khoản dịch vụ đọc được; chứng chỉ và khóa mới khớp nhau.'
 
     Write-Buoc 'Bước 3/4: Thay tệp và khởi động lại dịch vụ web'
+    Suspend-MinhDucMaintenanceWindow -Window $window
     $r = Invoke-Cert @('commit', '--tls-dir', $P.Tls, '--stamp', $stamp)
     if (-not $r.Ok) { throw ('Lỗi khi thay tệp: ' + (($r.Output | Select-Object -Last 1) -join '')) }
     if ($Fault -eq 'khoi-phuc-loi') { throw 'Lỗi giả lập sau khi thay tệp (kiểm thử khôi phục thất bại).' }
     # Restart-Service không chờ cây Python cũ thoát sau khi WinSW báo Stopped.
     try {
-        Restart-MinhDucService -Name $Names.Service -Paths $P
+        Restart-MinhDucService -Window $window
     } catch {
         if (-not $recovery -or $_.Exception.Data['MinhDucExternalProcess']) { throw }
         Write-Luu ('Khởi động lại lần đầu lỗi: ' + $_.Exception.Message + '. Thử thêm một lần với chứng chỉ mới.')
-        Restart-MinhDucService -Name $Names.Service -Paths $P
+        Restart-MinhDucService -Window $window
     }
 
     Write-Buoc 'Bước 4/4: Kiểm tra HTTPS dùng đúng chứng chỉ mới'
@@ -137,7 +135,10 @@ try {
     Write-Host $(if ($recovery) { 'PHỤC HỒI CHỨNG CHỈ THÀNH CÔNG (HTTPS đã kiểm lại: ĐẠT).' } else { 'GIA HẠN THÀNH CÔNG (HTTPS đã kiểm lại: ĐẠT).' }) -ForegroundColor Green
 } catch {
     $code = $_.Exception.Data['MinhDucExit']
-    if ($null -ne $code -and -not $changed) {
+    if (-not $window) {
+        Write-Loi $_.Exception.Message
+        $exitCode = if ($null -ne $code) { [int]$code } else { 1 }
+    } elseif ($null -ne $code -and -not $changed) {
         $exitCode = [int]$code
         Write-Result 'dung' $_.Exception.Message
     } else {
@@ -147,22 +148,27 @@ try {
         $httpsOk = $false
         $servedNow = $null
         if (-not $_.Exception.Data['MinhDucExternalProcess']) {
-            Write-Buoc 'KHÔI PHỤC CHỨNG CHỈ CŨ'
-            $r = Invoke-Cert @('rollback', '--tls-dir', $P.Tls, '--stamp', $stamp)
-            $rollbackOk = $r.Ok
-            if ($rollbackOk) { Write-Thongtin 'Đã đặt lại tệp chứng chỉ cũ; đang kiểm tra...' } else { Write-Loi ('Không đặt lại được tệp chứng chỉ cũ: ' + (($r.Output | Select-Object -Last 1) -join '')) }
-            Set-SecureAcl -Path $P.Tls -Directory -Readers @($Names.ServiceAcct)
-            foreach ($f in @('server.crt', 'server.key')) { Invoke-Native -FilePath 'icacls.exe' -Arguments @((Join-Path $P.Tls $f), '/reset') -Quiet | Out-Null }
-            $outsideProcess = $false
             try {
-                Restart-MinhDucService -Name $Names.Service -Paths $P
+                Write-Buoc 'KHÔI PHỤC CHỨNG CHỈ CŨ'
+                Suspend-MinhDucMaintenanceWindow -Window $window
+                $r = Invoke-Cert @('rollback', '--tls-dir', $P.Tls, '--stamp', $stamp)
+                $rollbackOk = $r.Ok
+                if ($rollbackOk) { Write-Thongtin 'Đã đặt lại tệp chứng chỉ cũ; đang kiểm tra...' } else { Write-Loi ('Không đặt lại được tệp chứng chỉ cũ: ' + (($r.Output | Select-Object -Last 1) -join '')) }
+                Set-SecureAcl -Path $P.Tls -Directory -Readers @($Names.ServiceAcct)
+                foreach ($f in @('server.crt', 'server.key')) { Invoke-Native -FilePath 'icacls.exe' -Arguments @((Join-Path $P.Tls $f), '/reset') -Quiet | Out-Null }
+                $outsideProcess = $false
+                try {
+                    Restart-MinhDucService -Window $window
+                } catch {
+                    Write-Loi ('Khởi động lại khi trả chứng chỉ cũ lỗi: ' + $_.Exception.Message)
+                    $outsideProcess = $_.Exception.Data['MinhDucExternalProcess']
+                }
+                if (-not $outsideProcess) {
+                    $httpsOk = Wait-Https -Origin $origin -Seconds 120
+                    if ($httpsOk) { $servedNow = Get-ServedSerial $origin $ca }
+                }
             } catch {
-                Write-Loi ('Khởi động lại khi trả chứng chỉ cũ lỗi: ' + $_.Exception.Message)
-                $outsideProcess = $_.Exception.Data['MinhDucExternalProcess']
-            }
-            if (-not $outsideProcess) {
-                $httpsOk = Wait-Https -Origin $origin -Seconds 120
-                if ($httpsOk) { $servedNow = Get-ServedSerial $origin $ca }
+                Write-Loi ('Lỗi khi chuẩn bị hoặc kiểm tra khôi phục chứng chỉ: ' + $_.Exception.Message)
             }
         }
         # Chỉ coi là đã trả chứng chỉ cũ khi: khôi phục tệp đạt, HTTPS đạt, và đúng chứng chỉ cũ đang chạy.
@@ -182,6 +188,14 @@ try {
             Write-Host ('  2. Chạy lại GIA_HAN_CHUNG_CHI.bat một lần (các tệp cũ được giữ với đuôi .cu-' + $stamp + ').') -ForegroundColor Yellow
             Write-Host '  3. Nếu máy trạm báo lỗi chứng chỉ: KHÔNG bấm bỏ qua cảnh báo; chờ người hỗ trợ.' -ForegroundColor Yellow
             $exitCode = 51
+        }
+    }
+} finally {
+    if ($window) {
+        try { Exit-MinhDucMaintenanceWindow -Window $window }
+        catch {
+            Write-Loi $_.Exception.Message
+            if (-not $exitCode) { $exitCode = 51 }
         }
     }
 }

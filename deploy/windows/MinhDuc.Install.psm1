@@ -68,6 +68,8 @@ function Get-MinhDucPaths {
         Tls         = Join-Path $Data 'tls'
         ServiceDir  = Join-Path $Data 'service'
         ServiceStartModePending = Join-Path $Data 'service-startmode-pending.json'
+        # Dùng chung với KIEM_TRA và PR #49, kể cả khi chỉ định thư mục dữ liệu khác.
+        MaintenanceLockBase = 'C:\ProgramData\MinhDuc\service-startmode-pending.json'
         Downloads   = Join-Path $Data 'taive'
         Updates     = Join-Path $Data 'capnhat'
         Share       = 'C:\MinhDuc-ChiaSe'
@@ -257,12 +259,13 @@ function Invoke-Native {
 
 function Invoke-Python {
     # Chạy python trong thư mục mã (để "-m scripts.xxx" tìm được gói).
-    param([Parameter(Mandatory = $true)]$Paths, [string[]]$Arguments, [switch]$Quiet, [switch]$Base, [int[]]$OkCodes = @(0))
+    param([Parameter(Mandatory = $true)]$Paths, [string[]]$Arguments, [switch]$Quiet, [switch]$Base,
+          [int[]]$OkCodes = @(0), [string]$WorkingDirectory = $Paths.Code)
     $exe = if ($Base) { $Paths.BasePython } else { $Paths.VenvPython }
     $env:PYTHONIOENCODING = 'utf-8'
     $env:PYTHONUTF8 = '1'
     $env:PYTHONDONTWRITEBYTECODE = '1'
-    return Invoke-Native -FilePath $exe -Arguments $Arguments -Quiet:$Quiet -OkCodes $OkCodes -WorkingDirectory $Paths.Code
+    return Invoke-Native -FilePath $exe -Arguments $Arguments -Quiet:$Quiet -OkCodes $OkCodes -WorkingDirectory $WorkingDirectory
 }
 
 function ConvertFrom-PythonJson($Result) {
@@ -431,7 +434,15 @@ function Get-MinhDucDelayedAutoStart([string]$Name) {
 function Open-MinhDucServiceStartModeLock([string]$Path) {
     # Windows nhả khóa khi tiến trình thoát, kể cả khi finally không chạy.
     try { return [IO.File]::Open(($Path + '.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
-    catch { throw ('Không khóa được tệp theo dõi chế độ khởi động. Kiểm tra xem có thao tác bảo trì khác đang chạy và báo người hỗ trợ nếu lỗi vẫn còn. ' + $_.Exception.Message) }
+    catch [IO.IOException] {
+        $reason = $_.Exception.GetBaseException().HResult -band 0xFFFF
+        if ($reason -in @(11, 32, 33)) {
+            $busy = [InvalidOperationException]::new('Đang có bảo trì khác. Hãy chờ lần bảo trì đó kết thúc rồi thử lại.')
+            $busy.Data['MinhDucExit'] = 52
+            throw $busy
+        }
+        throw
+    }
 }
 
 function Get-MinhDucServiceStartModeMarkerFile([string]$Path) {
@@ -511,7 +522,7 @@ function Resume-MinhDucServiceStartMode {
     param([Parameter(Mandatory=$true)]$Paths, [Parameter(Mandatory=$true)][string]$ScriptName)
     $path = $Paths.ServiceStartModePending
     if (-not (Get-MinhDucServiceStartModeMarkerFile $path)) { return }
-    $lock = Open-MinhDucServiceStartModeLock $path
+    $lock = Open-MinhDucServiceStartModeLock $Paths.MaintenanceLockBase
     try { Restore-MinhDucServiceStartMode (Get-MinhDucNames).Service $Paths $ScriptName }
     finally { $lock.Dispose() }
 }
@@ -525,31 +536,13 @@ function Invoke-WithMinhDucServiceStartupDisabled {
         [switch]$AllowAlreadyDisabled
     )
     $path = $Paths.ServiceStartModePending
-    $lock = Open-MinhDucServiceStartModeLock $path
+    $lock = Open-MinhDucServiceStartModeLock $Paths.MaintenanceLockBase
     try {
         if (Get-MinhDucServiceStartModeMarkerFile $path) {
             throw 'Còn tệp đánh dấu chế độ khởi động. Báo người hỗ trợ hoặc chạy KIEM_TRA.bat trước khi bảo trì lại.'
         }
-        $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Name + "'") -ErrorAction Stop
-        if ($AllowAlreadyDisabled -and $config -and $config.StartMode -eq 'Disabled') {
-            # Quay về mã và dữ liệu vẫn cần chạy nếu dịch vụ đã bị vô hiệu hóa từ trước.
-            & $Action $config
-            return
-        }
-        $startupModes = @{ Auto = 'Automatic'; Manual = 'Manual' }
-        if (-not $config -or -not $startupModes.ContainsKey([string]$config.StartMode)) {
-            throw 'Dịch vụ web đang bị vô hiệu hóa hoặc không xác định được chế độ khởi động.'
-        }
-        Write-MinhDucServiceStartModeMarker $path ([ordered]@{
-            Service = $Name
-            StartMode = $startupModes[$config.StartMode]
-            DelayedAutoStart = Get-MinhDucDelayedAutoStart $Name
-            CreatedAt = [datetime]::UtcNow.AddHours(7).ToString("dd/MM/yyyy HH:mm:ss 'UTC+7'", [Globalization.CultureInfo]::InvariantCulture)
-            Script = $ScriptName
-        })
         try {
-            # Chặn SCM chạy lại WinSW trong khi đang chờ tiến trình cũ thoát.
-            Set-RecoveryServiceStartMode $config 'Disabled'
+            $config = Disable-MinhDucServiceStartup -Name $Name -Paths $Paths -ScriptName $ScriptName -AllowAlreadyDisabled:$AllowAlreadyDisabled
             & $Action $config
         } finally {
             Restore-MinhDucServiceStartMode $Name $Paths $ScriptName | Out-Null
@@ -557,35 +550,119 @@ function Invoke-WithMinhDucServiceStartupDisabled {
     } finally { $lock.Dispose() }
 }
 
-function Stop-MinhDucService {
-    param(
-        [Parameter(Mandatory=$true)][string]$Name,
-        [Parameter(Mandatory=$true)]$Paths,
-        [ValidateSet('CapNhat.ps1','GiaHanChungChi.ps1')][string]$ScriptName = 'GiaHanChungChi.ps1'
-    )
-    $service = Get-Service -Name $Name -ErrorAction Stop
-    Invoke-WithMinhDucServiceStartupDisabled -Name $Name -Paths $Paths -ScriptName $ScriptName -Action {
-        $service.Refresh()
-        if ($service.Status -notin @('Stopped', 'StopPending')) {
-            try {
-                Stop-Service -InputObject $service -NoWait -ErrorAction Stop
-            } catch {
-                $service.Refresh()
-                if ($service.Status -notin @('Stopped', 'StopPending')) { throw }
-            }
+function Disable-MinhDucServiceStartup {
+    param([string]$Name, $Paths, [string]$ScriptName, [switch]$AllowAlreadyDisabled)
+    $path = $Paths.ServiceStartModePending
+    if (Get-MinhDucServiceStartModeMarkerFile $path) {
+        throw 'Còn tệp đánh dấu chế độ khởi động. Báo người hỗ trợ hoặc chạy KIEM_TRA.bat trước khi bảo trì lại.'
+    }
+    $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Name + "'") -ErrorAction Stop
+    if ($AllowAlreadyDisabled -and $config -and $config.StartMode -eq 'Disabled') { return $config }
+    $startupModes = @{ Auto = 'Automatic'; Manual = 'Manual' }
+    if (-not $config -or -not $startupModes.ContainsKey([string]$config.StartMode)) {
+        throw 'Dịch vụ web đang bị vô hiệu hóa hoặc không xác định được chế độ khởi động.'
+    }
+    Write-MinhDucServiceStartModeMarker $path ([ordered]@{
+        Service = $Name
+        StartMode = $startupModes[$config.StartMode]
+        DelayedAutoStart = Get-MinhDucDelayedAutoStart $Name
+        CreatedAt = [datetime]::UtcNow.AddHours(7).ToString("dd/MM/yyyy HH:mm:ss 'UTC+7'", [Globalization.CultureInfo]::InvariantCulture)
+        Script = $ScriptName
+    })
+    # Chặn SCM chạy lại WinSW trong khi đang chờ tiến trình cũ thoát.
+    Set-RecoveryServiceStartMode $config 'Disabled'
+    return $config
+}
+
+function Enter-MinhDucMaintenanceWindow {
+    param([string]$Name, $Paths, [ValidateSet('CapNhat.ps1','GiaHanChungChi.ps1')][string]$ScriptName)
+    $lock = Open-MinhDucServiceStartModeLock $Paths.MaintenanceLockBase
+    try {
+        Restore-MinhDucServiceStartMode $Name $Paths $ScriptName | Out-Null
+        return @{
+            Lock = $lock; Name = $Name; Paths = $Paths; ScriptName = $ScriptName
+            ServiceConfig = $null; RestoreStartup = $false; TasksSuspended = $false; TaskEnabled = @{}
         }
-        $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
-        Wait-MinhDucVenvPythonExit -Venv $Paths.Venv -ClinicEnv $Paths.ClinicEnv
+    } catch {
+        $lock.Dispose()
+        throw
     }
 }
 
+function Suspend-MinhDucMaintenanceWindow {
+    param([Parameter(Mandatory=$true)]$Window, [switch]$AllowAlreadyDisabled)
+    if (-not $Window.ServiceConfig) {
+        $Window.RestoreStartup = $true
+        $Window.ServiceConfig = Disable-MinhDucServiceStartup -Name $Window.Name -Paths $Window.Paths -ScriptName $Window.ScriptName -AllowAlreadyDisabled:$AllowAlreadyDisabled
+    }
+    if (-not $Window.TasksSuspended) {
+        foreach ($task in @(Get-MinhDucBackupTaskSnapshot)) {
+            if (-not $Window.TaskEnabled.ContainsKey($task.Name)) {
+                $Window.TaskEnabled[$task.Name] = [bool](Get-MinhDucScheduledTask -Name $task.Name).Settings.Enabled
+            }
+        }
+    }
+    $Window.TasksSuspended = $true
+    Suspend-MinhDucBackupTasks -WaitForIdle
+}
+
+function Resume-MinhDucMaintenanceWindow {
+    param([Parameter(Mandatory=$true)]$Window, [switch]$OnExit)
+    try {
+        if ($Window.TasksSuspended) {
+            $errors = @()
+            foreach ($task in @(Get-MinhDucBackupTaskSnapshot)) {
+                try {
+                    $enabled = -not $Window.TaskEnabled.ContainsKey($task.Name) -or $Window.TaskEnabled[$task.Name]
+                    if ($enabled) { Enable-ScheduledTask -TaskName $task.Name -TaskPath '\' -ErrorAction Stop | Out-Null }
+                    if ([bool](Get-MinhDucScheduledTask -Name $task.Name).Settings.Enabled -ne $enabled) {
+                        throw ('Trạng thái lịch sao lưu chưa được trả lại: ' + $task.Name)
+                    }
+                } catch { $errors += $_.Exception.Message }
+            }
+            if ($errors.Count) { throw ($errors -join '; ') }
+            $Window.TasksSuspended = $false
+        }
+    } finally {
+        # Khi thoát, vẫn thử trả startup nếu riêng việc trả lịch gặp lỗi.
+        if ($Window.RestoreStartup -and ($OnExit -or -not $Window.TasksSuspended)) {
+            Restore-MinhDucServiceStartMode $Window.Name $Window.Paths $Window.ScriptName | Out-Null
+            $Window.RestoreStartup = $false
+            $Window.ServiceConfig = $null
+        }
+    }
+}
+
+function Exit-MinhDucMaintenanceWindow {
+    param([Parameter(Mandatory=$true)]$Window)
+    try { Resume-MinhDucMaintenanceWindow -Window $Window -OnExit }
+    finally { $Window.Lock.Dispose() }
+}
+
+function Stop-MinhDucService {
+    param([Parameter(Mandatory=$true)]$Window)
+    Suspend-MinhDucMaintenanceWindow -Window $Window
+    $service = Get-Service -Name $Window.Name -ErrorAction Stop
+    $service.Refresh()
+    if ($service.Status -notin @('Stopped', 'StopPending')) {
+        try {
+            Stop-Service -InputObject $service -NoWait -ErrorAction Stop
+        } catch {
+            $service.Refresh()
+            if ($service.Status -notin @('Stopped', 'StopPending')) { throw }
+        }
+    }
+    $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
+    Wait-MinhDucVenvPythonExit -Venv $Window.Paths.Venv -ClinicEnv $Window.Paths.ClinicEnv
+    $service.Refresh()
+    if ($service.Status -ne 'Stopped') { throw 'Dịch vụ đã chạy lại trong lúc chờ Python thoát.' }
+}
+
 function Restart-MinhDucService {
-    param(
-        [Parameter(Mandatory=$true)][string]$Name,
-        [Parameter(Mandatory=$true)]$Paths
-    )
-    Stop-MinhDucService -Name $Name -Paths $Paths
-    $service = Get-Service -Name $Name -ErrorAction Stop
+    param([Parameter(Mandatory=$true)]$Window)
+    Stop-MinhDucService -Window $Window
+    $service = Get-Service -Name $Window.Name -ErrorAction Stop
+    Resume-MinhDucMaintenanceWindow -Window $Window
     try {
         # Start-Service báo cảnh báo khi còn StartPending. Chuyển sang chờ có thời hạn.
         Start-Service -InputObject $service -WarningAction Stop -ErrorAction Stop
@@ -778,8 +855,25 @@ function Get-MinhDucBackupTaskSignature([string]$Xml) {
     return ($document.Task.Actions.OuterXml + $document.Task.Triggers.OuterXml + $document.Task.Settings.OuterXml + $document.Task.Principals.OuterXml)
 }
 
+function ConvertTo-MinhDucDisabledTaskXml([string]$Xml) {
+    [xml]$document = $Xml
+    $settings = $document.Task.Settings
+    $enabled = $settings.SelectSingleNode("*[local-name()='Enabled']")
+    if (-not $enabled) {
+        $enabled = $document.CreateElement('Enabled', $settings.NamespaceURI)
+        [void]$settings.AppendChild($enabled)
+    }
+    $enabled.InnerText = 'false'
+    return $document.OuterXml
+}
+
 function Restore-MinhDucBackupTasks {
-    param([AllowEmptyCollection()][object[]]$Snapshot = @())
+    param([AllowEmptyCollection()][object[]]$Snapshot = @(), [switch]$Disabled)
+    if ($Disabled) {
+        $Snapshot = @(foreach ($old in $Snapshot) {
+            [pscustomobject]@{ Name = $old.Name; Xml = (ConvertTo-MinhDucDisabledTaskXml $old.Xml) }
+        })
+    }
     try {
         foreach ($old in $Snapshot) {
             Register-ScheduledTask -TaskName $old.Name -TaskPath '\' -Xml $old.Xml -Force -ErrorAction Stop | Out-Null
@@ -788,7 +882,7 @@ function Restore-MinhDucBackupTasks {
         $originalFailure = $_
         foreach ($old in $Snapshot) {
             try {
-                if (Get-MinhDucScheduledTask -Name $old.Name) {
+                if (-not $Disabled -and (Get-MinhDucScheduledTask -Name $old.Name)) {
                     Enable-ScheduledTask -TaskName $old.Name -TaskPath '\' -ErrorAction Stop | Out-Null
                 }
             } catch {
@@ -803,18 +897,22 @@ function Restore-MinhDucBackupTasks {
             Unregister-ScheduledTask -TaskName $current.Name -TaskPath '\' -Confirm:$false -ErrorAction Stop
         }
     }
-    Assert-MinhDucBackupTaskSnapshot -Snapshot $Snapshot
+    Assert-MinhDucBackupTaskSnapshot -Snapshot $Snapshot -Disabled:$Disabled
 }
 
 function Assert-MinhDucBackupTaskSnapshot {
-    param([AllowEmptyCollection()][object[]]$Snapshot = @(), [switch]$RequireBoth)
+    param([AllowEmptyCollection()][object[]]$Snapshot = @(), [switch]$RequireBoth, [switch]$Disabled)
     $restored = @(Get-MinhDucBackupTaskSnapshot)
     # Historical switch name: require the complete ORIGINAL layout, including legacy daily-only.
     if ($RequireBoth -and ($Snapshot.Count -notin @(1,2) -or @($Snapshot | Where-Object { $_.Name -eq $script:Names.BackupTask }).Count -ne 1)) { throw 'Snapshot lịch ban đầu không hợp lệ trước khi xác nhận quay về.' }
     if ($restored.Count -ne $Snapshot.Count) { throw 'Khôi phục lịch sao lưu thiếu tác vụ.' }
     foreach ($old in $Snapshot) {
         $task = Get-MinhDucScheduledTask -Name $old.Name
-        if (-not $task -or [string]$task.State -ne 'Ready' -or -not $task.Settings.Enabled) { throw ('Lịch sao lưu chưa Ready/Enabled: ' + $old.Name) }
+        if ($Disabled) {
+            if (-not $task -or [string]$task.State -ne 'Disabled' -or $task.Settings.Enabled) { throw ('Lịch sao lưu chưa Disabled: ' + $old.Name) }
+        } elseif (-not $task -or [string]$task.State -ne 'Ready' -or -not $task.Settings.Enabled) {
+            throw ('Lịch sao lưu chưa Ready/Enabled: ' + $old.Name)
+        }
         $actual = @($restored | Where-Object { $_.Name -eq $old.Name })
         if ($actual.Count -ne 1 -or (Get-MinhDucBackupTaskSignature $actual[0].Xml) -ne (Get-MinhDucBackupTaskSignature $old.Xml)) {
             throw 'Khôi phục lịch sao lưu không khớp action/trigger/cài đặt cũ.'
@@ -856,14 +954,15 @@ function Get-MinhDucBackupJobArguments {
 }
 
 function Set-MinhDucBackupTasks {
-    param([Parameter(Mandatory = $true)]$Paths)
+    param([Parameter(Mandatory = $true)]$Paths, [switch]$Disabled)
     $before = @(Get-MinhDucBackupTaskSnapshot)
     try {
         foreach ($old in $before) {
             Unregister-ScheduledTask -TaskName $old.Name -TaskPath '\' -Confirm:$false -ErrorAction Stop
         }
         $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
-        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 3) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 3) `
+            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Disable:$Disabled
         $dailyAction = New-ScheduledTaskAction -Execute $Paths.VenvPython -Argument (Get-MinhDucBackupJobArguments -Paths $Paths -Mode daily) -WorkingDirectory $Paths.Code
         $daily = New-ScheduledTaskTrigger -Daily -At '20:00'
         Register-ScheduledTask -TaskName $script:Names.BackupTask -TaskPath '\' -Action $dailyAction -Trigger $daily -Principal $principal -Settings $settings -Description 'Sao luu 20:00, luon chay ke ca trong gio lam.' -Force -ErrorAction Stop | Out-Null
@@ -873,18 +972,41 @@ function Set-MinhDucBackupTasks {
         # CI fault injection replaces this one registration, never the restore path.
         Register-ScheduledTask -TaskName ($script:Names.BackupTask + ' - Chay bu') -TaskPath '\' -Action $catchupAction -Trigger $catchup -Principal $principal -Settings $settings -Description 'Chay bu sau khoi dong, xet gio lam/48 gio.' -Force -ErrorAction Stop | Out-Null
         [void](Test-MinhDucBackupTasks -Paths $Paths)
+        if ($Disabled) {
+            foreach ($name in @($script:Names.BackupTask, ($script:Names.BackupTask + ' - Chay bu'))) {
+                $task = Get-MinhDucScheduledTask -Name $name
+                if ([string]$task.State -ne 'Disabled' -or $task.Settings.Enabled) { throw ('Lịch sao lưu chưa Disabled: ' + $name) }
+            }
+        }
     } catch {
         $failure = $_
-        try { Restore-MinhDucBackupTasks -Snapshot $before }
+        try { Restore-MinhDucBackupTasks -Snapshot $before -Disabled:$Disabled }
         catch { throw ('Đăng ký lịch sao lưu lỗi và KHÔNG khôi phục được lịch cũ: ' + $_.Exception.Message) }
         throw ('Đăng ký lịch sao lưu thất bại; đã khôi phục action/trigger cũ: ' + $failure.Exception.Message)
     }
 }
 
 function Suspend-MinhDucBackupTasks {
-    foreach ($task in @(Get-MinhDucBackupTaskSnapshot)) {
+    param([switch]$WaitForIdle)
+    $snapshot = @(Get-MinhDucBackupTaskSnapshot)
+    foreach ($task in $snapshot) {
         Disable-ScheduledTask -TaskName $task.Name -TaskPath '\' -ErrorAction Stop | Out-Null
         Write-Thongtin ('Tạm dừng lịch sao lưu: ' + $task.Name)
+    }
+    if ($WaitForIdle -and $snapshot.Count) {
+        # Task.State có thể là Disabled trong khi một phiên chạy trước đó còn hoạt động.
+        $scheduler = New-Object -ComObject 'Schedule.Service'
+        $scheduler.Connect()
+        $folder = $scheduler.GetFolder('\')
+        $deadline = (Get-Date).AddSeconds(30)
+        foreach ($task in $snapshot) {
+            $registered = $folder.GetTask($task.Name)
+            if ($registered.Enabled) { throw ('Chưa tạm dừng được lịch sao lưu: ' + $task.Name) }
+            while ($registered.GetInstances(0).Count -gt 0) {
+                if ((Get-Date) -ge $deadline) { throw ('Lịch sao lưu còn chạy, hãy thử lại sau: ' + $task.Name) }
+                Start-Sleep -Milliseconds 250
+            }
+        }
     }
 }
 

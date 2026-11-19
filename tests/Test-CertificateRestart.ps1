@@ -6,7 +6,9 @@ $errors = $null
 $module = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windows 'MinhDuc.Install.psm1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
 foreach ($name in @('Set-RecoveryServiceStartMode', 'Stop-MinhDucService', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit', 'Resume-MinhDucServiceStartMode',
-                    'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode', 'Invoke-WithMinhDucServiceStartupDisabled')) {
+                    'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode',
+                    'Disable-MinhDucServiceStartup', 'Enter-MinhDucMaintenanceWindow', 'Suspend-MinhDucMaintenanceWindow',
+                    'Resume-MinhDucMaintenanceWindow', 'Exit-MinhDucMaintenanceWindow')) {
     $definition = $module.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -15,8 +17,17 @@ function Get-MinhDucNames { @{ Service = 'MinhDuc'; ServiceAcct = 'fake' } }
 function Get-MinhDucDelayedAutoStart { param($Name) return $false }
 function Get-MinhDucPaths {
     param($Code, $Data)
-    @{ Tls = $Data; Venv = $Code; Journal = $Data; ServiceStartModePending = (Join-Path $Data 'service-startmode-pending.json'); CaKey = (Join-Path $Data 'ca.key'); ClinicEnv = (Join-Path $Data 'clinic.env') }
+    @{ Tls = $Data; Venv = $Code; Journal = $Data; MaintenanceLockBase = (Join-Path $Data 'service-startmode-pending.json'); ServiceStartModePending = (Join-Path $Data 'service-startmode-pending.json'); CaKey = (Join-Path $Data 'ca.key'); ClinicEnv = (Join-Path $Data 'clinic.env') }
 }
+function Get-MinhDucBackupTaskSnapshot {
+    foreach ($name in $test.tasks.Keys) { @{ Name = $name } }
+}
+function Get-MinhDucScheduledTask { param($Name) @{ Settings = @{ Enabled = $test.tasks[$Name] } } }
+function Suspend-MinhDucBackupTasks {
+    param([switch]$WaitForIdle)
+    foreach ($name in @($test.tasks.Keys)) { $test.tasks[$name] = $false }
+}
+function Enable-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) $test.tasks[$TaskName] = $true }
 function Read-EnvFile { param($Path) @{ CLINIC_ORIGIN = 'https://127.0.0.1:8443'; CLINIC_BIND_IP = '127.0.0.1' } }
 function ConvertFrom-PythonJson($Result) { $Result.Json }
 function Read-CoKhong { param($Text, [switch]$KhongHoi, $MacDinh) return $true }
@@ -38,11 +49,13 @@ function Invoke-Python {
         }
         'verify' { $test.steps.Add('verify') }
         'commit' {
+            if ($test.startup -ne 'Disabled' -or $test.tasks.Values -contains $true) { throw 'Thay chứng chỉ ngoài cửa sổ bảo trì.' }
             $test.steps.Add('commit')
             Set-Content -LiteralPath $test.cert -Value 'new'
             if ($test.case.BadCommit) { return @{ Ok = $false; Output = @('Lỗi thay tệp giả lập') } }
         }
         'rollback' {
+            if ($test.startup -ne 'Disabled' -or $test.tasks.Values -contains $true) { throw 'Trả chứng chỉ ngoài cửa sổ bảo trì.' }
             $test.steps.Add('rollback')
             if ($test.case.State -eq 'missing') { Remove-Item -LiteralPath $test.cert }
             else { Set-Content -LiteralPath $test.cert -Value $test.old }
@@ -108,6 +121,7 @@ function Start-Service {
     param($InputObject)
     if ($test.status -ne 'Stopped' -or $test.startup -ne $test.originalStartup -or
         $test.processScans -ne (2 * $test.stoppedWaits)) { throw 'Khởi động trước khi Python thoát hoặc chưa trả chế độ gốc' }
+    if ($test.tasks.Values -contains $false) { throw 'Lịch sao lưu chưa được trả trước khi khởi động.' }
     $test.starts++
     $onDisk = Get-Content -LiteralPath $test.cert -Raw
     $onDisk = $onDisk.Trim()
@@ -152,6 +166,7 @@ try {
         $test.served = 'old'
         $test.originalStartup = if ($case.Outside) { 'Manual' } else { 'Automatic' }
         $test.startup = $test.originalStartup
+        $test.tasks = @{ daily = $true; catchup = $true }
         $test.status = 'Running'
         $test.stoppedWaits = 0
         $test.processScans = 0
@@ -164,6 +179,7 @@ try {
             ($test.steps -join ',') -ne $case.Steps -or $test.startup -ne $test.originalStartup) {
             throw ("Sai kết quả $($case.Name): $exitCode / $($result.status), HTTPS=$test.served, startup=$test.startup, bước=$test.steps")
         }
+        if ($test.tasks.Values -contains $false) { throw 'Lịch sao lưu còn Disabled sau gia hạn.' }
     }
     Write-Output 'PASS: certificate restart'
 } finally {

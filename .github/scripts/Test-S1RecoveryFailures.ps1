@@ -11,6 +11,7 @@ if ($Mode -eq 'Database') {
 }
 $serviceKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\' + $names.Service
 $startupBefore = Get-ItemProperty -LiteralPath $serviceKey
+$backupTasksBefore = @(Get-MinhDucBackupTaskSnapshot)
 $files = @((Join-Path $paths.Code 'scripts\install_db.py'), (Join-Path $paths.Code 'app\main.py'))
 $original = @{}
 foreach ($file in $files) { $original[$file] = [IO.File]::ReadAllBytes($file) }
@@ -51,21 +52,26 @@ try {
     if ($startupBefore.Start -ne $startupAfter.Start -or $startupBefore.DelayedAutoStart -ne $startupAfter.DelayedAutoStart) {
         throw 'The rollback did not restore the original service startup configuration'
     }
+    Assert-MinhDucBackupTaskSnapshot -Snapshot $backupTasksBefore -RequireBoth
     Write-Output ('PASS: ' + $Mode + ' fault -> quay_ve_that_bai and nonzero exit, with failed steps retained')
 } catch {
     Write-Output ('PRIMARY FAULT-DRILL FAILURE: ' + $_.Exception.Message)
     throw
 } finally {
     # Repair the disposable test VM explicitly; this is not product auto-recovery.
-    Stop-MinhDucService -Name $names.Service -Paths $paths
-    foreach ($file in $files) { [IO.File]::WriteAllBytes($file, $original[$file]) }
-    if ($null -ne $failedResult -and $failedResult.backup) {
-        $restored = Invoke-Python -Paths $paths -Quiet -Arguments @('-m','scripts.install_db','--clinic-env',$paths.ClinicEnv,'--owner-env',$paths.OwnerEnv,'--super-env',$paths.SuperEnv,'rollback','--file',$failedResult.backup,'--key',$paths.BackupKey)
-        if (-not $restored.Ok) { throw 'Manual CI repair could not restore database' }
-        Set-SecureAcl -Path $paths.Attachments -Directory -Writers @($names.ServiceAcct)
-        if (Test-Path -LiteralPath $paths.Settings) { Set-SecureAcl -Path $paths.Settings -Directory -Writers @($names.ServiceAcct) }
-    }
-    Start-Service -Name $names.Service -ErrorAction Stop
+    $window = Enter-MinhDucMaintenanceWindow -Name $names.Service -Paths $paths -ScriptName 'CapNhat.ps1'
+    try {
+        Stop-MinhDucService -Window $window
+        foreach ($file in $files) { [IO.File]::WriteAllBytes($file, $original[$file]) }
+        if ($null -ne $failedResult -and $failedResult.backup) {
+            $restored = Invoke-Python -Paths $paths -Quiet -Arguments @('-m','scripts.install_db','--clinic-env',$paths.ClinicEnv,'--owner-env',$paths.OwnerEnv,'--super-env',$paths.SuperEnv,'rollback','--file',$failedResult.backup,'--key',$paths.BackupKey)
+            if (-not $restored.Ok) { throw 'Manual CI repair could not restore database' }
+            Set-SecureAcl -Path $paths.Attachments -Directory -Writers @($names.ServiceAcct)
+            if (Test-Path -LiteralPath $paths.Settings) { Set-SecureAcl -Path $paths.Settings -Directory -Writers @($names.ServiceAcct) }
+        }
+        Resume-MinhDucMaintenanceWindow -Window $window
+        Start-Service -Name $names.Service -ErrorAction Stop
+    } finally { Exit-MinhDucMaintenanceWindow -Window $window }
     if (-not (Wait-Https -Origin $origin -Seconds 120)) { throw 'Manual CI repair did not bring HTTPS back' }
     $afterResult = Invoke-Python -Paths $paths -Quiet -Arguments @('-m','scripts.install_db','--clinic-env',$paths.ClinicEnv,'--owner-env',$paths.OwnerEnv,'fingerprint')
     if (-not $afterResult.Ok -or (ConvertFrom-PythonJson $afterResult).sha256 -ne $before.sha256) { throw 'Manual CI repair changed schema/functions/ACLs' }
