@@ -5,7 +5,7 @@ $tokens = $null
 $errors = $null
 $module = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windows 'MinhDuc.Install.psm1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in @('Set-RecoveryServiceStartMode', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit')) {
+foreach ($name in @('Set-RecoveryServiceStartMode', 'Stop-MinhDucService', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit')) {
     $definition = $module.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -86,6 +86,7 @@ function Get-Service {
 }
 function Stop-Service {
     param($InputObject, [switch]$NoWait, $ErrorAction)
+    if ($test.startup -ne 'Disabled') { throw 'Phải khóa tự khởi động trước khi yêu cầu SCM dừng' }
     if (-not $NoWait -or $InputObject.Status -ne 'Running') { throw 'Lệnh dừng phải yêu cầu SCM rồi trả quyền chờ cho bộ cài' }
     $test.status = 'StopPending'
     $test.served = $null

@@ -57,9 +57,7 @@ try {
     throw
 } finally {
     # Repair the disposable test VM explicitly; this is not product auto-recovery.
-    $service = Get-Service -Name $names.Service -ErrorAction Stop
-    if ($service.Status -ne 'Stopped') { Stop-Service -Name $names.Service -Force -ErrorAction Stop }
-    $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
+    Stop-MinhDucService -Name $names.Service -Paths $paths
     foreach ($file in $files) { [IO.File]::WriteAllBytes($file, $original[$file]) }
     if ($null -ne $failedResult -and $failedResult.backup) {
         $restored = Invoke-Python -Paths $paths -Quiet -Arguments @('-m','scripts.install_db','--clinic-env',$paths.ClinicEnv,'--owner-env',$paths.OwnerEnv,'--super-env',$paths.SuperEnv,'rollback','--file',$failedResult.backup,'--key',$paths.BackupKey)

@@ -422,7 +422,7 @@ function Set-RecoveryServiceStartMode($Service, [string]$Mode) {
     if ($result.ReturnValue -ne 0) { throw ('Không đổi được chế độ khởi động dịch vụ sang ' + $Mode + ', mã ' + $result.ReturnValue) }
 }
 
-function Restart-MinhDucService {
+function Stop-MinhDucService {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
         [Parameter(Mandatory=$true)]$Paths
@@ -451,6 +451,15 @@ function Restart-MinhDucService {
     } finally {
         Set-RecoveryServiceStartMode $config $startupMode
     }
+}
+
+function Restart-MinhDucService {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)]$Paths
+    )
+    Stop-MinhDucService -Name $Name -Paths $Paths
+    $service = Get-Service -Name $Name -ErrorAction Stop
     try {
         # Start-Service báo cảnh báo khi còn StartPending. Chuyển sang chờ có thời hạn.
         Start-Service -InputObject $service -WarningAction Stop -ErrorAction Stop
