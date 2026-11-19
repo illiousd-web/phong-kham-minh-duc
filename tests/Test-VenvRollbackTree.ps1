@@ -195,7 +195,11 @@ Write-Output 'PASS: kiểm module, chặn khóa ngoài phạm vi và dừng ti�
     function Assert-MinhDucBackupTaskSnapshot { param($Snapshot,[switch]$RequireBoth) }
     function Get-MinhDucNames { @{ BackupTask = 'test'; FirewallMaintenance = 'test firewall' } }
     function Enable-MinhDucMaintenanceFirewall { param($Paths) }
-    function Remove-MinhDucMaintenanceFirewall { param($Name) }
+    function Remove-MinhDucMaintenanceFirewall {
+        param($Name)
+        $marker = Read-MinhDucServiceStartModeMarker $Names.Service $P
+        if ($marker.Status -ne 'da_quay_ve') { throw 'Chưa ghi xác nhận quay về trước khi gỡ tường lửa.' }
+    }
     function Start-MinhDucMaintenanceService {
         param($Window)
         Restore-MinhDucServiceStartup $Window.Name (Read-MinhDucServiceStartModeMarker $Window.Name $Window.Paths)

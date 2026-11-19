@@ -77,7 +77,7 @@ function Save-InitialBackupTaskSnapshot {
 }
 
 function Invoke-QuayVe {
-    param($Window)
+    param([Parameter(Mandatory=$true)]$Window)
     Write-Buoc 'TỰ QUAY VỀ BẢN CŨ'
     $failures = New-Object System.Collections.Generic.List[string]
     $recovery = @{ Code = $false; Venv = $false; Database = $false; Tasks = $false; Stopped = $true }
@@ -110,7 +110,6 @@ function Invoke-QuayVe {
                 if ($service.Status -ne 'Stopped') { throw 'Dịch vụ chưa dừng; không thay mã hoặc dữ liệu đang chạy.' }
                 if (-not $State.backup_task_snapshot.Count) { throw 'Thiếu snapshot lịch ban đầu; không chụp lại trong quay về.' }
                 $State.backup_tasks_changed = $true
-                if (-not $Window) { Suspend-MinhDucBackupTasks }
                 Wait-MinhDucVenvPythonExit @venvScan -LogLockDiagnostics
                 $service.Refresh()
                 if ($service.Status -ne 'Stopped') { throw 'Dịch vụ đã chạy lại trong lúc chờ Python thoát.' }
@@ -163,19 +162,18 @@ function Invoke-QuayVe {
             }
         }
         $recovery.Tasks = Invoke-RecoveryStep 'Khôi phục lịch sao lưu cũ' {
-            if ($State.backup_tasks_changed) { Restore-MinhDucBackupTasks -Snapshot $State.backup_task_snapshot -Disabled:([bool]$Window) }
+            if ($State.backup_tasks_changed) { Restore-MinhDucBackupTasks -Snapshot $State.backup_task_snapshot -Disabled }
         }
     }
     $startupRestored = $true
-    if ($needsRecovery -and $Window) {
+    if ($needsRecovery) {
         $startupRestored = Invoke-RecoveryStep 'Khóa cài đặt bảo trì trước phục hồi' {
             Suspend-MinhDucMaintenanceWindow -Window $Window -AllowAlreadyDisabled
             Set-MinhDucRollbackPending -Window $Window
         }
     }
     if ($startupRestored) {
-        $config = if ($Window) { $Window.ServiceConfig }
-        & $restoreFiles $config
+        & $restoreFiles $Window.ServiceConfig
     }
     [void](Invoke-RecoveryStep 'Khởi động và kiểm HTTPS bản cũ' {
         if (-not $recovery.Code -or -not $recovery.Venv -or -not $recovery.Database) { throw 'Mã/Python/CSDL chưa đạt; giữ dịch vụ dừng để tránh dùng sai phiên bản.' }
@@ -308,6 +306,7 @@ try {
     Write-Buoc 'Bước 5/8: Thay mã nguồn'
     $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($P.Code, $OldCode, '/MIR', '/R:2', '/W:2', '/XD', '.venv', '.venv-cu', '__pycache__', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
     if (-not $r.Ok) { throw 'Không sao chép được mã cũ để dự phòng.' }
+    Set-MinhDucUpdatePhase -Window $window -Phase da_doi_du_lieu
     if (Test-Path -LiteralPath $OldVenv) { Remove-Item -LiteralPath $OldVenv -Recurse -Force -ErrorAction Stop }
     Rename-Item -LiteralPath $P.Venv -NewName '.venv-cu' -ErrorAction Stop
     $State.venv_moved = $true
@@ -345,7 +344,7 @@ try {
     # Keep the single pre-update snapshot; never replace it after task changes.
     $State.backup_tasks_changed = $true
     & {
-        Import-Module (Join-Path $P.Code 'deploy\windows\MinhDuc.Install.psm1') -Force -DisableNameChecking
+        Import-Module (Join-Path $P.Code 'deploy\windows\MinhDuc.Install.psm1') -Force -DisableNameChecking -Scope Local
         Set-MinhDucBackupTasks -Paths $P -Disabled
     }
     Write-Dat 'Đã chuyển và kiểm lịch sao lưu: 20:00 và chạy bù riêng.'
@@ -358,34 +357,48 @@ try {
     Write-Result 'dang_cap_nhat' $versionDetail
     Start-MinhDucMaintenanceService -Window $window
     if (-not (Wait-Https -Origin $origin -Seconds 120 -LocalOnly)) { Show-ServiceDiagnostics -Paths $P; throw 'Dịch vụ web bản mới không trả lời sau 2 phút.' }
-    # Chốt trước khi mở lại máy trạm. Sau mốc này giữ dữ liệu của bản mới.
+    # Ghi mốc chốt trên đĩa trước khi mở lại máy trạm.
+    Set-MinhDucUpdatePhase -Window $window -Phase da_chot
     $committed = $true
+    $resultStatus = 'thanh_cong'
+    $resultDetail = $versionDetail
     try { Resume-MinhDucMaintenanceWindow -Window $window }
-    catch { Add-UpdateWarning ('Chưa kết thúc được cửa sổ bảo trì. Chạy KIEM_TRA.bat và báo người hỗ trợ: ' + $_.Exception.Message) }
+    catch {
+        $exitCode = 8
+        $resultStatus = 'thanh_cong_can_kiem_tra'
+        $resultDetail += '. Chưa kết thúc bảo trì. ' + $_.Exception.Message
+        Add-UpdateWarning $resultDetail
+    }
     $resultWritten = $false
     try {
-        Write-Result 'thanh_cong' $versionDetail
+        Write-Result $resultStatus $resultDetail
         $resultWritten = $true
     } catch { Add-UpdateWarning ('Chưa ghi được kết quả cập nhật: ' + $_.Exception.Message) }
+    if ($exitCode -eq 0) {
+        try {
+            $report = Join-Path $P.Journal ('kiem-tra-sau-cap-nhat-' + $Stamp + '.txt')
+            if (-not (Invoke-HealthReport -Paths $P -Output $report -Title 'KẾT QUẢ KIỂM TRA SAU CẬP NHẬT')) {
+                Add-UpdateWarning ('Báo cáo sức khỏe có mục chưa đạt hoặc chưa tạo được. Kiểm tra tại ' + $report)
+            }
+        } catch { Add-UpdateWarning ('Lỗi báo cáo sức khỏe: ' + $_.Exception.Message) }
+    }
     try {
-        $report = Join-Path $P.Journal ('kiem-tra-sau-cap-nhat-' + $Stamp + '.txt')
-        if (-not (Invoke-HealthReport -Paths $P -Output $report -Title 'KẾT QUẢ KIỂM TRA SAU CẬP NHẬT')) {
-            Add-UpdateWarning ('Báo cáo sức khỏe có mục chưa đạt hoặc chưa tạo được. Kiểm tra tại ' + $report)
-        }
-    } catch { Add-UpdateWarning ('Lỗi báo cáo sức khỏe: ' + $_.Exception.Message) }
-    try {
-        if ($resultWritten -and (Test-Path -LiteralPath $OldVenv)) { Remove-Item -LiteralPath $OldVenv -Recurse -Force -ErrorAction Stop }
+        if ($exitCode -eq 0 -and $resultWritten -and (Test-Path -LiteralPath $OldVenv)) { Remove-Item -LiteralPath $OldVenv -Recurse -Force -ErrorAction Stop }
     } catch { Add-UpdateWarning ('Chưa dọn được môi trường Python cũ: ' + $_.Exception.Message) }
     try { Remove-Item -LiteralPath $NewDir -Recurse -Force -ErrorAction Stop }
     catch { Add-UpdateWarning ('Chưa dọn được thư mục giải nén: ' + $_.Exception.Message) }
     if ($State.warnings.Count) {
         try {
-            Write-Result 'thanh_cong' $versionDetail
+            Write-Result $resultStatus $resultDetail
             $resultWritten = $true
         } catch { Add-UpdateWarning ('Chưa lưu được cảnh báo vào kết quả cập nhật: ' + $_.Exception.Message) }
     }
     Write-Host ''
-    if ($resultWritten) {
+    if ($exitCode -eq 8) {
+        Write-Luu 'CẬP NHẬT ĐÃ CHỐT VÀ HTTPS ĐÃ ĐẠT, NHƯNG CHƯA KẾT THÚC BẢO TRÌ (mã 8).'
+        Write-Luu 'Máy trạm có thể chưa vào được hoặc chưa có sao lưu tự động. Chạy KIEM_TRA.bat để trả cấu hình còn thiếu.'
+        if (-not $resultWritten) { Write-Luu 'Chưa ghi được tệp kết quả cập nhật. Báo người hỗ trợ.' }
+    } elseif ($resultWritten) {
         Write-Host ('CẬP NHẬT THÀNH CÔNG. Bản mã cũ được giữ tại ' + $OldCode) -ForegroundColor Green
     } else {
         $exitCode = 7

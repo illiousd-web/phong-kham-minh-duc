@@ -25,7 +25,8 @@ $Names = Get-MinhDucNames
 $service = Get-Service -Name $Names.Service -ErrorAction SilentlyContinue
 if ($recoveryError) {
     $startup = if ($service) { 'Chế độ khởi động hiện tại là ' + $service.StartType + '.' } else { 'Không tìm thấy dịch vụ MinhDuc.' }
-    $row = "[KHÔNG ĐẠT] ${label} - $recoveryError $startup Báo người hỗ trợ."
+    if ($recoveryError -notmatch 'Báo người hỗ trợ') { $recoveryError += ' Báo người hỗ trợ.' }
+    $row = "[KHÔNG ĐẠT] ${label} - $recoveryError $startup"
     Set-Content -LiteralPath $TepKetQua -Value $row -Encoding UTF8 -ErrorAction Stop
     Write-Host $row -ForegroundColor Red
     Write-Host ('Đã lưu báo cáo: ' + $TepKetQua) -ForegroundColor Cyan

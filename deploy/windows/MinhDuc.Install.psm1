@@ -494,7 +494,7 @@ function Read-MinhDucServiceStartModeMarker([string]$Name, $Paths) {
     $fields = @('Status', 'TaskEnabled', 'FirewallRule')
     $present = @($fields | Where-Object { $_ -cin $marker.PSObject.Properties.Name })
     if ($present.Count) {
-        if ($present.Count -ne $fields.Count -or $marker.Status -isnot [string] -or $marker.Status -cnotin @('dang_bao_tri','quay_ve_that_bai') -or
+        if ($present.Count -ne $fields.Count -or $marker.Status -isnot [string] -or $marker.Status -cnotin @('dang_bao_tri','quay_ve_that_bai','da_quay_ve') -or
             $marker.TaskEnabled -isnot [pscustomobject] -or $marker.FirewallRule -isnot [string] -or
             $marker.FirewallRule -cnotin @('', (Get-MinhDucNames).FirewallMaintenance)) { throw $invalid }
         $names = Get-MinhDucNames
@@ -503,6 +503,12 @@ function Read-MinhDucServiceStartModeMarker([string]$Name, $Paths) {
                 throw $invalid
             }
         }
+    }
+    if ('Phase' -cnotin $marker.PSObject.Properties.Name) {
+        $marker | Add-Member -NotePropertyName Phase -NotePropertyValue 'chua_doi_du_lieu'
+    } elseif ($marker.Phase -isnot [string] -or $marker.Phase -cnotin @('chua_doi_du_lieu', 'da_doi_du_lieu', 'da_chot') -or
+        ($marker.Phase -ne 'chua_doi_du_lieu' -and ($present.Count -eq 0 -or $marker.Script -ne 'CapNhat.ps1' -or -not $marker.FirewallRule))) {
+        throw $invalid
     }
     return $marker
 }
@@ -535,36 +541,62 @@ function Restore-MinhDucServiceStartMode {
     $marker = Read-MinhDucServiceStartModeMarker $Name $Paths
     if (-not $marker) { return }
     $extended = 'Status' -cin $marker.PSObject.Properties.Name
-    if ($extended -and $marker.Status -eq 'quay_ve_that_bai' -and -not $VerifiedRollback) {
-        throw 'Quay về bản cũ chưa đạt (quay_ve_that_bai). Giữ khóa truy cập phần mềm.'
+    if (-not $VerifiedRollback -and $extended) {
+        $blocked = if ($marker.Status -eq 'quay_ve_that_bai') {
+            'Quay về bản cũ chưa đạt (quay_ve_that_bai). Giữ khóa truy cập phần mềm.'
+        } elseif ($marker.Phase -eq 'da_doi_du_lieu' -and $marker.Status -ne 'da_quay_ve') {
+            'Cập nhật bị ngắt sau khi đã thay dữ liệu.'
+        }
+        if ($blocked) {
+            $blocked += ' KHÔNG dùng phần mềm. Báo người hỗ trợ.'
+            # Nếu tiến trình bị ngắt ngay trong Start-Service, SCM có thể còn Manual.
+            try {
+                $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Name + "'") -ErrorAction Stop
+                if ($config -and $config.StartMode -eq 'Manual') { Set-RecoveryServiceStartMode $config 'Disabled' }
+            } catch { $blocked += ' Chưa khóa lại được chế độ khởi động dịch vụ: ' + $_.Exception.Message }
+            throw $blocked
+        }
     }
 
-    Restore-MinhDucServiceStartup $Name $marker
-    if ($extended) {
-        $tasks = @(Get-MinhDucBackupTaskSnapshot)
-        foreach ($saved in $marker.TaskEnabled.PSObject.Properties) {
-            if ($saved.Name -cnotin @($tasks | ForEach-Object { $_.Name })) {
-                throw ('Thiếu lịch sao lưu cần trả lại: ' + $saved.Name)
+    $step = 'Trả và kiểm lại lịch sao lưu'
+    try {
+        if ($extended) {
+            $tasks = @(Get-MinhDucBackupTaskSnapshot)
+            foreach ($saved in $marker.TaskEnabled.PSObject.Properties) {
+                if ($saved.Name -cnotin @($tasks | ForEach-Object { $_.Name })) {
+                    throw ('Thiếu lịch sao lưu cần trả lại: ' + $saved.Name)
+                }
+            }
+            foreach ($task in $tasks) {
+                $saved = $marker.TaskEnabled.PSObject.Properties[$task.Name]
+                # Lịch chạy bù được tạo mới khi nâng cấp từ bản chỉ có lịch hằng ngày.
+                $enabled = -not $saved -or $saved.Value
+                if ($enabled) { Enable-ScheduledTask -TaskName $task.Name -TaskPath '\' -ErrorAction Stop | Out-Null }
+                else { Disable-ScheduledTask -TaskName $task.Name -TaskPath '\' -ErrorAction Stop | Out-Null }
+                $actual = Get-MinhDucScheduledTask -Name $task.Name
+                if (-not $actual -or [bool]$actual.Settings.Enabled -ne $enabled) {
+                    throw ('Trạng thái lịch sao lưu chưa được trả lại: ' + $task.Name)
+                }
             }
         }
-        foreach ($task in $tasks) {
-            $saved = $marker.TaskEnabled.PSObject.Properties[$task.Name]
-            # Lịch chạy bù được tạo mới khi nâng cấp từ bản chỉ có lịch hằng ngày.
-            $enabled = -not $saved -or $saved.Value
-            if ($enabled) { Enable-ScheduledTask -TaskName $task.Name -TaskPath '\' -ErrorAction Stop | Out-Null }
-            else { Disable-ScheduledTask -TaskName $task.Name -TaskPath '\' -ErrorAction Stop | Out-Null }
-            $actual = Get-MinhDucScheduledTask -Name $task.Name
-            if (-not $actual -or [bool]$actual.Settings.Enabled -ne $enabled) {
-                throw ('Trạng thái lịch sao lưu chưa được trả lại: ' + $task.Name)
+        if ($VerifiedRollback) {
+            Assert-MinhDucBackupTaskSnapshot -Snapshot $BackupTaskSnapshot -RequireBoth
+            if ($extended) {
+                $step = 'Ghi xác nhận đã quay về bản cũ'
+                $marker.Status = 'da_quay_ve'
+                Write-MinhDucServiceStartModeMarker $Paths.ServiceStartModePending $marker -Replace
             }
         }
+        $step = 'Gỡ và kiểm lại tường lửa bảo trì'
+        if ($extended -and $marker.FirewallRule) { Remove-MinhDucMaintenanceFirewall $marker.FirewallRule }
+        $step = 'Trả và kiểm lại chế độ khởi động dịch vụ'
+        Restore-MinhDucServiceStartup $Name $marker
+        $step = 'Xóa tệp đánh dấu bảo trì'
+        Remove-Item -LiteralPath $Paths.ServiceStartModePending -Force -ErrorAction Stop
+        if (Get-MinhDucServiceStartModeMarkerFile $Paths.ServiceStartModePending) { throw 'Chưa xóa được tệp đánh dấu bảo trì.' }
+    } catch {
+        throw ($step + ' chưa đạt: ' + $_.Exception.Message)
     }
-    if ($VerifiedRollback) {
-        Assert-MinhDucBackupTaskSnapshot -Snapshot $BackupTaskSnapshot -RequireBoth
-    }
-    if ($extended -and $marker.FirewallRule) { Remove-MinhDucMaintenanceFirewall $marker.FirewallRule }
-    Remove-Item -LiteralPath $Paths.ServiceStartModePending -Force -ErrorAction Stop
-    if (Get-MinhDucServiceStartModeMarkerFile $Paths.ServiceStartModePending) { throw 'Chưa xóa được tệp đánh dấu bảo trì.' }
 
     $detail = "Đã trả chế độ khởi động dịch vụ $Name về $($marker.StartMode) (DelayedAutoStart=$($marker.DelayedAutoStart)). $($marker.Script) ghi dấu lúc $($marker.CreatedAt)."
     if ($extended) { $detail += ' Đã kiểm lại trạng thái bảo trì.' }
@@ -601,7 +633,8 @@ function Invoke-WithMinhDucServiceStartupDisabled {
             throw 'Còn tệp đánh dấu chế độ khởi động. Báo người hỗ trợ hoặc chạy KIEM_TRA.bat trước khi bảo trì lại.'
         }
         try {
-            $config = Disable-MinhDucServiceStartup -Name $Name -Paths $Paths -ScriptName $ScriptName -AllowAlreadyDisabled:$AllowAlreadyDisabled
+            $startupOnly = @{ Name = $Name; Paths = $Paths; ScriptName = $ScriptName; TaskEnabled = $null }
+            $config = Disable-MinhDucServiceStartup -Window $startupOnly -AllowAlreadyDisabled:$AllowAlreadyDisabled
             & $Action $config
         } finally {
             Restore-MinhDucServiceStartMode $Name $Paths $ScriptName | Out-Null
@@ -610,8 +643,9 @@ function Invoke-WithMinhDucServiceStartupDisabled {
 }
 
 function Disable-MinhDucServiceStartup {
-    param([string]$Name, $Paths, [string]$ScriptName, [switch]$AllowAlreadyDisabled, $Window)
-    $path = $Paths.ServiceStartModePending
+    param([Parameter(Mandatory=$true)]$Window, [switch]$AllowAlreadyDisabled)
+    $Name = $Window.Name
+    $path = $Window.Paths.ServiceStartModePending
     if (Get-MinhDucServiceStartModeMarkerFile $path) {
         throw 'Còn tệp đánh dấu chế độ khởi động. Báo người hỗ trợ hoặc chạy KIEM_TRA.bat trước khi bảo trì lại.'
     }
@@ -626,9 +660,10 @@ function Disable-MinhDucServiceStartup {
         StartMode = $startupModes[$config.StartMode]
         DelayedAutoStart = Get-MinhDucDelayedAutoStart $Name
         CreatedAt = [datetime]::UtcNow.AddHours(7).ToString("dd/MM/yyyy HH:mm:ss 'UTC+7'", [Globalization.CultureInfo]::InvariantCulture)
-        Script = $ScriptName
+        Script = $Window.ScriptName
+        Phase = 'chua_doi_du_lieu'
     }
-    if ($Window) {
+    if ($null -ne $Window.TaskEnabled) {
         $marker.Status = 'dang_bao_tri'
         $marker.TaskEnabled = $Window.TaskEnabled
         $marker.FirewallRule = if ($Window.GuardHttps) { (Get-MinhDucNames).FirewallMaintenance } else { '' }
@@ -666,7 +701,7 @@ function Suspend-MinhDucMaintenanceWindow {
     }
     if (-not $Window.ServiceConfig) {
         $Window.RestoreStartup = $true
-        $Window.ServiceConfig = Disable-MinhDucServiceStartup -Name $Window.Name -Paths $Window.Paths -ScriptName $Window.ScriptName -AllowAlreadyDisabled:$AllowAlreadyDisabled -Window $Window
+        $Window.ServiceConfig = Disable-MinhDucServiceStartup -Window $Window -AllowAlreadyDisabled:$AllowAlreadyDisabled
     } elseif ($Window.GuardHttps) {
         $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Window.Name + "'") -ErrorAction Stop
         if ($config.StartMode -ne 'Disabled') { Set-RecoveryServiceStartMode $config 'Disabled' }
@@ -685,7 +720,29 @@ function Start-MinhDucMaintenanceService {
     Assert-MinhDucMaintenanceFirewall -Paths $Window.Paths
     $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Window.Name + "'") -ErrorAction Stop
     if ($config.StartMode -ne 'Manual') { Set-RecoveryServiceStartMode $config 'Manual' }
-    Start-Service -Name $Window.Name -ErrorAction Stop
+    try {
+        Start-Service -Name $Window.Name -ErrorAction Stop
+    } finally {
+        # Chỉ cho SCM khởi động thủ công trong lệnh Start-Service. Trong lúc
+        # kiểm HTTPS, dịch vụ đang chạy nhưng vẫn phải khóa khởi động lại.
+        Set-RecoveryServiceStartMode $config 'Disabled'
+    }
+}
+
+function Set-MinhDucUpdatePhase {
+    param(
+        [Parameter(Mandatory=$true)]$Window,
+        [Parameter(Mandatory=$true)][ValidateSet('da_doi_du_lieu', 'da_chot')][string]$Phase
+    )
+    $marker = Read-MinhDucServiceStartModeMarker $Window.Name $Window.Paths
+    if (-not $marker -or -not $Window.FirewallReady -or $marker.Script -ne 'CapNhat.ps1' -or
+        $marker.Status -ne 'dang_bao_tri' -or -not $marker.FirewallRule) {
+        throw 'Thiếu dấu hoặc tường lửa trước khi ghi giai đoạn cập nhật.'
+    }
+    $previous = if ($Phase -eq 'da_chot') { 'da_doi_du_lieu' } else { 'chua_doi_du_lieu' }
+    if ($marker.Phase -ne $previous) { throw ('Không thể chuyển giai đoạn cập nhật từ ' + $marker.Phase + ' sang ' + $Phase) }
+    $marker.Phase = $Phase
+    Write-MinhDucServiceStartModeMarker $Window.Paths.ServiceStartModePending $marker -Replace
 }
 
 function Set-MinhDucRollbackPending {

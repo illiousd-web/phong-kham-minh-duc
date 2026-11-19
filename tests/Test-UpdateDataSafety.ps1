@@ -60,7 +60,6 @@ function Start-MinhDucMaintenanceService {
     if (-not $scenario.Firewall -or $scenario.Startup -ne 'Disabled' -or $scenario.Tasks -contains 'Enabled') {
         throw 'Bật web trước khi chặn máy trạm hoặc ngoài cửa sổ bảo trì.'
     }
-    $scenario.Startup = 'Manual'
     $scenario.Service = 'Running'
     $scenario.Calls.Add('start')
 }
@@ -98,16 +97,30 @@ function Suspend-MinhDucMaintenanceWindow {
     $scenario.Tasks = @('Disabled', 'Disabled')
     $scenario.Firewall = $true
     $Window.FirewallReady = $true
-    if (-not $scenario.Marker) { $scenario.Marker = 'dang_bao_tri' }
+    if (-not $scenario.Marker) {
+        $scenario.Marker = 'dang_bao_tri'
+        $scenario.Phase = 'chua_doi_du_lieu'
+    }
+}
+function Set-MinhDucUpdatePhase {
+    param($Window, $Phase)
+    if ($Phase -eq 'da_doi_du_lieu') {
+        if ($scenario.Phase -ne 'chua_doi_du_lieu' -or $scenario.Startup -ne 'Disabled' -or
+            -not (Test-Path -LiteralPath $P.Venv) -or (Test-Path -LiteralPath $OldVenv)) { throw 'Đánh dấu thay dữ liệu quá muộn.' }
+    } elseif ($Phase -ne 'da_chot' -or $scenario.Phase -ne 'da_doi_du_lieu' -or
+        -not $scenario.HttpsPassed -or -not $scenario.Firewall -or $committed) { throw 'Đánh dấu chốt ngoài cửa sổ HTTPS.' }
+    $scenario.Phase = $Phase
 }
 function Resume-MinhDucMaintenanceWindow {
     param($Window, [switch]$VerifiedRollback, $BackupTaskSnapshot)
     if (-not $scenario.HttpsPassed -or (-not $committed -and -not $VerifiedRollback -and $case -notin @('BackupError', 'MissingVerification', 'FingerprintError'))) {
         throw 'Gỡ tường lửa trước khi đã chốt bản mới hoặc xác nhận bản cũ.'
     }
-    $scenario.Startup = 'Auto'
+    if ($committed -and $scenario.Phase -ne 'da_chot') { throw 'Mở bảo trì khi chưa ghi mốc chốt.' }
     $scenario.Tasks = @('Enabled', 'Enabled')
+    if ($case -eq 'FirewallResumeError') { throw 'Gỡ và kiểm lại tường lửa bảo trì chưa đạt: lỗi giả lập' }
     $scenario.Firewall = $false
+    $scenario.Startup = 'Auto'
     $scenario.Marker = ''
 }
 function Exit-MinhDucMaintenanceWindow {
@@ -172,6 +185,7 @@ function Invoke-Native {
         New-Item -ItemType Directory -Path (Join-Path $OldCode 'app') | Out-Null
         Copy-Item -LiteralPath (Join-Path $P.Code 'app/main.py') -Destination (Join-Path $OldCode 'app/main.py')
     } elseif ($Arguments[0] -eq $newRoot) {
+        if ($scenario.Phase -ne 'da_doi_du_lieu') { throw 'Thay mã trước khi ghi giai đoạn.' }
         $scenario.Calls.Add('replace-code')
         Copy-Item -LiteralPath (Join-Path $newRoot 'app/main.py') -Destination (Join-Path $P.Code 'app/main.py')
         if ($case -eq 'BeforeMigration') { return @{ Ok = $false; Code = 16 } }
@@ -208,10 +222,11 @@ function Invoke-Python {
         if ($case -eq 'FingerprintError') { $code = 1 }
         else { $output = @('{"sha256":"' + $scenario.Fingerprint + '"}') }
     } elseif ($Arguments -contains 'migrate') {
+        if ($scenario.Phase -ne 'da_doi_du_lieu') { throw 'Migration trước khi ghi giai đoạn.' }
         $scenario.Calls.Add('migrate')
         $scenario.Row = 'đã sửa'
         $scenario.Attachment = 'đã sửa'
-        if ($case -notin @('WriteBeforeStart', 'HealthError', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError')) { $code = 1 }
+        if ($case -notin @('WriteBeforeStart', 'HealthError', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError', 'FirewallResumeError')) { $code = 1 }
     } elseif ($Arguments -contains 'grant') {
         $output = @('{"managed_changed":[]}')
     } elseif ($Arguments -contains 'rollback') {
@@ -228,7 +243,7 @@ function Invoke-Python {
 
 $root = Microsoft.PowerShell.Management\Join-Path ([IO.Path]::GetTempPath()) ('minhduc-update-' + [guid]::NewGuid().ToString('N'))
 try {
-    foreach ($case in @('StopError', 'BackupError', 'MissingVerification', 'FingerprintError', 'BeforeMigration', 'DataOnlyMigration', 'BadRestoredFingerprint', 'WriteBeforeStart', 'HealthError', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError')) {
+    foreach ($case in @('StopError', 'BackupError', 'MissingVerification', 'FingerprintError', 'BeforeMigration', 'DataOnlyMigration', 'BadRestoredFingerprint', 'WriteBeforeStart', 'HealthError', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError', 'FirewallResumeError')) {
         $homeForCase = Join-Path $root $case
         $scenario = @{ Service = 'Running'; Startup = 'Auto'; Tasks = @('Enabled', 'Enabled'); Row = 'ban đầu'; Attachment = 'ban đầu'; Fingerprint = 'baseline'; Calls = [Collections.Generic.List[string]]::new() }
         $P = @{
@@ -262,6 +277,16 @@ try {
         $exitCode = 0
         . $maintenance
         $result = Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json
+        if ($case -eq 'FirewallResumeError') {
+            if ($exitCode -ne 8 -or $result.status -ne 'thanh_cong_can_kiem_tra' -or $result.detail -notmatch 'tường lửa' -or
+                $scenario.Calls.Contains('restore') -or $scenario.Row -ne 'đã sửa' -or
+                -not $committed -or $scenario.Phase -ne 'da_chot' -or $scenario.Startup -ne 'Disabled' -or -not $scenario.Firewall -or
+                $scenario.Service -ne 'Running' -or (Get-Content -LiteralPath (Join-Path $P.Code 'app/main.py')) -ne 'mã mới') {
+                throw 'Lỗi tường lửa sau chốt phải trả mã 8 và giữ bản mới cùng dấu bảo trì.'
+            }
+            Write-Output "PASS: $case"
+            continue
+        }
         if ($case -eq 'BadRestoredFingerprint') {
             if ($scenario.Startup -ne 'Disabled' -or $scenario.Tasks -contains 'Enabled' -or $scenario.Service -ne 'Stopped' -or
                 -not $scenario.Firewall -or $scenario.Marker -ne 'quay_ve_that_bai') { throw 'Quay về lỗi phải giữ mọi khóa bảo trì.' }

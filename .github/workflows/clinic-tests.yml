@@ -217,6 +217,9 @@ jobs:
           fetch-depth: 0
       - name: Installer logic checks (PowerShell 5.1)
         run: .\deploy\windows\Test-Installer.ps1
+      - name: Installer logic checks (PowerShell 7)
+        shell: pwsh
+        run: .\deploy\windows\Test-Installer.ps1
       - name: Update data safety fault drills (PowerShell 5.1)
         run: .\tests\Test-UpdateDataSafety.ps1
       - name: Maintenance window logic on PowerShell 5.1 and PowerShell 7
@@ -385,6 +388,14 @@ jobs:
             & $engine -NoProfile -ExecutionPolicy Bypass -File .\.github\scripts\Test-S2f2dMaintenanceRecovery.ps1
             if ($LASTEXITCODE -ne 0) { throw "Abrupt maintenance recovery failed in $engine" }
           }
+      - name: Keep real service, schedules and firewall closed after interrupted data change
+        run: |
+          foreach ($engine in 'powershell.exe','pwsh.exe') {
+            & $engine -NoProfile -ExecutionPolicy Bypass -File .\.github\scripts\Test-S2f2dMaintenanceRecovery.ps1 -AfterDataChange
+            if ($LASTEXITCODE -ne 0) { throw "Abrupt data change drill failed in $engine" }
+          }
+      - name: CAP_NHAT exit 8 and KIEM_TRA finish a committed update after a firewall fault
+        run: .\.github\scripts\Test-S2f2dCommittedRecovery.ps1
       - name: Administrator saves UI settings over HTTPS before the broken update
         run: |
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py settings-set; if ($LASTEXITCODE) { throw 'settings-set' }

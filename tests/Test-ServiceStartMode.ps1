@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([string]$InterruptIn = '', [ValidateSet('CapNhat.ps1','GiaHanChungChi.ps1')][string]$SourceScript = 'CapNhat.ps1')
+param([string]$InterruptIn = '', [switch]$AfterDataChange, [ValidateSet('CapNhat.ps1','GiaHanChungChi.ps1')][string]$SourceScript = 'CapNhat.ps1')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
@@ -11,7 +11,8 @@ if ($errors.Count) { throw ($errors | Out-String) }
 foreach ($name in @('Set-RecoveryServiceStartMode', 'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile',
                     'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode', 'Resume-MinhDucServiceStartMode',
                     'Read-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartup',
-                    'Invoke-WithMinhDucServiceStartupDisabled', 'Disable-MinhDucServiceStartup', 'Invoke-HealthReport')) {
+                    'Invoke-WithMinhDucServiceStartupDisabled', 'Disable-MinhDucServiceStartup', 'Invoke-HealthReport',
+                    'Enter-MinhDucMaintenanceWindow', 'Suspend-MinhDucMaintenanceWindow', 'Set-MinhDucUpdatePhase')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -21,16 +22,27 @@ function Get-MinhDucBackupTaskSnapshot {
     foreach ($name in $fixture.Tasks.Keys) { @{ Name = $name } }
 }
 function Get-MinhDucScheduledTask { param($Name) @{ Settings = @{ Enabled = $fixture.Tasks[$Name] } } }
-function Enable-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) $fixture.Tasks[$TaskName] = $true }
+function Enable-ScheduledTask {
+    param($TaskName, $TaskPath, $ErrorAction)
+    if ($fixture.FailTasks) { throw 'Bật lịch lỗi giả lập.' }
+    $fixture.Tasks[$TaskName] = $true
+}
+function Enable-MinhDucMaintenanceFirewall { param($Paths) $fixture.Firewall = $true }
+function Suspend-MinhDucBackupTasks {
+    param([switch]$WaitForIdle)
+    foreach ($name in @($fixture.Tasks.Keys)) { $fixture.Tasks[$name] = $false }
+}
 function Disable-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) $fixture.Tasks[$TaskName] = $false }
 function Remove-MinhDucMaintenanceFirewall {
     param($Name)
     if ($Name -ne 'fake HTTPS rule' -or -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu']) {
         throw 'Đã gỡ quy tắc khác hoặc gỡ trước khi trả lịch.'
     }
+    if ($fixture.FailFirewall) { throw 'Gỡ tường lửa lỗi giả lập.' }
+    if ($fixture.RequireStartupLast -and (Get-Service).StartType -ne 'Disabled') { throw 'Đã trả khởi động trước khi gỡ tường lửa.' }
     $fixture.Firewall = $false
 }
-$fixture = @{ IgnoreScmChange = $false }
+$fixture = @{ IgnoreScmChange = $false; FailTasks = $false; FailFirewall = $false; RequireStartupLast = $false; RecoveryInProgress = $false }
 
 function Get-MinhDucPaths {
     param($Code, $Data)
@@ -58,7 +70,7 @@ function Invoke-CimMethod {
     $state = Get-Content -LiteralPath $fixture.ScmFile -Raw | ConvertFrom-Json
     if ($Arguments.StartMode -eq 'Disabled') {
         $marker = Get-Content -LiteralPath $fixture.Paths.ServiceStartModePending -Raw | ConvertFrom-Json
-        $original = if ($state.Mode -eq 'Auto') { 'Automatic' } else { 'Manual' }
+        $original = if ($state.Mode -eq 'Auto' -or $fixture.RecoveryInProgress) { 'Automatic' } else { 'Manual' }
         if ($marker.Service -ne 'MinhDuc' -or $marker.StartMode -ne $original -or $marker.DelayedAutoStart -ne $state.Delayed -or
             $marker.Script -ne $SourceScript -or -not $marker.CreatedAt) { throw 'Chưa ghi đủ dấu trước khi khóa dịch vụ.' }
         $state.Mode = 'Disabled'
@@ -93,6 +105,13 @@ function Write-Dat($Text) { Write-Host $Text }
 if ($InterruptIn) {
     $fixture.Paths = Get-MinhDucPaths -Data $InterruptIn
     $fixture.ScmFile = Join-Path $InterruptIn 'scm.json'
+    if ($AfterDataChange) {
+        $fixture.Tasks = @{ daily = $true; 'daily - Chay bu' = $false }
+        $window = Enter-MinhDucMaintenanceWindow -Name MinhDuc -Paths $fixture.Paths -ScriptName 'CapNhat.ps1' -GuardHttps
+        Suspend-MinhDucMaintenanceWindow -Window $window
+        Set-MinhDucUpdatePhase -Window $window -Phase da_doi_du_lieu
+        [Diagnostics.Process]::GetCurrentProcess().Kill()
+    }
     Invoke-WithMinhDucServiceStartupDisabled -Name MinhDuc -Paths $fixture.Paths -ScriptName $SourceScript -Action {
         [Diagnostics.Process]::GetCurrentProcess().Kill()
     }
@@ -120,8 +139,8 @@ function Run-Check {
 try {
     $engine = (Get-Process -Id $PID).Path
     foreach ($scenario in @(
-        @{ Mode = 'Auto'; Delayed = $true; Script = 'CapNhat.ps1' },
-        @{ Mode = 'Manual'; Delayed = $false; Script = 'GiaHanChungChi.ps1' }
+        @{ Mode = 'Auto'; Delayed = $true; Script = 'CapNhat.ps1'; Legacy = $true },
+        @{ Mode = 'Manual'; Delayed = $false; Script = 'GiaHanChungChi.ps1'; Legacy = $false }
     )) {
         @{ Mode = $scenario.Mode; Delayed = $scenario.Delayed } | ConvertTo-Json | Set-Content -LiteralPath $fixture.ScmFile -Encoding UTF8
         # Child dies inside the guard, so PowerShell cannot execute finally.
@@ -130,6 +149,11 @@ try {
         if (-not $worker.WaitForExit(15000)) { $worker.Kill(); throw 'Tiến trình kiểm thử chưa thoát.' }
         if ($worker.ExitCode -eq 0 -or -not (Test-Path -LiteralPath $pending) -or (Get-Service).StartType -ne 'Disabled') {
             throw 'Chưa mô phỏng được tiến trình bị ngắt khi dịch vụ đang Disabled.'
+        }
+        if ($scenario.Legacy) {
+            $legacy = Get-Content -LiteralPath $pending -Raw | ConvertFrom-Json
+            $legacy.PSObject.Properties.Remove('Phase')
+            Write-MinhDucServiceStartModeMarker $pending $legacy -Replace
         }
         Run-Check
         $state = Get-Content -LiteralPath $fixture.ScmFile -Raw | ConvertFrom-Json
@@ -198,5 +222,51 @@ try {
     if ($script:CheckExit -ne 2 -or $script:CheckReport -notmatch '\[ĐẠT\] Dịch vụ web.*Đã trả' -or
         $state.Mode -ne 'Auto' -or -not $state.Delayed -or -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu'] -or
         $fixture.Firewall -or (Test-Path -LiteralPath $pending)) { throw 'Chưa trả đủ bảo trì, hoặc lỗi ghi nhật ký làm kẹt tệp đánh dấu.' }
-    Write-Output 'PASS: service startup recovery'
+    $fixture.Tasks = @{ daily = $false; 'daily - Chay bu' = $false }
+    $fixture.Firewall = $true
+    @{ Mode = 'Auto'; Delayed = $true } | ConvertTo-Json | Set-Content -LiteralPath $fixture.ScmFile -Encoding UTF8
+    $worker = Start-Process -FilePath $engine -ArgumentList @('-NoProfile', '-File', ('"' + $PSCommandPath + '"'),
+        '-InterruptIn', ('"' + $root + '"'), '-AfterDataChange') -PassThru
+    if (-not $worker.WaitForExit(15000)) { $worker.Kill(); throw 'Tiến trình kiểm thử chưa thoát.' }
+    $marker = Read-MinhDucServiceStartModeMarker MinhDuc $fixture.Paths
+    if ($worker.ExitCode -eq 0 -or $marker.Phase -ne 'da_doi_du_lieu' -or $marker.Status -ne 'dang_bao_tri' -or
+        (Get-Service).StartType -ne 'Disabled') { throw 'Thiếu dấu gián đoạn sau khi đã đổi dữ liệu.' }
+    $markerHash = (Get-FileHash -LiteralPath $pending).Hash
+    $scmHash = (Get-FileHash -LiteralPath $fixture.ScmFile).Hash
+    Run-Check
+    if ($script:CheckExit -ne 1 -or $script:CheckReport -notmatch '\[KHÔNG ĐẠT\].*Cập nhật bị ngắt sau khi đã thay dữ liệu.*KHÔNG dùng phần mềm.*người hỗ trợ' -or
+        (Get-FileHash -LiteralPath $pending).Hash -ne $markerHash -or (Get-FileHash -LiteralPath $fixture.ScmFile).Hash -ne $scmHash -or
+        $fixture.Tasks.Values -contains $true -or -not $fixture.Firewall) { throw 'KIEM_TRA đã đổi cấu hình khi dữ liệu chưa được xác nhận.' }
+
+    # Gián đoạn ngay sau khi SCM đã chuyển Manual trong Start-Service.
+    @{ Mode = 'Manual'; Delayed = $true } | ConvertTo-Json | Set-Content -LiteralPath $fixture.ScmFile -Encoding UTF8
+    $fixture.RecoveryInProgress = $true
+    Run-Check
+    $fixture.RecoveryInProgress = $false
+    if ($script:CheckExit -ne 1 -or (Get-Service).StartType -ne 'Disabled' -or
+        (Get-FileHash -LiteralPath $pending).Hash -ne $markerHash -or $fixture.Tasks.Values -contains $true -or -not $fixture.Firewall) {
+        throw 'KIEM_TRA không khóa lại được Manual sau gián đoạn khi bật web.'
+    }
+    $scmHash = (Get-FileHash -LiteralPath $fixture.ScmFile).Hash
+
+    $window = @{ Name = 'MinhDuc'; Paths = $fixture.Paths; FirewallReady = $true }
+    Set-MinhDucUpdatePhase -Window $window -Phase da_chot
+    $markerHash = (Get-FileHash -LiteralPath $pending).Hash
+    $fixture.RequireStartupLast = $true
+    foreach ($fault in 'FailTasks', 'FailFirewall') {
+        $fixture[$fault] = $true
+        Run-Check
+        $expected = if ($fault -eq 'FailTasks') { 'lịch sao lưu' } else { 'tường lửa' }
+        if ($script:CheckExit -ne 1 -or $script:CheckReport -notmatch $expected -or
+            (Get-FileHash -LiteralPath $pending).Hash -ne $markerHash -or (Get-FileHash -LiteralPath $fixture.ScmFile).Hash -ne $scmHash -or
+            -not $fixture.Firewall -or $fixture.Tasks.daily -ne ($fault -eq 'FailFirewall') -or $fixture.Tasks['daily - Chay bu']) {
+            throw "Lỗi $fault không được phép trả startup hoặc xóa dấu."
+        }
+        $fixture[$fault] = $false
+    }
+    Run-Check
+    if ($script:CheckExit -ne 2 -or (Get-Service).StartType -ne 'Automatic' -or -not (Get-MinhDucDelayedAutoStart MinhDuc) -or
+        $fixture.Firewall -or -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu'] -or
+        (Test-Path -LiteralPath $pending)) { throw 'KIEM_TRA chưa trả đủ cấu hình sau khi đã chốt.' }
+    Write-Output 'PASS: service startup recovery; data change holds maintenance; committed release retries tasks then firewall then startup'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }
