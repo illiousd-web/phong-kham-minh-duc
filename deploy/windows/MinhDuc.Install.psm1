@@ -416,6 +416,51 @@ function New-ServiceXml {
 "@
 }
 
+function Set-RecoveryServiceStartMode($Service, [string]$Mode) {
+    # ChangeStartMode leaves DelayedAutoStart and SCM failure actions intact.
+    $result = Invoke-CimMethod -InputObject $Service -MethodName ChangeStartMode -Arguments @{ StartMode = $Mode } -ErrorAction Stop
+    if ($result.ReturnValue -ne 0) { throw ('Không đổi được chế độ khởi động dịch vụ sang ' + $Mode + ', mã ' + $result.ReturnValue) }
+}
+
+function Restart-MinhDucService {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)]$Paths
+    )
+    $service = Get-Service -Name $Name -ErrorAction Stop
+    $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Name + "'") -ErrorAction Stop
+    $startupModes = @{ Auto = 'Automatic'; Manual = 'Manual' }
+    if (-not $config -or -not $startupModes.ContainsKey([string]$config.StartMode)) {
+        throw 'Dịch vụ web đang bị vô hiệu hóa hoặc không xác định được chế độ khởi động.'
+    }
+    $startupMode = $startupModes[$config.StartMode]
+    try {
+        # Chặn SCM chạy lại WinSW trong khi đang chờ tiến trình cũ thoát.
+        Set-RecoveryServiceStartMode $config 'Disabled'
+        $service.Refresh()
+        if ($service.Status -notin @('Stopped', 'StopPending')) {
+            try {
+                Stop-Service -InputObject $service -NoWait -ErrorAction Stop
+            } catch {
+                $service.Refresh()
+                if ($service.Status -notin @('Stopped', 'StopPending')) { throw }
+            }
+        }
+        $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
+        Wait-MinhDucVenvPythonExit -Venv $Paths.Venv -ClinicEnv $Paths.ClinicEnv
+    } finally {
+        Set-RecoveryServiceStartMode $config $startupMode
+    }
+    try {
+        # Start-Service báo cảnh báo khi còn StartPending. Chuyển sang chờ có thời hạn.
+        Start-Service -InputObject $service -WarningAction Stop -ErrorAction Stop
+    } catch [Management.Automation.ActionPreferenceStopException] {
+        $service.Refresh()
+        if ($service.Status -notin @('StartPending', 'Running')) { throw }
+    }
+    $service.WaitForStatus('Running', (New-TimeSpan -Seconds 30))
+}
+
 function Show-ServiceDiagnostics {
     # In vài dòng cuối nhật ký dịch vụ để người hỗ trợ đọc (nhật ký không ghi mật khẩu).
     param([Parameter(Mandatory = $true)]$Paths)
@@ -908,7 +953,9 @@ function Wait-MinhDucVenvPythonExit {
     if ($outside.Count) {
         $message = 'Phát hiện tiến trình ngoài phạm vi được phép dừng; PID=' + ($outside.ProcessId -join ',') + '; dừng phục hồi.'
         if ($LogLockDiagnostics) { Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context $message -ObservedProcesses $outside }
-        throw $message
+        $failure = [InvalidOperationException]::new($message)
+        $failure.Data['MinhDucExternalProcess'] = $true
+        throw $failure
     }
     $unverified = @()
     $logged = $false
@@ -955,7 +1002,9 @@ function Wait-MinhDucVenvPythonExit {
         if ($LogLockDiagnostics) {
             Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context 'Còn tiến trình giữ môi trường Python hoặc chưa xác minh được.' -ObservedProcesses @($unverified + $left)
         }
-        throw 'Còn tiến trình đang giữ môi trường phòng khám; dừng phục hồi.'
+        $failure = [InvalidOperationException]::new('Còn tiến trình đang giữ môi trường phòng khám; dừng phục hồi.')
+        if ($left | Where-Object { -not $_.CanStop }) { $failure.Data['MinhDucExternalProcess'] = $true }
+        throw $failure
     }
     Start-Sleep -Seconds 2
     $left = @(Get-MinhDucVenvProcessTree @scan)
@@ -963,7 +1012,9 @@ function Wait-MinhDucVenvPythonExit {
         if ($LogLockDiagnostics) {
             Write-MinhDucVenvLockDiagnostics -Venv $Venv -Context 'Có tiến trình xuất hiện lại sau lần quét rỗng.' -ObservedProcesses $left
         }
-        throw 'Có tiến trình xuất hiện lại sau lần quét rỗng; dừng phục hồi.'
+        $failure = [InvalidOperationException]::new('Có tiến trình xuất hiện lại sau lần quét rỗng; dừng phục hồi.')
+        if ($left | Where-Object { -not $_.CanStop }) { $failure.Data['MinhDucExternalProcess'] = $true }
+        throw $failure
     }
 }
 

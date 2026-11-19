@@ -71,7 +71,7 @@ $module = Join-Path $PSScriptRoot '../deploy/windows/MinhDuc.Install.psm1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($module, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in 'Get-MinhDucVenvProcessTree', 'Wait-MinhDucVenvPythonExit') {
+foreach ($name in 'Get-MinhDucVenvProcessTree', 'Wait-MinhDucVenvPythonExit', 'Set-RecoveryServiceStartMode') {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
