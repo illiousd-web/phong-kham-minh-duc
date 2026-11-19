@@ -505,7 +505,13 @@ function Read-MinhDucServiceStartModeMarker([string]$Name, $Paths) {
         }
     }
     if ('Phase' -cnotin $marker.PSObject.Properties.Name) {
-        $marker | Add-Member -NotePropertyName Phase -NotePropertyValue 'chua_doi_du_lieu'
+        # Bản cũ chỉ ghi dấu CapNhat khi quay về sau khi đã thay mã hoặc dữ liệu.
+        $phase = if ($marker.Script -eq 'CapNhat.ps1') { 'da_doi_du_lieu' } else { 'chua_doi_du_lieu' }
+        $marker | Add-Member -NotePropertyName Phase -NotePropertyValue $phase
+        if ($phase -eq 'da_doi_du_lieu' -and $present.Count -and $marker.Status -eq 'da_quay_ve') {
+            # Chỉ tin xác nhận quay về của định dạng có Phase.
+            $marker.Status = 'dang_bao_tri'
+        }
     } elseif ($marker.Phase -isnot [string] -or $marker.Phase -cnotin @('chua_doi_du_lieu', 'da_doi_du_lieu', 'da_chot') -or
         ($marker.Phase -ne 'chua_doi_du_lieu' -and ($present.Count -eq 0 -or $marker.Script -ne 'CapNhat.ps1' -or -not $marker.FirewallRule))) {
         throw $invalid
@@ -541,10 +547,10 @@ function Restore-MinhDucServiceStartMode {
     $marker = Read-MinhDucServiceStartModeMarker $Name $Paths
     if (-not $marker) { return }
     $extended = 'Status' -cin $marker.PSObject.Properties.Name
-    if (-not $VerifiedRollback -and $extended) {
-        $blocked = if ($marker.Status -eq 'quay_ve_that_bai') {
+    if (-not $VerifiedRollback) {
+        $blocked = if ($extended -and $marker.Status -eq 'quay_ve_that_bai') {
             'Quay về bản cũ chưa đạt (quay_ve_that_bai). Giữ khóa truy cập phần mềm.'
-        } elseif ($marker.Phase -eq 'da_doi_du_lieu' -and $marker.Status -ne 'da_quay_ve') {
+        } elseif ($marker.Phase -eq 'da_doi_du_lieu' -and (-not $extended -or $marker.Status -ne 'da_quay_ve')) {
             'Cập nhật bị ngắt sau khi đã thay dữ liệu.'
         }
         if ($blocked) {
@@ -560,7 +566,11 @@ function Restore-MinhDucServiceStartMode {
 
     $step = 'Trả và kiểm lại lịch sao lưu'
     try {
-        if ($extended) {
+        if ($VerifiedRollback) {
+            # HTTPS bản cũ đã đạt. Đăng ký từ XML gốc để trả cả cách Task Scheduler
+            # biểu diễn các tùy chọn mặc định, rồi kiểm lại chữ ký đầy đủ.
+            Restore-MinhDucBackupTasks -Snapshot $BackupTaskSnapshot -RequireBoth
+        } elseif ($extended) {
             $tasks = @(Get-MinhDucBackupTaskSnapshot)
             foreach ($saved in $marker.TaskEnabled.PSObject.Properties) {
                 if ($saved.Name -cnotin @($tasks | ForEach-Object { $_.Name })) {
@@ -579,13 +589,10 @@ function Restore-MinhDucServiceStartMode {
                 }
             }
         }
-        if ($VerifiedRollback) {
-            Assert-MinhDucBackupTaskSnapshot -Snapshot $BackupTaskSnapshot -RequireBoth
-            if ($extended) {
-                $step = 'Ghi xác nhận đã quay về bản cũ'
-                $marker.Status = 'da_quay_ve'
-                Write-MinhDucServiceStartModeMarker $Paths.ServiceStartModePending $marker -Replace
-            }
+        if ($VerifiedRollback -and $extended) {
+            $step = 'Ghi xác nhận đã quay về bản cũ'
+            $marker.Status = 'da_quay_ve'
+            Write-MinhDucServiceStartModeMarker $Paths.ServiceStartModePending $marker -Replace
         }
         $step = 'Gỡ và kiểm lại tường lửa bảo trì'
         if ($extended -and $marker.FirewallRule) { Remove-MinhDucMaintenanceFirewall $marker.FirewallRule }
@@ -682,7 +689,7 @@ function Enter-MinhDucMaintenanceWindow {
         return @{
             Lock = $lock; Name = $Name; Paths = $Paths; ScriptName = $ScriptName
             ServiceConfig = $null; RestoreStartup = $false; TasksSuspended = $false; TaskEnabled = @{}
-            GuardHttps = [bool]$GuardHttps; FirewallReady = $false
+            GuardHttps = [bool]$GuardHttps; FirewallReady = $false; SuspendedBackupTasks = $null
         }
     } catch {
         $lock.Dispose()
@@ -695,7 +702,7 @@ function Suspend-MinhDucMaintenanceWindow {
     if (-not $Window.TasksSuspended) {
         foreach ($task in @(Get-MinhDucBackupTaskSnapshot)) {
             if (-not $Window.TaskEnabled.ContainsKey($task.Name)) {
-                $Window.TaskEnabled[$task.Name] = [bool](Get-MinhDucScheduledTask -Name $task.Name).Settings.Enabled
+                $Window.TaskEnabled[$task.Name] = $task.Enabled
             }
         }
     }
@@ -712,6 +719,15 @@ function Suspend-MinhDucMaintenanceWindow {
     }
     $Window.TasksSuspended = $true
     Suspend-MinhDucBackupTasks -WaitForIdle
+    if ($Window.GuardHttps -and $null -eq $Window.SuspendedBackupTasks) {
+        # Lưu XML Disabled do Task Scheduler xuất, kể cả thứ tự và tùy chọn mặc định.
+        $snapshot = @(Get-MinhDucBackupTaskSnapshot)
+        if ($snapshot.Count -ne $Window.TaskEnabled.Count -or
+            @($snapshot | Where-Object { $_.Enabled -or -not $Window.TaskEnabled.ContainsKey($_.Name) }).Count) {
+            throw 'Lịch sao lưu tạm dừng không khớp danh sách ban đầu.'
+        }
+        $Window.SuspendedBackupTasks = $snapshot
+    }
 }
 
 function Start-MinhDucMaintenanceService {
@@ -782,6 +798,7 @@ function Resume-MinhDucMaintenanceWindow {
         $Window.ServiceConfig = $null
         $Window.TasksSuspended = $false
         $Window.TaskEnabled.Clear()
+        $Window.SuspendedBackupTasks = $null
     }
 }
 
@@ -1088,7 +1105,13 @@ function Get-MinhDucScheduledTask {
 function Get-MinhDucBackupTaskSnapshot {
     foreach ($name in @($script:Names.BackupTask, ($script:Names.BackupTask + ' - Chay bu'))) {
         $task = Get-MinhDucScheduledTask -Name $name
-        if ($task) { [pscustomobject]@{ Name = $name; Xml = (Export-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop) } }
+        if ($task) {
+            [pscustomobject]@{
+                Name = $name
+                Enabled = [bool]$task.Settings.Enabled
+                Xml = Export-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+            }
+        }
     }
 }
 
@@ -1101,6 +1124,7 @@ function ConvertTo-MinhDucDisabledTaskXml([string]$Xml) {
     [xml]$document = $Xml
     $settings = $document.Task.Settings
     $enabled = $settings.SelectSingleNode("*[local-name()='Enabled']")
+    if ($enabled -and $enabled.InnerText -in @('false', '0')) { return $Xml }
     if (-not $enabled) {
         $enabled = $document.CreateElement('Enabled', $settings.NamespaceURI)
         [void]$settings.AppendChild($enabled)
@@ -1110,7 +1134,10 @@ function ConvertTo-MinhDucDisabledTaskXml([string]$Xml) {
 }
 
 function Restore-MinhDucBackupTasks {
-    param([AllowEmptyCollection()][object[]]$Snapshot = @(), [switch]$Disabled)
+    param([AllowEmptyCollection()][object[]]$Snapshot = @(), [switch]$Disabled, [switch]$RequireBoth)
+    if ($RequireBoth -and ($Snapshot.Count -notin @(1,2) -or @($Snapshot | Where-Object { $_.Name -eq $script:Names.BackupTask }).Count -ne 1)) {
+        throw 'Snapshot lịch ban đầu không hợp lệ trước khi đăng ký lại.'
+    }
     if ($Disabled) {
         $Snapshot = @(foreach ($old in $Snapshot) {
             [pscustomobject]@{ Name = $old.Name; Xml = (ConvertTo-MinhDucDisabledTaskXml $old.Xml) }
@@ -1125,10 +1152,15 @@ function Restore-MinhDucBackupTasks {
         foreach ($old in $Snapshot) {
             try {
                 if (-not $Disabled -and (Get-MinhDucScheduledTask -Name $old.Name)) {
-                    Enable-ScheduledTask -TaskName $old.Name -TaskPath '\' -ErrorAction Stop | Out-Null
+                    $enabled = ([xml]$old.Xml).Task.Settings.SelectSingleNode("*[local-name()='Enabled']")
+                    if ($enabled -and $enabled.InnerText -in @('false', '0')) {
+                        Disable-ScheduledTask -TaskName $old.Name -TaskPath '\' -ErrorAction Stop | Out-Null
+                    } else {
+                        Enable-ScheduledTask -TaskName $old.Name -TaskPath '\' -ErrorAction Stop | Out-Null
+                    }
                 }
             } catch {
-                Write-Loi ('Không bật lại được lịch sao lưu ' + $old.Name + ': ' + $_.Exception.Message)
+                Write-Loi ('Không trả được trạng thái lịch sao lưu ' + $old.Name + ': ' + $_.Exception.Message)
             }
         }
         throw $originalFailure
@@ -1139,7 +1171,7 @@ function Restore-MinhDucBackupTasks {
             Unregister-ScheduledTask -TaskName $current.Name -TaskPath '\' -Confirm:$false -ErrorAction Stop
         }
     }
-    Assert-MinhDucBackupTaskSnapshot -Snapshot $Snapshot -Disabled:$Disabled
+    Assert-MinhDucBackupTaskSnapshot -Snapshot $Snapshot -Disabled:$Disabled -RequireBoth:$RequireBoth
 }
 
 function Assert-MinhDucBackupTaskSnapshot {

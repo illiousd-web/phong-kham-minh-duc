@@ -19,7 +19,7 @@ foreach ($name in @('Set-RecoveryServiceStartMode', 'Open-MinhDucServiceStartMod
 
 function Get-MinhDucNames { return @{ Service = 'MinhDuc'; BackupTask = 'daily'; FirewallMaintenance = 'fake HTTPS rule' } }
 function Get-MinhDucBackupTaskSnapshot {
-    foreach ($name in $fixture.Tasks.Keys) { @{ Name = $name } }
+    foreach ($name in $fixture.Tasks.Keys) { @{ Name = $name; Enabled = $fixture.Tasks[$name] } }
 }
 function Get-MinhDucScheduledTask { param($Name) @{ Settings = @{ Enabled = $fixture.Tasks[$Name] } } }
 function Enable-ScheduledTask {
@@ -139,8 +139,8 @@ function Run-Check {
 try {
     $engine = (Get-Process -Id $PID).Path
     foreach ($scenario in @(
-        @{ Mode = 'Auto'; Delayed = $true; Script = 'CapNhat.ps1'; Legacy = $true },
-        @{ Mode = 'Manual'; Delayed = $false; Script = 'GiaHanChungChi.ps1'; Legacy = $false }
+        @{ Mode = 'Auto'; Delayed = $true; Script = 'CapNhat.ps1'; Legacy = $false },
+        @{ Mode = 'Manual'; Delayed = $false; Script = 'GiaHanChungChi.ps1'; Legacy = $true }
     )) {
         @{ Mode = $scenario.Mode; Delayed = $scenario.Delayed } | ConvertTo-Json | Set-Content -LiteralPath $fixture.ScmFile -Encoding UTF8
         # Child dies inside the guard, so PowerShell cannot execute finally.
@@ -154,6 +154,9 @@ try {
             $legacy = Get-Content -LiteralPath $pending -Raw | ConvertFrom-Json
             $legacy.PSObject.Properties.Remove('Phase')
             Write-MinhDucServiceStartModeMarker $pending $legacy -Replace
+            if ((Read-MinhDucServiceStartModeMarker MinhDuc $fixture.Paths).Phase -ne 'chua_doi_du_lieu') {
+                throw 'Dấu gia hạn cũ phải được nhận là chưa đổi dữ liệu.'
+            }
         }
         Run-Check
         $state = Get-Content -LiteralPath $fixture.ScmFile -Raw | ConvertFrom-Json
@@ -190,7 +193,37 @@ try {
             (Get-FileHash -LiteralPath $pending).Hash -ne $markerHash) { throw 'KIEM_TRA đã sửa dịch vụ hoặc dấu không hợp lệ.' }
     }
 
-    Set-Content -LiteralPath $pending -Value '{"Service":"MinhDuc","StartMode":"Manual","DelayedAutoStart":false,"CreatedAt":"19/11/2026 00:00:00 UTC+7","Script":"CapNhat.ps1"}' -Encoding UTF8
+    $legacy = [ordered]@{
+        Service = 'MinhDuc'; StartMode = 'Manual'; DelayedAutoStart = $false; CreatedAt = '19/11/2026 00:00:00 UTC+7'
+    }
+    foreach ($legacyScript in @('CapNhat.ps1', '', 'Khac.ps1')) {
+        if ($legacyScript) { $legacy.Script = $legacyScript } else { $legacy.Remove('Script') }
+        Write-MinhDucServiceStartModeMarker $pending $legacy -Replace
+        $markerHash = (Get-FileHash -LiteralPath $pending).Hash
+        $expectedError = 'hỏng hoặc thiếu thông tin'
+        if ($legacyScript -eq 'CapNhat.ps1') {
+            if ((Read-MinhDucServiceStartModeMarker MinhDuc $fixture.Paths).Phase -ne 'da_doi_du_lieu') {
+                throw 'Dấu cập nhật cũ phải được nhận là đã đổi dữ liệu.'
+            }
+            $expectedError = 'Cập nhật bị ngắt sau khi đã thay dữ liệu'
+        }
+        Run-Check
+        if ($script:CheckExit -ne 1 -or $script:CheckReport -notmatch ("\[KHÔNG ĐẠT\].*" + $expectedError) -or
+            (Get-FileHash -LiteralPath $fixture.ScmFile).Hash -ne $before.Hash -or
+            (Get-FileHash -LiteralPath $pending).Hash -ne $markerHash) { throw "KIEM_TRA đã mở khóa với dấu cũ ($legacyScript)." }
+    }
+    $legacy.Script = 'CapNhat.ps1'
+    $legacy.Status = 'da_quay_ve'
+    $legacy.TaskEnabled = @{ daily = $true }
+    $legacy.FirewallRule = 'fake HTTPS rule'
+    Write-MinhDucServiceStartModeMarker $pending $legacy -Replace
+    $markerHash = (Get-FileHash -LiteralPath $pending).Hash
+    Run-Check
+    if ($script:CheckExit -ne 1 -or $script:CheckReport -notmatch 'Cập nhật bị ngắt sau khi đã thay dữ liệu' -or
+        (Get-FileHash -LiteralPath $fixture.ScmFile).Hash -ne $before.Hash -or
+        (Get-FileHash -LiteralPath $pending).Hash -ne $markerHash) { throw 'Dấu cập nhật thiếu Phase đã được mở tự động.' }
+
+    Set-Content -LiteralPath $pending -Value '{"Service":"MinhDuc","StartMode":"Manual","DelayedAutoStart":false,"CreatedAt":"19/11/2026 00:00:00 UTC+7","Script":"CapNhat.ps1","Phase":"chua_doi_du_lieu"}' -Encoding UTF8
     $fixture.IgnoreScmChange = $true
     Run-Check
     if ($script:CheckExit -ne 1 -or $script:CheckReport -notmatch 'Kiểm lại chế độ khởi động.*chưa đạt' -or
@@ -202,7 +235,7 @@ try {
     $marker = [ordered]@{
         Service = 'MinhDuc'; StartMode = 'Automatic'; DelayedAutoStart = $true
         CreatedAt = '19/11/2026 00:00:00 UTC+7'; Script = 'CapNhat.ps1'
-        Status = 'quay_ve_that_bai'; TaskEnabled = @{ daily = $true; 'daily - Chay bu' = $false }; FirewallRule = 'fake HTTPS rule'
+        Phase = 'chua_doi_du_lieu'; Status = 'quay_ve_that_bai'; TaskEnabled = @{ daily = $true; 'daily - Chay bu' = $false }; FirewallRule = 'fake HTTPS rule'
     }
     Write-MinhDucServiceStartModeMarker $pending $marker -Replace
     $markerHash = (Get-FileHash -LiteralPath $pending).Hash

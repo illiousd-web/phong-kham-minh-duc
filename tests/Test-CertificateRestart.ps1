@@ -20,7 +20,7 @@ function Get-MinhDucPaths {
     @{ Tls = $Data; Venv = $Code; Journal = $Data; MaintenanceLockBase = (Join-Path $Data 'service-startmode-pending.json'); ServiceStartModePending = (Join-Path $Data 'service-startmode-pending.json'); CaKey = (Join-Path $Data 'ca.key'); ClinicEnv = (Join-Path $Data 'clinic.env') }
 }
 function Get-MinhDucBackupTaskSnapshot {
-    foreach ($name in $test.tasks.Keys) { @{ Name = $name } }
+    foreach ($name in $test.tasks.Keys) { @{ Name = $name; Enabled = $test.tasks[$name] } }
 }
 function Get-MinhDucScheduledTask { param($Name) @{ Settings = @{ Enabled = $test.tasks[$Name] } } }
 function Suspend-MinhDucBackupTasks {
@@ -39,6 +39,14 @@ function Write-Dat($Text) {}
 function Write-Luu($Text) {}
 function Write-Loi($Text) {}
 function Write-Thongtin($Text) {}
+
+$exitWindow = ${function:Exit-MinhDucMaintenanceWindow}
+function Exit-MinhDucMaintenanceWindow {
+    param($Window)
+    $test.resultBeforeExit = Test-Path -LiteralPath $test.resultFile
+    & $exitWindow -Window $Window
+    if ($test.case.ExitFault) { throw 'Lỗi trả cấu hình giả lập' }
+}
 
 function Invoke-Python {
     param($Paths, $Arguments, [switch]$Quiet, $OkCodes)
@@ -154,6 +162,9 @@ try {
         @{ Name = 'twice'; State = 'hong'; FailStarts = 2; Exit = 51; Result = 'khoi_phuc_that_bai'; Steps = 'verify,commit,start:new,start:new,rollback,start:hong' }
         @{ Name = 'commit'; State = 'hong'; BadCommit = $true; FailStarts = 0; Exit = 51; Result = 'khoi_phuc_that_bai'; Steps = 'verify,commit,rollback,start:hong' }
         @{ Name = 'outside'; State = 'hong'; Outside = $true; Exit = 51; Result = 'khoi_phuc_that_bai'; Steps = 'verify,commit' }
+        @{ Name = 'cleanup-after-https'; State = 'ok'; ExitFault = $true; Exit = 8; Result = 'thanh_cong_can_kiem_tra'; Served = 'new'; Steps = 'verify,commit,start:new'; Detail = 'hạn mới' }
+        @{ Name = 'cleanup-after-50'; State = 'ok'; FailStarts = 1; ExitFault = $true; Exit = 50; Result = 'da_tra_chung_chi_cu'; Served = 'old'; Steps = 'verify,commit,start:new,rollback,start:old'; Detail = 'Start-Service failed' }
+        @{ Name = 'cleanup-after-51'; State = 'hong'; BadCommit = $true; ExitFault = $true; Exit = 51; Result = 'khoi_phuc_that_bai'; Steps = 'verify,commit,rollback,start:hong'; Detail = 'Lỗi thay tệp giả lập' }
     )
     foreach ($case in $cases) {
         $test = @{ case = $case }
@@ -161,6 +172,7 @@ try {
         New-Item -ItemType Directory -Path $data | Out-Null
         foreach ($file in @('ca.crt', 'ca.key', 'clinic.env')) { New-Item -ItemType File -Path (Join-Path $data $file) | Out-Null }
         $test.cert = Join-Path $data 'server.crt'
+        $test.resultFile = Join-Path $data 'ket-qua-gia-han.json'
         $test.old = if ($case.State -eq 'hong') { 'hong' } else { 'old' }
         if ($case.State -ne 'missing') { Set-Content -LiteralPath $test.cert -Value $test.old }
         $test.served = 'old'
@@ -180,6 +192,10 @@ try {
             throw ("Sai kết quả $($case.Name): $exitCode / $($result.status), HTTPS=$test.served, startup=$test.startup, bước=$test.steps")
         }
         if ($test.tasks.Values -contains $false) { throw 'Lịch sao lưu còn Disabled sau gia hạn.' }
+        if ($test.resultBeforeExit) { throw "Đã ghi kết quả trước khi trả cấu hình ở ca $($case.Name)." }
+        if ($case.ExitFault -and ($result.detail -notlike "*$($case.Detail)*" -or $result.detail -notlike '*Lỗi trả cấu hình giả lập*')) {
+            throw "Kết quả $($case.Name) thiếu chi tiết gốc hoặc lỗi trả cấu hình."
+        }
     }
     Write-Output 'PASS: certificate restart'
 } finally {

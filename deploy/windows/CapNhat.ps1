@@ -67,12 +67,16 @@ function Add-UpdateWarning([string]$Message) {
 }
 
 function Save-InitialBackupTaskSnapshot {
+    param($Window)
     if ($State.backup_tasks_captured) { return }
     $snapshot = @(Get-MinhDucBackupTaskSnapshot)
     if ($snapshot.Count -notin @(1,2) -or @($snapshot | Where-Object { $_.Name -eq $Names.BackupTask }).Count -ne 1) {
         throw 'Lịch sao lưu ban đầu không hợp lệ: cần lịch hằng ngày cũ hoặc đủ hai lịch mới.'
     }
     $State.backup_task_snapshot = $snapshot
+    if ($Window) {
+        foreach ($task in $snapshot) { $Window.TaskEnabled[$task.Name] = $task.Enabled }
+    }
     $State.backup_tasks_captured = $true
 }
 
@@ -162,7 +166,11 @@ function Invoke-QuayVe {
             }
         }
         $recovery.Tasks = Invoke-RecoveryStep 'Khôi phục lịch sao lưu cũ' {
-            if ($State.backup_tasks_changed) { Restore-MinhDucBackupTasks -Snapshot $State.backup_task_snapshot -Disabled }
+            if ($State.backup_tasks_changed) {
+                $snapshot = $State.backup_task_snapshot
+                if ($null -ne $Window.SuspendedBackupTasks) { $snapshot = $Window.SuspendedBackupTasks }
+                Restore-MinhDucBackupTasks -Snapshot $snapshot -Disabled
+            }
         }
     }
     $startupRestored = $true
@@ -218,7 +226,7 @@ try {
     Set-SecureAcl -Path $P.Updates -Directory
     Start-Transcript -Path (Join-Path $P.Journal ('cap-nhat-' + $Stamp + '.log')) -ErrorAction Stop | Out-Null
     $transcript = $true
-    Save-InitialBackupTaskSnapshot
+    Save-InitialBackupTaskSnapshot -Window $window
     Write-Host 'CẬP NHẬT PHẦN MỀM PHÒNG KHÁM ĐA KHOA MINH ĐỨC' -ForegroundColor Cyan
 
     Write-Buoc 'Bước 1/8: Chọn tệp cập nhật (.zip)'

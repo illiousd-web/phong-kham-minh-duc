@@ -246,6 +246,7 @@ try {
     foreach ($case in @('StopError', 'BackupError', 'MissingVerification', 'FingerprintError', 'BeforeMigration', 'DataOnlyMigration', 'BadRestoredFingerprint', 'WriteBeforeStart', 'HealthError', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError', 'FirewallResumeError')) {
         $homeForCase = Join-Path $root $case
         $scenario = @{ Service = 'Running'; Startup = 'Auto'; Tasks = @('Enabled', 'Enabled'); Row = 'ban đầu'; Attachment = 'ban đầu'; Fingerprint = 'baseline'; Calls = [Collections.Generic.List[string]]::new() }
+        $enabledBefore = $scenario.Tasks -join ','
         $P = @{
             Code = (Join-Path $homeForCase 'live'); Venv = (Join-Path $homeForCase 'live/.venv')
             VenvPython = (Join-Path $homeForCase 'live/.venv/Scripts/python.exe'); BasePython = 'base-python'
@@ -295,6 +296,7 @@ try {
                 throw "Cấu hình bảo trì chưa được trả sau ca $case."
             }
             if ($scenario.Firewall -or $scenario.Marker) { throw 'Còn quy tắc hoặc dấu bảo trì sau khi đã xác nhận HTTPS.' }
+            if (($scenario.Tasks -join ',') -ne $enabledBefore) { throw "Sai trạng thái từng lịch trước và sau ca $case." }
         }
         if ($case -ne 'StopError' -and -not $scenario.BackupGuarded) { throw 'Chưa kiểm được trạng thái dịch vụ và lịch tại bước sao lưu.' }
         if ($case -eq 'WriteAfterHttpsTwice') {

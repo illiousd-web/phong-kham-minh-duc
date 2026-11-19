@@ -12,6 +12,11 @@ if ($Mode -eq 'Database') {
 $serviceKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\' + $names.Service
 $startupBefore = Get-ItemProperty -LiteralPath $serviceKey
 $backupTasksBefore = @(Get-MinhDucBackupTaskSnapshot)
+try {
+    Suspend-MinhDucBackupTasks -WaitForIdle
+    $backupTasksBeforeDisabled = @(Get-MinhDucBackupTaskSnapshot)
+    Assert-MinhDucBackupTaskSnapshot -Snapshot $backupTasksBeforeDisabled -Disabled -RequireBoth
+} finally { Restore-MinhDucBackupTasks -Snapshot $backupTasksBefore -RequireBoth }
 $files = @((Join-Path $paths.Code 'scripts\install_db.py'), (Join-Path $paths.Code 'app\main.py'))
 $original = @{}
 foreach ($file in $files) { $original[$file] = [IO.File]::ReadAllBytes($file) }
@@ -90,10 +95,11 @@ try {
             Set-SecureAcl -Path $paths.Attachments -Directory -Writers @($names.ServiceAcct)
             if (Test-Path -LiteralPath $paths.Settings) { Set-SecureAcl -Path $paths.Settings -Directory -Writers @($names.ServiceAcct) }
         }
-        Restore-MinhDucBackupTasks -Snapshot $backupTasksBefore -Disabled
+        Restore-MinhDucBackupTasks -Snapshot $backupTasksBeforeDisabled -Disabled -RequireBoth
         Set-Service -Name $names.Service -StartupType Manual -ErrorAction Stop
         Start-Service -Name $names.Service -ErrorAction Stop
         if (-not (Wait-Https -Origin $origin -Seconds 120 -LocalOnly)) { throw 'Manual CI repair did not bring HTTPS back' }
+        # Giữ lịch tắt đến khi HTTPS đạt, rồi trả và kiểm đầy đủ XML gốc.
         Restore-MinhDucServiceStartMode $names.Service $paths 'CapNhat.ps1' -VerifiedRollback -BackupTaskSnapshot $backupTasksBefore | Out-Null
     } finally { $lock.Dispose() }
     $startupAfter = Get-ItemProperty -LiteralPath $serviceKey

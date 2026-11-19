@@ -2,7 +2,8 @@
 # Tự nhận ra chứng chỉ/khóa máy chủ thiếu hoặc hỏng: CHẾ ĐỘ PHỤC HỒI cấp chứng chỉ mới từ
 # ca.key mà không đọc chứng chỉ cũ. Mất cả ca.key: báo phải tạo CA mới và cài lại mọi máy trạm.
 # Mã thoát: 0 đạt (hoặc không gia hạn theo lựa chọn); 50 lỗi nhưng đã trả chứng chỉ cũ và HTTPS
-# kiểm lại đạt; 51 không trả được chứng chỉ cũ / phục hồi không thành công; mã khác: dừng trước khi thay đổi.
+# kiểm lại đạt; 51 không trả được chứng chỉ cũ / phục hồi không thành công. Mã 8: HTTPS đã dùng chứng chỉ mới,
+# còn cấu hình bảo trì cần kiểm tra.
 # CA giữ nguyên nên máy trạm KHÔNG phải chạy lại CAI_MAY_TRAM.
 # Trình tự an toàn:
 #   1. Tạo mốc $stamp TRƯỚC mọi thay đổi (để khôi phục được ở bất kỳ giai đoạn nào).
@@ -40,6 +41,8 @@ function Get-ServedSerial([string]$Origin, [string]$Ca) {
 }
 
 $exitCode = 0
+$resultStatus = $null
+$resultDetail = ''
 $stamp = $null
 $window = $null
 $changed = $false   # đã có tệp tạm hoặc đã thay tệp: cần khôi phục khi lỗi
@@ -131,9 +134,8 @@ try {
     $served = Get-ServedSerial $origin $ca
     if ($served -ne $renewed.serial) { throw 'Máy chủ chưa dùng chứng chỉ mới.' }
     Write-Dat ('Đã kiểm: HTTPS đang dùng chứng chỉ mới (số sê-ri ' + $served + '), hợp lệ theo ca.crt của phòng khám (CA không đổi).')
-    Write-Result 'thanh_cong' ($(if ($recovery) { 'Phục hồi; ' } else { '' }) + 'hạn mới: ' + $renewed.not_after)
-    Write-Host ''
-    Write-Host $(if ($recovery) { 'PHỤC HỒI CHỨNG CHỈ THÀNH CÔNG (HTTPS đã kiểm lại: ĐẠT).' } else { 'GIA HẠN THÀNH CÔNG (HTTPS đã kiểm lại: ĐẠT).' }) -ForegroundColor Green
+    $resultStatus = 'thanh_cong'
+    $resultDetail = $(if ($recovery) { 'Phục hồi; ' } else { '' }) + 'hạn mới: ' + $renewed.not_after
 } catch {
     $code = $_.Exception.Data['MinhDucExit']
     if (-not $window) {
@@ -141,9 +143,11 @@ try {
         $exitCode = if ($null -ne $code) { [int]$code } else { 1 }
     } elseif ($null -ne $code -and -not $changed) {
         $exitCode = [int]$code
-        Write-Result 'dung' $_.Exception.Message
+        $resultStatus = 'dung'
+        $resultDetail = $_.Exception.Message
     } else {
         $reason = $_.Exception.Message
+        $resultDetail = $reason
         Write-Loi ('Gia hạn lỗi: ' + $reason)
         $rollbackOk = $false
         $httpsOk = $false
@@ -177,12 +181,12 @@ try {
         Write-Host ''
         if ($restoreOk) {
             Write-Dat ('Kiểm tra sau khôi phục ĐẠT: HTTPS dùng chứng chỉ cũ (số sê-ri ' + $servedNow + ').')
-            Write-Result 'da_tra_chung_chi_cu' $reason
+            $resultStatus = 'da_tra_chung_chi_cu'
             Write-Host 'GIA HẠN KHÔNG THÀNH CÔNG — ĐÃ TRẢ CHỨNG CHỈ CŨ; HTTPS đã kiểm lại: ĐẠT. Báo người hỗ trợ để gia hạn lại.' -ForegroundColor Yellow
             $exitCode = 50
         } else {
             Write-Loi ('Kiểm tra sau khôi phục KHÔNG ĐẠT (khôi phục tệp: ' + $(if ($rollbackOk) { 'đạt' } else { 'lỗi' }) + ', HTTPS: ' + $(if ($httpsOk) { 'đạt' } else { 'lỗi' }) + ').')
-            Write-Result 'khoi_phuc_that_bai' $reason
+            $resultStatus = 'khoi_phuc_that_bai'
             Write-Host $(if ($recovery) { 'PHỤC HỒI CHỨNG CHỈ KHÔNG THÀNH CÔNG.' } else { 'KHÔI PHỤC CHỨNG CHỈ CŨ THẤT BẠI: KHÔNG trả được chứng chỉ cũ.' }) -ForegroundColor Red
             Write-Host 'Phần mềm CÓ THỂ KHÔNG TRUY CẬP ĐƯỢC từ máy trạm. GỌI NGƯỜI HỖ TRỢ NGAY. Trong lúc chờ:' -ForegroundColor Red
             Write-Host '  1. Bấm đúp KIEM_TRA.bat, gửi tệp báo cáo trên Desktop và thư mục C:\ProgramData\MinhDuc\nhatky cho người hỗ trợ.' -ForegroundColor Yellow
@@ -195,9 +199,30 @@ try {
     if ($window) {
         try { Exit-MinhDucMaintenanceWindow -Window $window }
         catch {
-            Write-Loi $_.Exception.Message
-            if (-not $exitCode) { $exitCode = 51 }
+            $maintenanceError = 'Chưa trả được cấu hình bảo trì: ' + $_.Exception.Message
+            Write-Loi $maintenanceError
+            if ($resultStatus -eq 'thanh_cong') {
+                $resultStatus = 'thanh_cong_can_kiem_tra'
+                $exitCode = 8
+            } elseif (-not $exitCode) {
+                $resultStatus = 'khoi_phuc_that_bai'
+                $exitCode = 51
+            }
+            $resultDetail = (@($resultDetail, $maintenanceError) | Where-Object { $_ }) -join ' | '
+        }
+        if ($resultStatus) {
+            try { Write-Result $resultStatus $resultDetail }
+            catch {
+                Write-Loi ('Chưa ghi được tệp kết quả gia hạn: ' + $_.Exception.Message)
+                if (-not $exitCode) { $exitCode = 1 }
+            }
         }
     }
+}
+if ($exitCode -eq 8) {
+    Write-Luu 'HTTPS ĐÃ DÙNG CHỨNG CHỈ MỚI, NHƯNG CHƯA KẾT THÚC BẢO TRÌ (mã 8). Chạy KIEM_TRA.bat để trả cấu hình còn thiếu.'
+} elseif ($exitCode -eq 0 -and $resultStatus -eq 'thanh_cong') {
+    Write-Host ''
+    Write-Host $(if ($recovery) { 'PHỤC HỒI CHỨNG CHỈ THÀNH CÔNG (HTTPS đã kiểm lại: ĐẠT).' } else { 'GIA HẠN THÀNH CÔNG (HTTPS đã kiểm lại: ĐẠT).' }) -ForegroundColor Green
 }
 exit $exitCode
