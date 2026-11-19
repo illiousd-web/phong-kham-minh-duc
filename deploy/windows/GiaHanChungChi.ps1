@@ -28,7 +28,7 @@ $ResultFile = Join-Path $P.Journal 'ket-qua-gia-han.json'
 $Fault = [string]$env:MINHDUC_TEST_LOI
 
 function Write-Result([string]$Status, [string]$Detail) {
-    @{ status = $Status; detail = $Detail; time = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath $ResultFile -Encoding UTF8
+    @{ status = $Status; detail = $Detail; time = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath $ResultFile -Encoding UTF8 -ErrorAction Stop
 }
 function Invoke-Cert([string[]]$CertArgs) {
     return Invoke-Python -Paths $P -Quiet -Arguments (@('-m', 'scripts.install_cert') + $CertArgs)
@@ -46,6 +46,7 @@ $changed = $false   # đã có tệp tạm hoặc đã thay tệp: cần khôi p
 try {
     $admin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { Stop-CaiDat 'Cần quyền Administrator.' @('Bấm đúp GIA_HAN_CHUNG_CHI.bat và chọn "Yes".') 30 }
+    Resume-MinhDucServiceStartMode -Paths $P -ScriptName 'GiaHanChungChi.ps1' | Out-Null
     if (-not (Test-Path -LiteralPath $P.ClinicEnv)) { Stop-CaiDat 'Máy này chưa cài đặt bằng CAI_DAT.bat (thiếu tệp cấu hình).' @('Chạy CAI_DAT.bat.') 2 }
     $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'GiaHanChungChi.ps1'
     $cert = Join-Path $P.Tls 'server.crt'

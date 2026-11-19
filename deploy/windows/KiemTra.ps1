@@ -15,21 +15,22 @@ if (-not $TepKetQua) {
     $TepKetQua = Join-Path ([Environment]::GetFolderPath('Desktop')) ('MinhDuc-KiemTra-' + (Get-Date -Format 'yyyyMMdd-HHmm') + '.txt')
 }
 $label = 'Dịch vụ web không bị vô hiệu hóa'
+$recoveryError = $null
 try {
     $restored = Resume-MinhDucServiceStartMode -Paths $P -ScriptName 'KiemTra.ps1'
 } catch {
-    $row = "[KHÔNG ĐẠT] ${label} - $($_.Exception.Message) Báo người hỗ trợ."
-    Set-Content -LiteralPath $TepKetQua -Value $row -Encoding UTF8
+    $recoveryError = $_.Exception.Message
+}
+$Names = Get-MinhDucNames
+$service = Get-Service -Name $Names.Service -ErrorAction SilentlyContinue
+if ($recoveryError) {
+    $startup = if ($service) { 'Chế độ khởi động hiện tại là ' + $service.StartType + '.' } else { 'Không tìm thấy dịch vụ MinhDuc.' }
+    $row = "[KHÔNG ĐẠT] ${label} - $recoveryError $startup Báo người hỗ trợ."
+    Set-Content -LiteralPath $TepKetQua -Value $row -Encoding UTF8 -ErrorAction Stop
     Write-Host $row -ForegroundColor Red
     Write-Host ('Đã lưu báo cáo: ' + $TepKetQua) -ForegroundColor Cyan
     exit 1
 }
-if (-not (Test-Path -LiteralPath $P.VenvPython) -or -not (Test-Path -LiteralPath $P.ClinicEnv)) {
-    Write-Host 'Máy này chưa cài máy chủ Minh Đức (chưa thấy C:\MinhDuc\.venv hoặc clinic.env). Chạy CAI_DAT.bat trước.' -ForegroundColor Red
-    exit 2
-}
-$Names = Get-MinhDucNames
-$service = Get-Service -Name $Names.Service -ErrorAction SilentlyContinue
 $serviceEnabled = $service -and $service.StartType -in @('Automatic', 'Manual')
 if ($serviceEnabled) {
     $row = "[ĐẠT] $label"
@@ -37,6 +38,16 @@ if ($serviceEnabled) {
 } else {
     $detail = if ($service) { 'Chế độ khởi động hiện tại là ' + $service.StartType + '.' } else { 'Không tìm thấy dịch vụ MinhDuc.' }
     $row = "[KHÔNG ĐẠT] ${label} - $detail Gửi báo cáo cho người hỗ trợ."
+}
+
+if (-not (Test-Path -LiteralPath $P.VenvPython) -or -not (Test-Path -LiteralPath $P.ClinicEnv)) {
+    $missing = '[KHÔNG ĐẠT] Thiếu môi trường Python (.venv) hoặc clinic.env. Gửi báo cáo cho người hỗ trợ.'
+    Set-Content -LiteralPath $TepKetQua -Value @($row, $missing) -Encoding UTF8 -ErrorAction Stop
+    Write-Host $row
+    Write-Host $missing -ForegroundColor Red
+    Write-Host ('Đã lưu báo cáo: ' + $TepKetQua) -ForegroundColor Cyan
+    if ($service -and -not $serviceEnabled) { exit 1 }
+    exit 2
 }
 
 Write-Host 'Đang kiểm tra máy chủ, vui lòng chờ khoảng 30 giây...' -ForegroundColor Cyan

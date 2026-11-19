@@ -10,12 +10,26 @@ $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windows 'M
 if ($errors.Count) { throw ($errors | Out-String) }
 foreach ($name in @('Set-RecoveryServiceStartMode', 'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile',
                     'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode', 'Resume-MinhDucServiceStartMode',
+                    'Read-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartup',
                     'Invoke-WithMinhDucServiceStartupDisabled', 'Disable-MinhDucServiceStartup', 'Invoke-HealthReport')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
 
-function Get-MinhDucNames { return @{ Service = 'MinhDuc' } }
+function Get-MinhDucNames { return @{ Service = 'MinhDuc'; BackupTask = 'daily'; FirewallMaintenance = 'fake HTTPS rule' } }
+function Get-MinhDucBackupTaskSnapshot {
+    foreach ($name in $fixture.Tasks.Keys) { @{ Name = $name } }
+}
+function Get-MinhDucScheduledTask { param($Name) @{ Settings = @{ Enabled = $fixture.Tasks[$Name] } } }
+function Enable-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) $fixture.Tasks[$TaskName] = $true }
+function Disable-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) $fixture.Tasks[$TaskName] = $false }
+function Remove-MinhDucMaintenanceFirewall {
+    param($Name)
+    if ($Name -ne 'fake HTTPS rule' -or -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu']) {
+        throw 'Đã gỡ quy tắc khác hoặc gỡ trước khi trả lịch.'
+    }
+    $fixture.Firewall = $false
+}
 $fixture = @{ IgnoreScmChange = $false }
 
 function Get-MinhDucPaths {
@@ -157,5 +171,32 @@ try {
     Run-Check
     if ($script:CheckExit -ne 1 -or $script:CheckReport -notmatch 'Kiểm lại chế độ khởi động.*chưa đạt' -or
         -not (Test-Path -LiteralPath $pending)) { throw 'Đã xóa dấu dù đọc lại chế độ chưa đúng.' }
+    Remove-Item -LiteralPath $fixture.Paths.ClinicEnv, $fixture.Paths.VenvPython
+    $fixture.IgnoreScmChange = $false
+    $fixture.Tasks = @{ daily = $false; 'daily - Chay bu' = $false }
+    $fixture.Firewall = $true
+    $marker = [ordered]@{
+        Service = 'MinhDuc'; StartMode = 'Automatic'; DelayedAutoStart = $true
+        CreatedAt = '19/11/2026 00:00:00 UTC+7'; Script = 'CapNhat.ps1'
+        Status = 'quay_ve_that_bai'; TaskEnabled = @{ daily = $true; 'daily - Chay bu' = $false }; FirewallRule = 'fake HTTPS rule'
+    }
+    Write-MinhDucServiceStartModeMarker $pending $marker -Replace
+    $markerHash = (Get-FileHash -LiteralPath $pending).Hash
+    Run-Check
+    if ($script:CheckExit -ne 1 -or $script:CheckReport -notmatch '\[KHÔNG ĐẠT\].*quay_ve_that_bai.*người hỗ trợ' -or
+        (Get-FileHash -LiteralPath $pending).Hash -ne $markerHash -or (Get-FileHash -LiteralPath $fixture.ScmFile).Hash -ne $before.Hash -or
+        $fixture.Tasks.Values -contains $true -or -not $fixture.Firewall) { throw 'KIEM_TRA đã mở cửa sổ quay về lỗi hoặc bỏ qua vì thiếu Python/config.' }
+
+    $marker.Status = 'dang_bao_tri'
+    Write-MinhDucServiceStartModeMarker $pending $marker -Replace
+    # Directory at the log path triggers a real write failure after the marker is cleared.
+    $logPath = Join-Path $root 'service-startmode.log'
+    Remove-Item -LiteralPath $logPath
+    New-Item -ItemType Directory -Path $logPath | Out-Null
+    Run-Check
+    $state = Get-Content -LiteralPath $fixture.ScmFile -Raw | ConvertFrom-Json
+    if ($script:CheckExit -ne 2 -or $script:CheckReport -notmatch '\[ĐẠT\] Dịch vụ web.*Đã trả' -or
+        $state.Mode -ne 'Auto' -or -not $state.Delayed -or -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu'] -or
+        $fixture.Firewall -or (Test-Path -LiteralPath $pending)) { throw 'Chưa trả đủ bảo trì, hoặc lỗi ghi nhật ký làm kẹt tệp đánh dấu.' }
     Write-Output 'PASS: service startup recovery'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }

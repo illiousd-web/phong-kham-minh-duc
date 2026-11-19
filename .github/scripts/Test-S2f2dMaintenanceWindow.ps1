@@ -82,9 +82,17 @@ try {
         [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'backup-checked'), 'checked')
     }
 '@
+    Write-Fixture 'CapNhat.ps1' '    Write-Result ''dang_cap_nhat'' $versionDetail' @'
+    if ((Get-Service -Name $Names.Service).StartType -ne 'Disabled') { throw 'Web was startable before the local HTTPS probe.' }
+    Assert-MinhDucMaintenanceFirewall -Paths $P
+'@
+    Write-Fixture 'CapNhat.ps1' '    $committed = $true' @'
+    Assert-MinhDucMaintenanceFirewall -Paths $P
+'@
     Write-Fixture 'CapNhat.ps1' "        `$report = Join-Path `$P.Journal ('kiem-tra-sau-cap-nhat-' + `$Stamp + '.txt')" @'
         function Invoke-HealthReport {
             param($Paths, $Output, $Title)
+            if (Get-MinhDucMaintenanceFirewall $Names.FirewallMaintenance ActiveStore) { throw 'Firewall still blocked after commit.' }
             $result = Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json
             if ($result.status -ne 'thanh_cong' -or -not (Test-Path -LiteralPath $OldVenv)) {
                 throw 'Không ghi thành công trước báo cáo hoặc đã xóa venv cũ.'

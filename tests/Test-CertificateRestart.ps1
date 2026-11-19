@@ -7,13 +7,13 @@ $module = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windows
 if ($errors.Count) { throw ($errors | Out-String) }
 foreach ($name in @('Set-RecoveryServiceStartMode', 'Stop-MinhDucService', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit', 'Resume-MinhDucServiceStartMode',
                     'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode',
-                    'Disable-MinhDucServiceStartup', 'Enter-MinhDucMaintenanceWindow', 'Suspend-MinhDucMaintenanceWindow',
+                    'Read-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartup', 'Disable-MinhDucServiceStartup', 'Enter-MinhDucMaintenanceWindow', 'Suspend-MinhDucMaintenanceWindow',
                     'Resume-MinhDucMaintenanceWindow', 'Exit-MinhDucMaintenanceWindow')) {
     $definition = $module.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
 
-function Get-MinhDucNames { @{ Service = 'MinhDuc'; ServiceAcct = 'fake' } }
+function Get-MinhDucNames { @{ Service = 'MinhDuc'; ServiceAcct = 'fake'; BackupTask = 'daily'; FirewallMaintenance = 'test' } }
 function Get-MinhDucDelayedAutoStart { param($Name) return $false }
 function Get-MinhDucPaths {
     param($Code, $Data)
@@ -166,7 +166,7 @@ try {
         $test.served = 'old'
         $test.originalStartup = if ($case.Outside) { 'Manual' } else { 'Automatic' }
         $test.startup = $test.originalStartup
-        $test.tasks = @{ daily = $true; catchup = $true }
+        $test.tasks = @{ daily = $true; 'daily - Chay bu' = $true }
         $test.status = 'Running'
         $test.stoppedWaits = 0
         $test.processScans = 0

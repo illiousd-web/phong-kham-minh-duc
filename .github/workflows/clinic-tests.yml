@@ -379,6 +379,12 @@ jobs:
           Write-Output 'PASS: CAP_NHAT thanh cong, du lieu giu nguyen'
       - name: Exclusive maintenance, real backup guard and post-HTTPS warning
         run: .\.github\scripts\Test-S2f2dMaintenanceWindow.ps1
+      - name: Recover real backup tasks, service and HTTPS firewall after abrupt termination
+        run: |
+          foreach ($engine in 'powershell.exe','pwsh.exe') {
+            & $engine -NoProfile -ExecutionPolicy Bypass -File .\.github\scripts\Test-S2f2dMaintenanceRecovery.ps1
+            if ($LASTEXITCODE -ne 0) { throw "Abrupt maintenance recovery failed in $engine" }
+          }
       - name: Administrator saves UI settings over HTTPS before the broken update
         run: |
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py settings-set; if ($LASTEXITCODE) { throw 'settings-set' }

@@ -45,17 +45,19 @@ function Get-Fingerprint {
 }
 
 function Write-Result([string]$Status, [string]$Detail) {
-    New-Item -ItemType Directory -Force -Path $P.Updates | Out-Null
+    New-Item -ItemType Directory -Force -Path $P.Updates -ErrorAction Stop | Out-Null
     $temp = $ResultFile + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     try {
         @{
             status = $Status; detail = $Detail; time = (Get-Date).ToString('o')
             backup = $State.backup; rollback_errors = $State.rollback_errors; warnings = $State.warnings
-        } | ConvertTo-Json | Set-Content -LiteralPath $temp -Encoding UTF8
+        } | ConvertTo-Json | Set-Content -LiteralPath $temp -Encoding UTF8 -ErrorAction Stop
         if ([IO.File]::Exists($ResultFile)) { [IO.File]::Replace($temp, $ResultFile, [NullString]::Value) }
         else { [IO.File]::Move($temp, $ResultFile) }
     } finally {
-        if ([IO.File]::Exists($temp)) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+        try {
+            if ([IO.File]::Exists($temp)) { Remove-Item -LiteralPath $temp -Force -ErrorAction Stop }
+        } catch { Add-UpdateWarning ('Chưa dọn được tệp kết quả tạm: ' + $_.Exception.Message) }
     }
 }
 
@@ -168,6 +170,7 @@ function Invoke-QuayVe {
     if ($needsRecovery -and $Window) {
         $startupRestored = Invoke-RecoveryStep 'Khóa cài đặt bảo trì trước phục hồi' {
             Suspend-MinhDucMaintenanceWindow -Window $Window -AllowAlreadyDisabled
+            Set-MinhDucRollbackPending -Window $Window
         }
     }
     if ($startupRestored) {
@@ -176,22 +179,27 @@ function Invoke-QuayVe {
     }
     [void](Invoke-RecoveryStep 'Khởi động và kiểm HTTPS bản cũ' {
         if (-not $recovery.Code -or -not $recovery.Venv -or -not $recovery.Database) { throw 'Mã/Python/CSDL chưa đạt; giữ dịch vụ dừng để tránh dùng sai phiên bản.' }
-        if (-not $startupRestored) { throw 'Chưa trả được chế độ khởi động của dịch vụ cũ.' }
+        if (-not $startupRestored -or -not $recovery.Tasks) { throw 'Chưa chuẩn bị được chế độ bảo trì hoặc lịch sao lưu của bản cũ.' }
         if ($needsRecovery) {
-            if ($Window) { Resume-MinhDucMaintenanceWindow -Window $Window }
-            Start-Service -Name $Names.Service -ErrorAction Stop
+            Start-MinhDucMaintenanceService -Window $Window
         }
         $service = Get-Service -Name $Names.Service -ErrorAction Stop
         $service.WaitForStatus('Running', (New-TimeSpan -Seconds 30))
         $service.Refresh()
         if ($service.Status -ne 'Running') { throw 'Dịch vụ cũ chưa chạy.' }
         $origin = (Read-EnvFile -Path $P.ClinicEnv)['CLINIC_ORIGIN']
-        if (-not (Wait-Https -Origin $origin -Seconds 120)) { throw 'HTTPS bản cũ không lên sau khi khởi động.' }
+        if (-not (Wait-Https -Origin $origin -Seconds 120 -LocalOnly)) { throw 'HTTPS bản cũ không lên sau khi khởi động.' }
     })
-    [void](Invoke-RecoveryStep 'Kiểm lịch sao lưu trước xác nhận quay về' {
-        if ($Window) { Resume-MinhDucMaintenanceWindow -Window $Window }
-        Assert-MinhDucBackupTaskSnapshot -Snapshot $State.backup_task_snapshot -RequireBoth
-    })
+    if ($failures.Count -eq 0) {
+        [void](Invoke-RecoveryStep 'Kiểm lịch sao lưu trước xác nhận quay về' {
+            Resume-MinhDucMaintenanceWindow -Window $Window -VerifiedRollback -BackupTaskSnapshot $State.backup_task_snapshot
+        })
+    }
+    if ($failures.Count -gt 0) {
+        [void](Invoke-RecoveryStep 'Giữ dịch vụ, lịch sao lưu và tường lửa ở chế độ bảo trì' {
+            Hold-MinhDucFailedMaintenanceWindow -Window $Window
+        })
+    }
     $State.rollback_errors = @($failures.ToArray())
     if ($failures.Count -gt 0) { throw ('Quay về chưa đạt: ' + ($failures -join '; ')) }
 }
@@ -203,13 +211,14 @@ $committed = $false
 try {
     $admin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { Stop-CaiDat 'Cần quyền Administrator.' @('Bấm đúp CAP_NHAT.bat và chọn "Có".') 30 }
+    Resume-MinhDucServiceStartMode -Paths $P -ScriptName 'CapNhat.ps1' | Out-Null
     if (-not (Test-Path -LiteralPath $P.ClinicEnv) -or -not (Get-Service -Name $Names.Service -ErrorAction SilentlyContinue)) {
         Stop-CaiDat 'Máy này chưa cài đặt bằng CAI_DAT.bat.' @('Chạy CAI_DAT.bat trước.') 2
     }
-    $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'CapNhat.ps1'
-    New-Item -ItemType Directory -Force -Path $P.Updates | Out-Null
+    $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'CapNhat.ps1' -GuardHttps
+    New-Item -ItemType Directory -Force -Path $P.Updates -ErrorAction Stop | Out-Null
     Set-SecureAcl -Path $P.Updates -Directory
-    Start-Transcript -Path (Join-Path $P.Journal ('cap-nhat-' + $Stamp + '.log')) | Out-Null
+    Start-Transcript -Path (Join-Path $P.Journal ('cap-nhat-' + $Stamp + '.log')) -ErrorAction Stop | Out-Null
     $transcript = $true
     Save-InitialBackupTaskSnapshot
     Write-Host 'CẬP NHẬT PHẦN MỀM PHÒNG KHÁM ĐA KHOA MINH ĐỨC' -ForegroundColor Cyan
@@ -233,8 +242,8 @@ try {
     }
 
     Write-Buoc 'Bước 2/8: Giải nén và kiểm tra tệp cập nhật'
-    Unblock-File -LiteralPath $TepZip -ErrorAction SilentlyContinue
-    Expand-Archive -LiteralPath $TepZip -DestinationPath $NewDir -Force
+    Unblock-File -LiteralPath $TepZip -ErrorAction Stop
+    Expand-Archive -LiteralPath $TepZip -DestinationPath $NewDir -Force -ErrorAction Stop
     $root = @(Get-ChildItem -LiteralPath $NewDir -Recurse -Depth 2 -Filter 'main.py' -ErrorAction SilentlyContinue |
         Where-Object { $_.Directory.Name -eq 'app' -and (Test-Path -LiteralPath (Join-Path $_.Directory.Parent.FullName 'requirements.lock')) -and
                        (Test-Path -LiteralPath (Join-Path $_.Directory.Parent.FullName 'deploy\windows\CaiDat.ps1')) } | Select-Object -First 1)
@@ -242,7 +251,7 @@ try {
     $newRoot = $root[0].Directory.Parent.FullName
     Test-D0PublicCatalogs -SourceRoot $newRoot
     Test-S2dPublicTemplate -SourceRoot $newRoot
-    Get-ChildItem -LiteralPath $newRoot -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
+    Get-ChildItem -LiteralPath $newRoot -Recurse -File -ErrorAction Stop | Unblock-File -ErrorAction Stop
     Write-Dat ('Phiên bản hiện tại: ' + (Get-AppVersion $P.Code) + '  →  bản mới: ' + (Get-AppVersion $newRoot))
 
     Write-Buoc 'Bước 3/8: Dừng dịch vụ web'
@@ -287,10 +296,10 @@ try {
         if (-not $State.fingerprint) { throw $failure }
     } catch {
         Write-Loi $_.Exception.Message
-        Resume-MinhDucMaintenanceWindow -Window $window
-        Start-Service -Name $Names.Service -ErrorAction Stop
+        Start-MinhDucMaintenanceService -Window $window
         $origin = (Read-EnvFile -Path $P.ClinicEnv)['CLINIC_ORIGIN']
-        if (-not (Wait-Https -Origin $origin -Seconds 120)) { throw 'HTTPS bản cũ không lên sau khi khởi động.' }
+        if (-not (Wait-Https -Origin $origin -Seconds 120 -LocalOnly)) { throw 'HTTPS bản cũ không lên sau khi khởi động.' }
+        Resume-MinhDucMaintenanceWindow -Window $window
         $State.stopped = $false
         Write-Dat 'Dịch vụ web đã chạy lại và HTTPS đã kiểm tra.'
         Stop-CaiDat ($failure + '; chưa thay đổi gì.') $guidance 6
@@ -299,8 +308,8 @@ try {
     Write-Buoc 'Bước 5/8: Thay mã nguồn'
     $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($P.Code, $OldCode, '/MIR', '/R:2', '/W:2', '/XD', '.venv', '.venv-cu', '__pycache__', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
     if (-not $r.Ok) { throw 'Không sao chép được mã cũ để dự phòng.' }
-    if (Test-Path -LiteralPath $OldVenv) { Remove-Item -LiteralPath $OldVenv -Recurse -Force }
-    Rename-Item -LiteralPath $P.Venv -NewName '.venv-cu'
+    if (Test-Path -LiteralPath $OldVenv) { Remove-Item -LiteralPath $OldVenv -Recurse -Force -ErrorAction Stop }
+    Rename-Item -LiteralPath $P.Venv -NewName '.venv-cu' -ErrorAction Stop
     $State.venv_moved = $true
     $State.code_replaced = $true
     $r = Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($newRoot, $P.Code, '/MIR', '/R:2', '/W:2', '/XD', '.venv', '.venv-cu', '.git', '__pycache__', 'test_evidence', 'data', 'backups', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
@@ -328,7 +337,7 @@ try {
     Set-SecureAcl -Path $P.ClinicEnv -Readers @($Names.ServiceAcct)
     Set-SecureAcl -Path $P.OwnerEnv
     # Thư mục cài đặt giao diện (ui_settings.json): dịch vụ được ghi khi quản trị đổi Cài đặt.
-    New-Item -ItemType Directory -Force -Path $P.Settings | Out-Null
+    New-Item -ItemType Directory -Force -Path $P.Settings -ErrorAction Stop | Out-Null
     Set-SecureAcl -Path $P.Settings -Directory -Writers @($Names.ServiceAcct)
     if (@((ConvertFrom-PythonJson $r).managed_changed).Count -gt 0) { Write-Dat 'Đã chuyển chính sách sao lưu: giữ 14 bản trên máy chủ (xóa bớt bản cũ chỉ sau lần sao lưu mới đầu tiên đã kiểm).' }
     Write-Dat 'Cấu trúc dữ liệu đã cập nhật.'
@@ -347,11 +356,12 @@ try {
     $versionDetail = 'Phiên bản ' + (Get-AppVersion $P.Code)
     $origin = (Read-EnvFile -Path $P.ClinicEnv)['CLINIC_ORIGIN']
     Write-Result 'dang_cap_nhat' $versionDetail
-    Resume-MinhDucMaintenanceWindow -Window $window
-    Start-Service -Name $Names.Service
-    if (-not (Wait-Https -Origin $origin -Seconds 120)) { Show-ServiceDiagnostics -Paths $P; throw 'Dịch vụ web bản mới không trả lời sau 2 phút.' }
-    # Máy trạm đã có thể ghi dữ liệu mới. Từ đây chỉ báo cảnh báo nếu còn việc lỗi.
+    Start-MinhDucMaintenanceService -Window $window
+    if (-not (Wait-Https -Origin $origin -Seconds 120 -LocalOnly)) { Show-ServiceDiagnostics -Paths $P; throw 'Dịch vụ web bản mới không trả lời sau 2 phút.' }
+    # Chốt trước khi mở lại máy trạm. Sau mốc này giữ dữ liệu của bản mới.
     $committed = $true
+    try { Resume-MinhDucMaintenanceWindow -Window $window }
+    catch { Add-UpdateWarning ('Chưa kết thúc được cửa sổ bảo trì. Chạy KIEM_TRA.bat và báo người hỗ trợ: ' + $_.Exception.Message) }
     $resultWritten = $false
     try {
         Write-Result 'thanh_cong' $versionDetail
@@ -364,16 +374,23 @@ try {
         }
     } catch { Add-UpdateWarning ('Lỗi báo cáo sức khỏe: ' + $_.Exception.Message) }
     try {
-        if ($resultWritten -and (Test-Path -LiteralPath $OldVenv)) { Remove-Item -LiteralPath $OldVenv -Recurse -Force }
+        if ($resultWritten -and (Test-Path -LiteralPath $OldVenv)) { Remove-Item -LiteralPath $OldVenv -Recurse -Force -ErrorAction Stop }
     } catch { Add-UpdateWarning ('Chưa dọn được môi trường Python cũ: ' + $_.Exception.Message) }
-    try { Remove-Item -LiteralPath $NewDir -Recurse -Force }
+    try { Remove-Item -LiteralPath $NewDir -Recurse -Force -ErrorAction Stop }
     catch { Add-UpdateWarning ('Chưa dọn được thư mục giải nén: ' + $_.Exception.Message) }
     if ($State.warnings.Count) {
-        try { Write-Result 'thanh_cong' $versionDetail }
-        catch { Add-UpdateWarning ('Chưa lưu được cảnh báo vào kết quả cập nhật: ' + $_.Exception.Message) }
+        try {
+            Write-Result 'thanh_cong' $versionDetail
+            $resultWritten = $true
+        } catch { Add-UpdateWarning ('Chưa lưu được cảnh báo vào kết quả cập nhật: ' + $_.Exception.Message) }
     }
     Write-Host ''
-    Write-Host ('CẬP NHẬT THÀNH CÔNG. Bản mã cũ được giữ tại ' + $OldCode) -ForegroundColor Green
+    if ($resultWritten) {
+        Write-Host ('CẬP NHẬT THÀNH CÔNG. Bản mã cũ được giữ tại ' + $OldCode) -ForegroundColor Green
+    } else {
+        $exitCode = 7
+        Write-Luu 'CẬP NHẬT ĐÃ CHỐT VÀ HTTPS ĐÃ ĐẠT, NHƯNG CHƯA GHI ĐƯỢC TỆP KẾT QUẢ (mã 7). Báo người hỗ trợ.'
+    }
 } catch {
     $code = $_.Exception.Data['MinhDucExit']
     if ($committed) {
@@ -381,6 +398,15 @@ try {
     } elseif (-not $window) {
         Write-Loi $_.Exception.Message
         $exitCode = if ($null -ne $code) { [int]$code } else { 1 }
+    } elseif (-not $window.FirewallReady) {
+        Write-Loi $_.Exception.Message
+        $exitCode = if ($null -ne $code) { [int]$code } else { 1 }
+        try { Resume-MinhDucMaintenanceWindow -Window $window }
+        catch { Write-Loi ('Chưa trả được cấu hình bảo trì. Báo người hỗ trợ: ' + $_.Exception.Message) }
+        if ($null -ne $code) {
+            try { Write-Result 'dung_truoc_khi_thay_doi' $_.Exception.Message }
+            catch { Add-UpdateWarning ('Chưa lưu được kết quả cập nhật: ' + $_.Exception.Message) }
+        }
     } elseif ($null -ne $code -and -not $State.stopped) {
         $exitCode = [int]$code
         try { Write-Result 'dung_truoc_khi_thay_doi' $_.Exception.Message }
@@ -410,7 +436,7 @@ try {
         else { Write-Loi $_.Exception.Message; if (-not $exitCode) { $exitCode = 1 } }
     } finally {
         if ($window) {
-            try { Exit-MinhDucMaintenanceWindow -Window $window }
+            try { Exit-MinhDucMaintenanceWindow -Window $window -KeepPending }
             catch {
                 if ($committed) { Add-UpdateWarning $_.Exception.Message }
                 else { Write-Loi $_.Exception.Message; if (-not $exitCode) { $exitCode = 1 } }

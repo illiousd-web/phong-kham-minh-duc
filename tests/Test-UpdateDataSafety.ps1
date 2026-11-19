@@ -1,7 +1,29 @@
 ﻿# Chạy phần bảo trì thật của CapNhat.ps1 bằng dịch vụ và lệnh Python giả lập.
 $ErrorActionPreference = 'Stop'
 $windowsDir = Join-Path $PSScriptRoot '../deploy/windows'
-Import-Module (Join-Path $windowsDir 'MinhDuc.Install.psm1') -Force -DisableNameChecking
+$module = Import-Module (Join-Path $windowsDir 'MinhDuc.Install.psm1') -Force -DisableNameChecking -PassThru
+& $module {
+    function Get-NetIPAddress {
+        param($AddressFamily, $IPAddress, $ErrorAction)
+        if ($AddressFamily -ne 'IPv4' -or $IPAddress -ne '192.168.50.5') { throw 'Đọc nhầm địa chỉ máy chủ.' }
+        @{ IPAddress = $IPAddress }
+    }
+    $envFile = New-TemporaryFile -ErrorAction Stop
+    try {
+        $paths = @{ ClinicEnv = $envFile.FullName }
+        Set-Content -LiteralPath $paths.ClinicEnv -Value @('CLINIC_ORIGIN=https://192.168.50.5:8443', 'CLINIC_BIND_IP=192.168.50.5')
+        $scope = Get-MinhDucMaintenanceFirewallScope $paths
+        if ($scope.IP -ne '192.168.50.5' -or ($scope.Remote -join ',') -ne '0.0.0.0-192.168.50.4,192.168.50.6-255.255.255.255') {
+            throw 'Hai khoảng chặn phải phủ các địa chỉ từ xa, trừ IP nguồn của máy chủ.'
+        }
+        Set-Content -LiteralPath $paths.ClinicEnv -Value @('CLINIC_ORIGIN=https://192.168.50.5:5432', 'CLINIC_BIND_IP=192.168.50.5')
+        $wrongPortRejected = $false
+        try { $null = Get-MinhDucMaintenanceFirewallScope $paths }
+        catch { $wrongPortRejected = $true }
+        if (-not $wrongPortRejected) { throw 'Cho phép dựng quy tắc ngoài cổng HTTPS của phần mềm.' }
+    } finally { Remove-Item -LiteralPath $envFile.FullName -Force }
+}
+Write-Output 'PASS: Firewall IPv4 scope'
 $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windowsDir 'CapNhat.ps1'), [ref]$tokens, [ref]$errors)
@@ -33,36 +55,65 @@ function Stop-MinhDucService {
     $scenario.Calls.Add('stop')
     if ($case -eq 'StopError') { throw 'Lỗi chờ Python thoát sau khi dịch vụ đã dừng.' }
 }
-function Start-Service {
-    param($Name, $ErrorAction)
-    if ($scenario.Startup -ne 'Auto' -or $scenario.Tasks -contains 'Disabled') { throw 'Chưa trả cấu hình bảo trì trước khi bật web.' }
+function Start-MinhDucMaintenanceService {
+    param($Window)
+    if (-not $scenario.Firewall -or $scenario.Startup -ne 'Disabled' -or $scenario.Tasks -contains 'Enabled') {
+        throw 'Bật web trước khi chặn máy trạm hoặc ngoài cửa sổ bảo trì.'
+    }
+    $scenario.Startup = 'Manual'
     $scenario.Service = 'Running'
     $scenario.Calls.Add('start')
+}
+function Stop-Service { param($Name, [switch]$Force, $ErrorAction) $scenario.Service = 'Stopped' }
+function Show-ServiceDiagnostics { param($Paths) }
+function Set-MinhDucRollbackPending { param($Window) $scenario.Marker = 'quay_ve_that_bai' }
+function Hold-MinhDucFailedMaintenanceWindow {
+    param($Window)
+    $scenario.Service = 'Stopped'
+    Suspend-MinhDucMaintenanceWindow -Window $Window
+    Set-MinhDucRollbackPending -Window $Window
 }
 function Get-Service {
     param($Name, $ErrorAction)
     $service = [pscustomobject]@{ Status = $scenario.Service }
     $service | Add-Member ScriptMethod WaitForStatus { param($status, $timeout) }
-    $service | Add-Member ScriptMethod Refresh { }
+    $service | Add-Member ScriptMethod Refresh { $this.Status = $scenario.Service }
     return $service
 }
 function Read-EnvFile { param($Path) return @{ CLINIC_ORIGIN = 'https://127.0.0.1:8443' } }
 function Wait-Https {
-    param($Origin, $Seconds)
+    param($Origin, $Seconds, [switch]$LocalOnly)
     $scenario.Calls.Add('https')
+    if (-not $LocalOnly -or -not $scenario.Firewall -or $committed) { throw 'Thử HTTPS trước khi chốt phải qua đường nội bộ và có quy tắc chặn máy trạm.' }
+    if ($case -eq 'HttpsError' -and -not $scenario.Calls.Contains('restore')) {
+        $scenario.NewHttpsFailed = $true
+        return $false
+    }
+    $scenario.HttpsPassed = $true
     return ($scenario.Service -eq 'Running')
 }
 function Suspend-MinhDucMaintenanceWindow {
     param($Window, [switch]$AllowAlreadyDisabled)
     $scenario.Startup = 'Disabled'
     $scenario.Tasks = @('Disabled', 'Disabled')
+    $scenario.Firewall = $true
+    $Window.FirewallReady = $true
+    if (-not $scenario.Marker) { $scenario.Marker = 'dang_bao_tri' }
 }
 function Resume-MinhDucMaintenanceWindow {
-    param($Window)
+    param($Window, [switch]$VerifiedRollback, $BackupTaskSnapshot)
+    if (-not $scenario.HttpsPassed -or (-not $committed -and -not $VerifiedRollback -and $case -notin @('BackupError', 'MissingVerification', 'FingerprintError'))) {
+        throw 'Gỡ tường lửa trước khi đã chốt bản mới hoặc xác nhận bản cũ.'
+    }
     $scenario.Startup = 'Auto'
     $scenario.Tasks = @('Enabled', 'Enabled')
+    $scenario.Firewall = $false
+    $scenario.Marker = ''
 }
-function Exit-MinhDucMaintenanceWindow { param($Window) Resume-MinhDucMaintenanceWindow -Window $Window }
+function Exit-MinhDucMaintenanceWindow {
+    param($Window, [switch]$KeepPending)
+    if (-not $KeepPending) { throw 'finally có thể mở lại một cửa sổ bảo trì bị khóa.' }
+}
 function Set-MinhDucBackupTasks {
     param($Paths, [switch]$Disabled)
     if (-not $Disabled -or $scenario.Tasks -contains 'Enabled') { throw 'Đăng ký lịch mới trước khi mở lại web phải ở Disabled.' }
@@ -70,7 +121,8 @@ function Set-MinhDucBackupTasks {
 function Invoke-HealthReport {
     param($Paths, $Output, $Title)
     $result = Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json
-    if ($case -ne 'WriteAfterHttps' -and $result.status -ne 'thanh_cong') { throw 'Chưa ghi thành công trước báo cáo.' }
+    if (-not $committed -or $scenario.Firewall) { throw 'Báo cáo chạy trước khi chốt hoặc trước khi mở lại máy trạm.' }
+    if ($case -notin @('WriteAfterHttps', 'WriteAfterHttpsTwice') -and $result.status -ne 'thanh_cong') { throw 'Chưa ghi thành công trước báo cáo.' }
     if (-not (Test-Path -LiteralPath $OldVenv)) { throw 'Dọn venv cũ trước khi lập báo cáo.' }
     $scenario.HealthChecked = $true
     # Mô phỏng dữ liệu máy trạm vừa nhập sau khi HTTPS bản mới trả lời.
@@ -82,12 +134,19 @@ function Set-Content {
     [CmdletBinding()]
     param($LiteralPath, [Parameter(ValueFromPipeline=$true)]$Value, $Encoding = 'UTF8')
     process {
-        if ($Value -match '"status": "dang_cap_nhat"' -and $case -eq 'WriteBeforeStart') {
+        # ConvertTo-Json khác khoảng trắng giữa 5.1 và 7.
+        $status = if ($LiteralPath -like '*/ket-qua-cap-nhat.json.*.tmp' -or $LiteralPath -like '*\ket-qua-cap-nhat.json.*.tmp') {
+            ($Value | ConvertFrom-Json).status
+        }
+        if ($status -eq 'dang_cap_nhat' -and $case -eq 'WriteBeforeStart') {
             if (-not (Test-Path -LiteralPath $OldVenv) -or $scenario.Startup -ne 'Disabled') { throw 'Thiếu venv cũ hoặc web đã mở tại điểm ghi kết quả trước khởi động.' }
             $scenario.WriteFault = $true
-            throw 'Lỗi ghi kết quả trước khi bật web'
+            $PSCmdlet.WriteError([Management.Automation.ErrorRecord]::new(
+                [IO.IOException]::new('Lỗi ghi kết quả trước khi bật web'),
+                'PreStartWrite', [Management.Automation.ErrorCategory]::WriteError, $LiteralPath))
+            return
         }
-        if ($Value -match '"status": "thanh_cong"' -and $case -eq 'WriteAfterHttps' -and -not $scenario.WriteFault) {
+        if ($status -eq 'thanh_cong' -and ($case -eq 'WriteAfterHttpsTwice' -or ($case -eq 'WriteAfterHttps' -and -not $scenario.WriteFault))) {
             $scenario.WriteFault = $true
             throw 'Lỗi ghi kết quả sau khi HTTPS đạt'
         }
@@ -152,7 +211,7 @@ function Invoke-Python {
         $scenario.Calls.Add('migrate')
         $scenario.Row = 'đã sửa'
         $scenario.Attachment = 'đã sửa'
-        if ($case -notin @('WriteBeforeStart', 'HealthError', 'WriteAfterHttps')) { $code = 1 }
+        if ($case -notin @('WriteBeforeStart', 'HealthError', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError')) { $code = 1 }
     } elseif ($Arguments -contains 'grant') {
         $output = @('{"managed_changed":[]}')
     } elseif ($Arguments -contains 'rollback') {
@@ -169,7 +228,7 @@ function Invoke-Python {
 
 $root = Microsoft.PowerShell.Management\Join-Path ([IO.Path]::GetTempPath()) ('minhduc-update-' + [guid]::NewGuid().ToString('N'))
 try {
-    foreach ($case in @('StopError', 'BackupError', 'MissingVerification', 'FingerprintError', 'BeforeMigration', 'DataOnlyMigration', 'BadRestoredFingerprint', 'WriteBeforeStart', 'HealthError', 'WriteAfterHttps')) {
+    foreach ($case in @('StopError', 'BackupError', 'MissingVerification', 'FingerprintError', 'BeforeMigration', 'DataOnlyMigration', 'BadRestoredFingerprint', 'WriteBeforeStart', 'HealthError', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError')) {
         $homeForCase = Join-Path $root $case
         $scenario = @{ Service = 'Running'; Startup = 'Auto'; Tasks = @('Enabled', 'Enabled'); Row = 'ban đầu'; Attachment = 'ban đầu'; Fingerprint = 'baseline'; Calls = [Collections.Generic.List[string]]::new() }
         $P = @{
@@ -203,10 +262,24 @@ try {
         $exitCode = 0
         . $maintenance
         $result = Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json
-        if ($scenario.Startup -ne 'Auto' -or $scenario.Tasks -contains 'Disabled') {
-            throw "Cấu hình bảo trì chưa được trả sau ca $case."
+        if ($case -eq 'BadRestoredFingerprint') {
+            if ($scenario.Startup -ne 'Disabled' -or $scenario.Tasks -contains 'Enabled' -or $scenario.Service -ne 'Stopped' -or
+                -not $scenario.Firewall -or $scenario.Marker -ne 'quay_ve_that_bai') { throw 'Quay về lỗi phải giữ mọi khóa bảo trì.' }
+        } else {
+            if ($scenario.Startup -ne 'Auto' -or $scenario.Tasks -contains 'Disabled') {
+                throw "Cấu hình bảo trì chưa được trả sau ca $case."
+            }
+            if ($scenario.Firewall -or $scenario.Marker) { throw 'Còn quy tắc hoặc dấu bảo trì sau khi đã xác nhận HTTPS.' }
         }
         if ($case -ne 'StopError' -and -not $scenario.BackupGuarded) { throw 'Chưa kiểm được trạng thái dịch vụ và lịch tại bước sao lưu.' }
+        if ($case -eq 'WriteAfterHttpsTwice') {
+            if ($exitCode -ne 7 -or $result.status -ne 'dang_cap_nhat' -or -not $scenario.WriteFault -or -not $committed -or
+                $scenario.Calls.Contains('restore') -or $scenario.Row -ne 'máy trạm vừa ghi' -or -not (Test-Path -LiteralPath $OldVenv)) {
+                throw 'Hai lần ghi kết quả sau khi chốt phải trả mã 7 và giữ dữ liệu mới cùng venv cũ.'
+            }
+            Write-Output "PASS: $case"
+            continue
+        }
         if ($case -in @('HealthError', 'WriteAfterHttps')) {
             if ($exitCode -ne 0 -or $result.status -ne 'thanh_cong' -or -not $scenario.HealthChecked -or
                 $scenario.Calls.Contains('restore') -or $scenario.Row -ne 'máy trạm vừa ghi' -or
@@ -223,6 +296,7 @@ try {
         if ($case -eq 'WriteBeforeStart' -and (-not $scenario.WriteFault -or (Get-Content -LiteralPath $P.VenvPython) -ne 'Python giả lập')) {
             throw 'Lỗi ghi kết quả trước khi bật web chưa quay về được với venv cũ.'
         }
+        if ($case -eq 'HttpsError' -and (-not $scenario.NewHttpsFailed -or $committed)) { throw 'Kiểm HTTPS lỗi vẫn chốt bản mới.' }
         $calls = $scenario.Calls -join ','
         $expected = switch ($case) {
             'StopError'              { @(50, 'da_quay_ve', 'stop,start,https') }
@@ -231,6 +305,7 @@ try {
             'FingerprintError'      { @(6, 'dung_truoc_khi_thay_doi', 'stop,backup,fingerprint,start,https') }
             'BeforeMigration'       { @(50, 'da_quay_ve', 'stop,backup,fingerprint,save-code,replace-code,start,https') }
             'DataOnlyMigration'     { @(50, 'da_quay_ve', 'stop,backup,fingerprint,save-code,replace-code,migrate,restore,fingerprint,start,https') }
+            'HttpsError'             { @(50, 'da_quay_ve', 'stop,backup,fingerprint,save-code,replace-code,migrate,start,https,restore,fingerprint,start,https') }
             'WriteBeforeStart'       { @(50, 'da_quay_ve', 'stop,backup,fingerprint,save-code,replace-code,migrate,restore,fingerprint,start,https') }
             'BadRestoredFingerprint' { @(50, 'quay_ve_that_bai', 'stop,backup,fingerprint,save-code,replace-code,migrate,restore,fingerprint') }
         }
