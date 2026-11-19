@@ -1190,8 +1190,8 @@ function Assert-MinhDucBackupTaskSnapshot {
                 if (-not $task -or [string]$task.State -ne 'Disabled' -or $task.Settings.Enabled) {
                     throw ('Lịch sao lưu chưa Disabled: ' + $old.Name)
                 }
-            } elseif (-not $task -or [string]$task.State -ne 'Ready' -or -not $task.Settings.Enabled) {
-                throw ('Lịch sao lưu chưa Ready/Enabled: ' + $old.Name)
+            } elseif (-not $task -or [string]$task.State -notin @('Ready', 'Running', 'Queued') -or -not $task.Settings.Enabled) {
+                throw ('Lịch sao lưu chưa Ready/Running/Queued và Enabled: ' + $old.Name)
             }
         }
         $actual = @($restored | Where-Object { $_.Name -eq $old.Name })

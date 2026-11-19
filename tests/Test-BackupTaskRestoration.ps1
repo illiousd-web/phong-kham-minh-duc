@@ -96,6 +96,28 @@ $module = Import-Module (Join-Path $PSScriptRoot '../deploy/windows/MinhDuc.Inst
                             throw "Sai trạng thái Enabled sau ca $layout, rollback=$rollback."
                         }
                     }
+                    if ($rollback -and $layout -eq 'Mixed') {
+                        foreach ($state in 'Running', 'Queued') {
+                            $fixture.Tasks[$daily].State = $state
+                            Assert-MinhDucBackupTaskSnapshot -Snapshot $original -RequireBoth
+                        }
+                        # State và Settings.Enabled phải nhất quán với XML cũ.
+                        foreach ($invalid in @(
+                            @{ Name = $daily; State = 'Unknown'; Enabled = $true },
+                            @{ Name = $daily; State = 'Running'; Enabled = $false },
+                            @{ Name = $catchup; State = 'Queued'; Enabled = $false }
+                        )) {
+                            $task = $fixture.Tasks[$invalid.Name]
+                            $task.State = $invalid.State
+                            $task.Settings.Enabled = $invalid.Enabled
+                            $rejected = $false
+                            try { Assert-MinhDucBackupTaskSnapshot -Snapshot $original -RequireBoth }
+                            catch { $rejected = $_.Exception.Message -like 'Lịch sao lưu chưa *' }
+                            if (-not $rejected) { throw "Đã nhận lịch không hợp lệ $($invalid.Name): $($invalid.State), Enabled=$($invalid.Enabled)." }
+                            $old = $original | Where-Object Name -eq $invalid.Name
+                            Register-ScheduledTask -TaskName $old.Name -Xml $old.Xml
+                        }
+                    }
                 } finally { Exit-MinhDucMaintenanceWindow -Window $window -KeepPending }
             }
         }

@@ -15,22 +15,23 @@
 # Biến MINHDUC_TEST_LOI chỉ dùng cho kiểm thử tự động (CI) để gây lỗi có chủ đích; không đặt khi dùng thật.
 [CmdletBinding()]
 param([switch]$KhongHoi, [string]$ThuMucMa = 'C:\MinhDuc', [string]$ThuMucDuLieu = 'C:\ProgramData\MinhDuc')
+$ErrorActionPreference = 'Stop'
+$ResultFile = Join-Path $ThuMucDuLieu 'nhatky\ket-qua-gia-han.json'
+function Write-Result([string]$Status, [string]$Detail) {
+    @{ status = $Status; detail = $Detail; time = (Get-Date -Format o) } | ConvertTo-Json | Set-Content -LiteralPath $ResultFile -Encoding UTF8 -ErrorAction Stop
+}
+
 if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
-    Write-Host 'DỪNG LẠI: Windows đang chặn script (App Control / Smart App Control).' -ForegroundColor Red
+    $reason = 'Windows đang chặn script (App Control / Smart App Control).'
+    try { Write-Result 'dung' $reason }
+    catch { Write-Warning ('Chưa ghi được tệp kết quả gia hạn: ' + $_.Exception.Message) }
+    Write-Host ('DỪNG LẠI: ' + $reason) -ForegroundColor Red
     Write-Host '  - Không tự tắt Smart App Control hay App Control. Dừng và gọi người hỗ trợ (chụp màn hình này gửi kèm).' -ForegroundColor Yellow
     exit 20
 }
-$ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
-Import-Module (Join-Path $PSScriptRoot 'MinhDuc.Install.psm1') -Force -DisableNameChecking
-$Names = Get-MinhDucNames
-$P = Get-MinhDucPaths -Code $ThuMucMa -Data $ThuMucDuLieu
-$ResultFile = Join-Path $P.Journal 'ket-qua-gia-han.json'
 $Fault = [string]$env:MINHDUC_TEST_LOI
 
-function Write-Result([string]$Status, [string]$Detail) {
-    @{ status = $Status; detail = $Detail; time = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath $ResultFile -Encoding UTF8 -ErrorAction Stop
-}
 function Invoke-Cert([string[]]$CertArgs) {
     return Invoke-Python -Paths $P -Quiet -Arguments (@('-m', 'scripts.install_cert') + $CertArgs)
 }
@@ -47,8 +48,14 @@ $stamp = $null
 $window = $null
 $changed = $false   # đã có tệp tạm hoặc đã thay tệp: cần khôi phục khi lỗi
 try {
+    Import-Module (Join-Path $PSScriptRoot 'MinhDuc.Install.psm1') -Force -DisableNameChecking
+    $Names = Get-MinhDucNames
+    $P = Get-MinhDucPaths -Code $ThuMucMa -Data $ThuMucDuLieu
+    $ResultFile = Join-Path $P.Journal 'ket-qua-gia-han.json'
     $admin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { Stop-CaiDat 'Cần quyền Administrator.' @('Bấm đúp GIA_HAN_CHUNG_CHI.bat và chọn "Yes".') 30 }
+    try { Write-Result 'dang_gia_han' 'Đang gia hạn chứng chỉ HTTPS.' }
+    catch { Write-Luu ('Chưa ghi được tệp kết quả gia hạn: ' + $_.Exception.Message) }
     Resume-MinhDucServiceStartMode -Paths $P -ScriptName 'GiaHanChungChi.ps1' | Out-Null
     if (-not (Test-Path -LiteralPath $P.ClinicEnv)) { Stop-CaiDat 'Máy này chưa cài đặt bằng CAI_DAT.bat (thiếu tệp cấu hình).' @('Chạy CAI_DAT.bat.') 2 }
     $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'GiaHanChungChi.ps1'
@@ -84,6 +91,8 @@ try {
     } else {
         Write-Thongtin ('Hiện tại: ' + $state.reason + '.')
         if ($state.ok -and -not (Read-CoKhong 'Chứng chỉ còn trên 60 ngày. Vẫn gia hạn ngay?' -KhongHoi:$KhongHoi -MacDinh $true)) {
+            try { Exit-MinhDucMaintenanceWindow -Window $window }
+            finally { $window = $null }
             Write-Result 'bo_qua' $state.reason
             Write-Host 'KHÔNG GIA HẠN (theo lựa chọn của bạn); chứng chỉ hiện tại giữ nguyên.'
             exit 0
@@ -139,8 +148,10 @@ try {
 } catch {
     $code = $_.Exception.Data['MinhDucExit']
     if (-not $window) {
-        Write-Loi $_.Exception.Message
         $exitCode = if ($null -ne $code) { [int]$code } else { 1 }
+        $resultStatus = 'dung'
+        $resultDetail = $_.Exception.Message
+        Write-Host ('  [KHÔNG ĐẠT] ' + $resultDetail) -ForegroundColor Red
     } elseif ($null -ne $code -and -not $changed) {
         $exitCode = [int]$code
         $resultStatus = 'dung'
@@ -210,11 +221,17 @@ try {
             }
             $resultDetail = (@($resultDetail, $maintenanceError) | Where-Object { $_ }) -join ' | '
         }
-        if ($resultStatus) {
-            try { Write-Result $resultStatus $resultDetail }
-            catch {
-                Write-Loi ('Chưa ghi được tệp kết quả gia hạn: ' + $_.Exception.Message)
-                if (-not $exitCode) { $exitCode = 1 }
+    }
+    if ($resultStatus) {
+        try { Write-Result $resultStatus $resultDetail }
+        catch {
+            $writeError = 'Chưa ghi được tệp kết quả gia hạn: ' + $_.Exception.Message
+            Write-Warning $writeError
+            if (-not $exitCode) {
+                $exitCode = 1
+                # HTTPS đã được kiểm nếu đã gia hạn. Chỉ báo lỗi ghi kết quả.
+                try { Write-Result 'dung' ($resultDetail + ' | ' + $writeError) }
+                catch { Write-Warning $_.Exception.Message }
             }
         }
     }

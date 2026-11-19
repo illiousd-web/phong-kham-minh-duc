@@ -5,7 +5,7 @@ $tokens = $null
 $errors = $null
 $module = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windows 'MinhDuc.Install.psm1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in @('Set-RecoveryServiceStartMode', 'Stop-MinhDucService', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit', 'Resume-MinhDucServiceStartMode',
+foreach ($name in @('Stop-CaiDat', 'Set-RecoveryServiceStartMode', 'Stop-MinhDucService', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit', 'Resume-MinhDucServiceStartMode',
                     'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode',
                     'Read-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartup', 'Disable-MinhDucServiceStartup', 'Enter-MinhDucMaintenanceWindow', 'Suspend-MinhDucMaintenanceWindow',
                     'Resume-MinhDucMaintenanceWindow', 'Exit-MinhDucMaintenanceWindow')) {
@@ -30,7 +30,7 @@ function Suspend-MinhDucBackupTasks {
 function Enable-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) $test.tasks[$TaskName] = $true }
 function Read-EnvFile { param($Path) @{ CLINIC_ORIGIN = 'https://127.0.0.1:8443'; CLINIC_BIND_IP = '127.0.0.1' } }
 function ConvertFrom-PythonJson($Result) { $Result.Json }
-function Read-CoKhong { param($Text, [switch]$KhongHoi, $MacDinh) return $true }
+function Read-CoKhong { param($Text, [switch]$KhongHoi, $MacDinh) return (-not $test.case.Skip) }
 function Set-SecureAcl { param($Path, [switch]$Directory, $Readers) }
 function Invoke-Native { param($FilePath, $Arguments, [switch]$Quiet) }
 function Test-AccountCanRead { param($Path, $Account) return $true }
@@ -43,7 +43,8 @@ function Write-Thongtin($Text) {}
 $exitWindow = ${function:Exit-MinhDucMaintenanceWindow}
 function Exit-MinhDucMaintenanceWindow {
     param($Window)
-    $test.resultBeforeExit = Test-Path -LiteralPath $test.resultFile
+    $status = (Get-Content -LiteralPath $test.resultFile -Raw -Encoding UTF8 | ConvertFrom-Json).status
+    $test.resultBeforeExit = $status -ne 'dang_gia_han'
     & $exitWindow -Window $Window
     if ($test.case.ExitFault) { throw 'Lỗi trả cấu hình giả lập' }
 }
@@ -80,6 +81,9 @@ function Invoke-Python {
 function Get-CimInstance {
     param($ClassName, $Filter, $ErrorAction)
     if ($ClassName -ne 'Win32_Service' -or $Filter -ne "Name='MinhDuc'") { throw 'Truy vấn nhầm dịch vụ' }
+    if ($test.watchResultAtStartup) {
+        $test.statusAtStartup = (Get-Content -LiteralPath $test.watchResultAtStartup -Raw -Encoding UTF8 | ConvertFrom-Json).status
+    }
     $startMode = if ($test.startup -eq 'Automatic') { 'Auto' } else { $test.startup }
     return @{ StartMode = $startMode }
 }
@@ -151,11 +155,12 @@ try {
     # Thay đúng hai điểm phụ thuộc nền tảng. Các bước gia hạn, phục hồi và mã thoát dùng mã thật.
     $entry = Join-Path $root 'GiaHanChungChi.ps1'
     $source = Get-Content -LiteralPath (Join-Path $windows 'GiaHanChungChi.ps1') -Raw -Encoding UTF8
-    $source = $source -replace '(?m)^Import-Module .*$', '' -replace '(?m)^    \$admin = .*$', '    $$admin = $$true'
+    $source = $source -replace '(?m)^    Import-Module .*$', '' -replace '(?m)^    \$admin = .*$', '    $$admin = $$true'
     Set-Content -LiteralPath $entry -Value $source -Encoding UTF8
 
     $cases = @(
         @{ Name = 'slow'; State = 'ok'; FailStarts = 0; Exit = 0; Result = 'thanh_cong'; Served = 'new'; Steps = 'verify,commit,start:new' }
+        @{ Name = 'skipped'; State = 'ok'; Skip = $true; Exit = 0; Result = 'bo_qua'; Served = 'old'; Steps = '' }
         @{ Name = 'damaged'; State = 'hong'; FailStarts = 1; Exit = 0; Result = 'thanh_cong'; Served = 'new'; Steps = 'verify,commit,start:new,start:new' }
         @{ Name = 'missing'; State = 'missing'; FailStarts = 1; Exit = 0; Result = 'thanh_cong'; Served = 'new'; Steps = 'verify,commit,start:new,start:new' }
         @{ Name = 'ordinary'; State = 'ok'; FailStarts = 1; Exit = 50; Result = 'da_tra_chung_chi_cu'; Served = 'old'; Steps = 'verify,commit,start:new,rollback,start:old' }
@@ -195,6 +200,47 @@ try {
         if ($test.resultBeforeExit) { throw "Đã ghi kết quả trước khi trả cấu hình ở ca $($case.Name)." }
         if ($case.ExitFault -and ($result.detail -notlike "*$($case.Detail)*" -or $result.detail -notlike '*Lỗi trả cấu hình giả lập*')) {
             throw "Kết quả $($case.Name) thiếu chi tiết gốc hoặc lỗi trả cấu hình."
+        }
+    }
+    foreach ($early in @(
+        @{ Name = 'blocked-marker'; Code = 1; Detail = 'Cập nhật bị ngắt sau khi đã thay dữ liệu' },
+        @{ Name = 'missing-config'; Code = 2; Detail = 'thiếu tệp cấu hình' },
+        @{ Name = 'busy-window'; Code = 52; Detail = 'Đang có bảo trì khác' },
+        @{ Name = 'requires-admin'; Code = 30; Detail = 'Cần quyền Administrator' }
+    )) {
+        $data = Join-Path $root $early.Name
+        New-Item -ItemType Directory -Path $data | Out-Null
+        $paths = Get-MinhDucPaths -Code $data -Data $data
+        $resultFile = Join-Path $paths.Journal 'ket-qua-gia-han.json'
+        '{"status":"thanh_cong","detail":"ket qua cu"}' | Set-Content -LiteralPath $resultFile -Encoding UTF8
+        $test = @{ startup = 'Disabled' }
+        if ($early.Name -ne 'missing-config') { New-Item -ItemType File -Path $paths.ClinicEnv | Out-Null }
+        if ($early.Name -eq 'blocked-marker') {
+            $test.watchResultAtStartup = $resultFile
+            $marker = @{
+                Service = 'MinhDuc'; StartMode = 'Automatic'; DelayedAutoStart = $false
+                CreatedAt = '19/11/2026 00:00:00 UTC+7'; Script = 'CapNhat.ps1'
+            }
+            Write-MinhDucServiceStartModeMarker $paths.ServiceStartModePending $marker
+            $markerHash = (Get-FileHash -LiteralPath $paths.ServiceStartModePending).Hash
+        }
+        $lock = $null
+        if ($early.Name -eq 'busy-window') { $lock = Open-MinhDucServiceStartModeLock $paths.MaintenanceLockBase }
+        if ($early.Name -eq 'requires-admin') {
+            Set-Content -LiteralPath $entry -Value ($source.Replace('$admin = $true', '$admin = $false')) -Encoding UTF8
+        }
+        try { & $entry -KhongHoi -ThuMucMa $data -ThuMucDuLieu $data }
+        finally { if ($lock) { $lock.Dispose() } }
+        $exitCode = $LASTEXITCODE
+        $result = Get-Content -LiteralPath $resultFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($exitCode -ne $early.Code -or $result.status -ne 'dung' -or $result.detail -notlike "*$($early.Detail)*") {
+            throw "Lỗi sớm $($early.Name) không ghi đúng kết quả. Mã $exitCode, trạng thái $($result.status), chi tiết $($result.detail)."
+        }
+        if ($early.Name -eq 'blocked-marker') {
+            if ($test.statusAtStartup -ne 'dang_gia_han') { throw 'Phải ghi dang_gia_han trước khi kiểm dấu bảo trì.' }
+            if ((Get-FileHash -LiteralPath $paths.ServiceStartModePending).Hash -ne $markerHash -or $test.startup -ne 'Disabled') {
+                throw 'Gia hạn đã thay đổi dấu hoặc chế độ khởi động của phiên cập nhật bị khóa.'
+            }
         }
     }
     Write-Output 'PASS: certificate restart'
