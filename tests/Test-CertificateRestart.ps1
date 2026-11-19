@@ -5,15 +5,17 @@ $tokens = $null
 $errors = $null
 $module = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windows 'MinhDuc.Install.psm1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in @('Set-RecoveryServiceStartMode', 'Stop-MinhDucService', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit')) {
+foreach ($name in @('Set-RecoveryServiceStartMode', 'Stop-MinhDucService', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit', 'Resume-MinhDucServiceStartMode',
+                    'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode', 'Invoke-WithMinhDucServiceStartupDisabled')) {
     $definition = $module.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
 
 function Get-MinhDucNames { @{ Service = 'MinhDuc'; ServiceAcct = 'fake' } }
+function Get-MinhDucDelayedAutoStart { param($Name) return $false }
 function Get-MinhDucPaths {
     param($Code, $Data)
-    @{ Tls = $Data; Venv = $Code; Journal = $Data; CaKey = (Join-Path $Data 'ca.key'); ClinicEnv = (Join-Path $Data 'clinic.env') }
+    @{ Tls = $Data; Venv = $Code; Journal = $Data; ServiceStartModePending = (Join-Path $Data 'service-startmode-pending.json'); CaKey = (Join-Path $Data 'ca.key'); ClinicEnv = (Join-Path $Data 'clinic.env') }
 }
 function Read-EnvFile { param($Path) @{ CLINIC_ORIGIN = 'https://127.0.0.1:8443'; CLINIC_BIND_IP = '127.0.0.1' } }
 function ConvertFrom-PythonJson($Result) { $Result.Json }

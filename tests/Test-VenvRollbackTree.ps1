@@ -83,7 +83,8 @@ $module = Join-Path $PSScriptRoot '../deploy/windows/MinhDuc.Install.psm1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($module, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in 'Get-MinhDucVenvProcessTree', 'Wait-MinhDucVenvPythonExit', 'Set-RecoveryServiceStartMode') {
+foreach ($name in 'Get-MinhDucVenvProcessTree', 'Wait-MinhDucVenvPythonExit', 'Set-RecoveryServiceStartMode',
+                  'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode', 'Invoke-WithMinhDucServiceStartupDisabled') {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -156,11 +157,17 @@ Write-Output 'PASS: kiểm module, chặn khóa ngoài phạm vi và dừng ti�
     $service = [pscustomobject]@{ Status='Running'; StartMode='Auto'; ProcessId=8704 }
     $service | Add-Member ScriptMethod WaitForStatus { param($Status,$Timeout) if ($this.Status -ne $Status) { throw 'Sai trạng thái dịch vụ.' } }
     $service | Add-Member ScriptMethod Refresh {}
-    function Get-CimInstance { param($ClassName,$Filter,$ErrorAction) $service }
+    $scmService = $service
+    function Get-CimInstance {
+        param($ClassName,$Filter,$ErrorAction)
+        $mode = if ($service.StartMode -eq 'Automatic') { 'Auto' } else { $service.StartMode }
+        return [pscustomobject]@{ StartMode = $mode; ProcessId = $service.ProcessId }
+    }
+    function Get-MinhDucDelayedAutoStart { param($Name) return $true }
     function Invoke-CimMethod {
         param($InputObject,$MethodName,$Arguments,$ErrorAction)
         $events.Add($Arguments.StartMode)
-        $service.StartMode = $Arguments.StartMode
+        $scmService.StartMode = $Arguments.StartMode
         return @{ ReturnValue = 0 }
     }
     function Get-Service { param($Name,$ErrorAction) $service }
@@ -185,16 +192,21 @@ Write-Output 'PASS: kiểm module, chặn khóa ngoài phạm vi và dừng ti�
     function Invoke-Python { param($Paths,$Arguments,[switch]$Quiet) $events.Add('Python'); return @{Ok=$true} }
     function Read-EnvFile { param($Path) return @{CLINIC_ORIGIN='https://127.0.0.1'} }
     function Wait-Https { param($Origin,$Seconds) return $true }
-    $P = @{ Code=$venv; Venv=$venv; VenvPython=$venvPython; ClinicEnv=$envPath }
+    $journal = Join-Path ([IO.Path]::GetTempPath()) ('minhduc-rollback-' + [guid]::NewGuid())
+    New-Item -ItemType Directory -Path $journal | Out-Null
+    $P = @{ Code=$venv; Venv=$venv; VenvPython=$venvPython; ClinicEnv=$envPath; Journal=$journal
+            ServiceStartModePending=(Join-Path $journal 'service-startmode-pending.json') }
     $Names = @{ Service='MinhDuc' }
-    foreach ($lockOutside in $false,$true) {
-        $events.Clear()
-        $service.Status = 'Running'; $service.StartMode = 'Auto'
-        $State = @{ stopped=$true; code_replaced=$false; venv_moved=$false; migrated=$false; backup_tasks_changed=$false; backup_task_snapshot=@('old') }
-        try { Invoke-QuayVe -GuardServiceStartup }
-        catch { if (-not $lockOutside -or $_.Exception.Message -notmatch 'Khóa giả lập ngoài phạm vi') { throw } }
-        $expected = if ($lockOutside) { 'Disabled,Stop,Wait,Automatic' } else { 'Disabled,Stop,Wait,Python,Automatic,Start' }
-        if (($events -join ',') -ne $expected) { throw ('Sai thứ tự khóa và trả chế độ khởi động: ' + ($events -join ',')) }
-    }
+    try {
+        foreach ($lockOutside in $false,$true) {
+            $events.Clear()
+            $service.Status = 'Running'; $service.StartMode = 'Auto'
+            $State = @{ stopped=$true; code_replaced=$false; venv_moved=$false; migrated=$false; backup_tasks_changed=$false; backup_task_snapshot=@('old') }
+            try { Invoke-QuayVe -GuardServiceStartup }
+            catch { if (-not $lockOutside -or $_.Exception.Message -notmatch 'Khóa giả lập ngoài phạm vi') { throw } }
+            $expected = if ($lockOutside) { 'Disabled,Stop,Wait,Automatic' } else { 'Disabled,Stop,Wait,Python,Automatic,Start' }
+            if (($events -join ',') -ne $expected) { throw ('Sai thứ tự khóa và trả chế độ khởi động: ' + ($events -join ',')) }
+        }
+    } finally { Remove-Item -LiteralPath $journal -Recurse -Force }
 }
 Write-Output 'PASS: chặn khởi động lại khi quay về và trả chế độ cũ cả khi gặp khóa ngoài phạm vi.'
