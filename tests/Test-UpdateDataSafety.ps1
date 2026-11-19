@@ -90,7 +90,8 @@ function Invoke-Python {
         if ($scenario.Service -ne 'Stopped' -or -not $State.stopped) { throw 'Web còn chạy khi sao lưu.' }
         if ($case -eq 'BackupError') { $code = 1 }
         else {
-            $scenario | Select-Object -Property Row, Attachment | ConvertTo-Json | Set-Content -LiteralPath $backupPath -Encoding UTF8
+            $snapshot = [pscustomobject]@{ Row = $scenario.Row; Attachment = $scenario.Attachment }
+            $snapshot | ConvertTo-Json | Set-Content -LiteralPath $backupPath -Encoding UTF8
             if ($case -ne 'MissingVerification') { New-Item -ItemType File -Path ($backupPath + '.verified') | Out-Null }
             $output = @("Sao luu va kiem tra ban sao luu: DAT $backupName")
             $code = 3
@@ -108,7 +109,7 @@ function Invoke-Python {
         $scenario.Calls.Add('restore')
         $file = $Arguments[[array]::IndexOf($Arguments, '--file') + 1]
         if ($file -ne $backupPath) { throw 'Không dùng đúng bản sao lưu vừa tạo.' }
-        $saved = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+        $saved = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
         $scenario.Row = $saved.Row
         $scenario.Attachment = $saved.Attachment
         if ($case -eq 'BadRestoredFingerprint') { $scenario.Fingerprint = 'khác baseline' }
