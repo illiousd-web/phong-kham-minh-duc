@@ -63,7 +63,7 @@ function Invoke-QuayVe {
     param([switch]$GuardServiceStartup)
     Write-Buoc 'TỰ QUAY VỀ BẢN CŨ'
     $failures = New-Object System.Collections.Generic.List[string]
-    $recovery = @{ Code = $false; Venv = $false; Database = $false; Tasks = $false; Stopped = $true; ServiceConfig = $null }
+    $recovery = @{ Code = $false; Venv = $false; Database = $false; Tasks = $false; Stopped = $true }
     $venvScan = @{ Venv = $P.Venv; ClinicEnv = $P.ClinicEnv; Known = @{} }
     function Invoke-RecoveryStep([string]$Label, [scriptblock]$Action) {
         try {
@@ -78,89 +78,86 @@ function Invoke-QuayVe {
         }
     }
     $needsRecovery = $State.stopped -or $State.code_replaced -or $State.venv_moved -or $State.migrated -or $State.backup_tasks_changed
-    if ($needsRecovery) {
-        $recovery.Stopped = Invoke-RecoveryStep 'Dừng dịch vụ trước phục hồi' {
-            if ($GuardServiceStartup) {
-                $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Names.Service + "'") -ErrorAction Stop
-                $startupModes = @{ Auto = 'Automatic'; Manual = 'Manual'; Disabled = 'Disabled' }
-                if (-not $config -or -not $startupModes.ContainsKey([string]$config.StartMode)) { throw 'Không xác định được chế độ khởi động của dịch vụ.' }
-                # SCM may have queued a restart while the broken service was stopped.
-                $recovery.StartupMode = $startupModes[$config.StartMode]
-                Set-RecoveryServiceStartMode $config 'Disabled'
-                $recovery.ServiceConfig = $config
-                $observed = @(Get-MinhDucVenvProcessTree @venvScan)
-                Write-MinhDucVenvLockDiagnostics -Venv $P.Venv -Context ('Đã khóa khởi động dịch vụ trong lúc quay về; PID trình bọc=' + $config.ProcessId) -ObservedProcesses $observed
+    $restoreFiles = {
+        param($config)
+        if ($needsRecovery) {
+            $recovery.Stopped = Invoke-RecoveryStep 'Dừng dịch vụ trước phục hồi' {
+                if ($config) {
+                    $observed = @(Get-MinhDucVenvProcessTree @venvScan)
+                    Write-MinhDucVenvLockDiagnostics -Venv $P.Venv -Context ('Đã khóa khởi động dịch vụ trong lúc quay về; PID trình bọc=' + $config.ProcessId) -ObservedProcesses $observed
+                }
+                $service = Get-Service -Name $Names.Service -ErrorAction Stop
+                if ($service.Status -ne 'Stopped') { Stop-Service -Name $Names.Service -Force -ErrorAction Stop }
+                $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
+                $service.Refresh()
+                if ($service.Status -ne 'Stopped') { throw 'Dịch vụ chưa dừng; không thay mã hoặc dữ liệu đang chạy.' }
+                if (-not $State.backup_task_snapshot.Count) { throw 'Thiếu snapshot lịch ban đầu; không chụp lại trong quay về.' }
+                $State.backup_tasks_changed = $true
+                Suspend-MinhDucBackupTasks
+                Wait-MinhDucVenvPythonExit @venvScan -LogLockDiagnostics
+                $service.Refresh()
+                if ($service.Status -ne 'Stopped') { throw 'Dịch vụ đã chạy lại trong lúc chờ Python thoát.' }
             }
-            $service = Get-Service -Name $Names.Service -ErrorAction Stop
-            if ($service.Status -ne 'Stopped') { Stop-Service -Name $Names.Service -Force -ErrorAction Stop }
-            $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
-            $service.Refresh()
-            if ($service.Status -ne 'Stopped') { throw 'Dịch vụ chưa dừng; không thay mã hoặc dữ liệu đang chạy.' }
-            if (-not $State.backup_task_snapshot.Count) { throw 'Thiếu snapshot lịch ban đầu; không chụp lại trong quay về.' }
-            $State.backup_tasks_changed = $true
-            Suspend-MinhDucBackupTasks
-            Wait-MinhDucVenvPythonExit @venvScan -LogLockDiagnostics
-            $service.Refresh()
-            if ($service.Status -ne 'Stopped') { throw 'Dịch vụ đã chạy lại trong lúc chờ Python thoát.' }
         }
-    }
-    $recovery.Code = Invoke-RecoveryStep 'Trả mã nguồn cũ' {
-        if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả mã.' }
-        if ($State.code_replaced) {
-            if (-not (Test-Path -LiteralPath $OldCode -PathType Container)) { throw 'Thiếu thư mục mã nguồn cũ.' }
-            $r = Invoke-MinhDucAccessRetry -Action {
-                Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/R:0', '/W:0', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
-            } -RetryResult { param($result) $result.Code -ge 8 }
-            if (-not $r.Ok) { throw ('Chép trả mã nguồn thất bại, mã ' + $r.Code) }
-            foreach ($file in Get-ChildItem -LiteralPath $OldCode -Recurse -File -Force -ErrorAction Stop) {
-                $relative = $file.FullName.Substring($OldCode.Length).TrimStart('\')
-                if ($relative -match '(^|\\)(\.venv(-cu)?|__pycache__)(\\|$)') { continue }
-                $destination = Join-Path $P.Code $relative
-                if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) { throw ('Thiếu tệp mã đã phục hồi: ' + $relative) }
-                if ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256 -ErrorAction Stop).Hash -ne (Get-FileHash -LiteralPath $destination -Algorithm SHA256 -ErrorAction Stop).Hash) {
-                    throw ('Tệp mã phục hồi không khớp: ' + $relative)
+        $recovery.Code = Invoke-RecoveryStep 'Trả mã nguồn cũ' {
+            if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả mã.' }
+            if ($State.code_replaced) {
+                if (-not (Test-Path -LiteralPath $OldCode -PathType Container)) { throw 'Thiếu thư mục mã nguồn cũ.' }
+                $r = Invoke-MinhDucAccessRetry -Action {
+                    Invoke-Native -FilePath 'robocopy.exe' -Quiet -OkCodes @(0, 1, 2, 3, 4, 5, 6, 7) -Arguments @($OldCode, $P.Code, '/MIR', '/R:0', '/W:0', '/XD', '.venv', '.venv-cu', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+                } -RetryResult { param($result) $result.Code -ge 8 }
+                if (-not $r.Ok) { throw ('Chép trả mã nguồn thất bại, mã ' + $r.Code) }
+                foreach ($file in Get-ChildItem -LiteralPath $OldCode -Recurse -File -Force -ErrorAction Stop) {
+                    $relative = $file.FullName.Substring($OldCode.Length).TrimStart('\')
+                    if ($relative -match '(^|\\)(\.venv(-cu)?|__pycache__)(\\|$)') { continue }
+                    $destination = Join-Path $P.Code $relative
+                    if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) { throw ('Thiếu tệp mã đã phục hồi: ' + $relative) }
+                    if ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256 -ErrorAction Stop).Hash -ne (Get-FileHash -LiteralPath $destination -Algorithm SHA256 -ErrorAction Stop).Hash) {
+                        throw ('Tệp mã phục hồi không khớp: ' + $relative)
+                    }
                 }
             }
+            if (-not (Test-Path -LiteralPath (Join-Path $P.Code 'app\main.py') -PathType Leaf)) { throw 'Thiếu app/main.py của bản cũ.' }
         }
-        if (-not (Test-Path -LiteralPath (Join-Path $P.Code 'app\main.py') -PathType Leaf)) { throw 'Thiếu app/main.py của bản cũ.' }
-    }
-    $recovery.Venv = Invoke-RecoveryStep 'Trả môi trường Python cũ' {
-        if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả môi trường Python.' }
-        if ($State.venv_moved) {
-            if (-not (Test-Path -LiteralPath $OldVenv -PathType Container)) { throw 'Thiếu môi trường Python cũ.' }
-            Wait-MinhDucVenvPythonExit @venvScan -LogLockDiagnostics
-            Restore-MinhDucOldVenv -Venv $P.Venv -OldVenv $OldVenv -LogLockDiagnostics
-            if (Test-Path -LiteralPath $OldVenv) { throw 'Chưa chuyển xong môi trường Python cũ.' }
-        }
-        if (-not (Test-Path -LiteralPath $P.VenvPython -PathType Leaf)) { throw 'Không có trình Python của bản cũ.' }
-        $r = Invoke-Python -Paths $P -Quiet -Arguments @('-c', 'import sys; print(sys.prefix)')
-        if (-not $r.Ok) { throw ('Python bản cũ không chạy được, mã ' + $r.Code) }
-    }
-    $recovery.Database = Invoke-RecoveryStep 'Khôi phục CSDL và tệp đính kèm' {
-        if (-not $recovery.Code -or -not $recovery.Venv) { throw 'Mã hoặc Python chưa phục hồi đúng; chưa thể phục hồi CSDL.' }
-        if ($State.migrated) {
-            if (-not $State.fingerprint) { throw 'Thiếu dấu vân tay CSDL trước cập nhật.' }
-            $now = Get-Fingerprint
-            if (-not $now -or $now -ne $State.fingerprint) {
-                $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, '--owner-env', $P.OwnerEnv,
-                    '--super-env', $P.SuperEnv, 'rollback', '--file', $State.backup, '--key', $P.BackupKey)
-                if (-not $r.Ok) { throw ('Lệnh khôi phục CSDL trả mã ' + $r.Code + '; KHÔNG dùng phần mềm.') }
-                Set-SecureAcl -Path $P.Attachments -Directory -Writers @($Names.ServiceAcct)
-                if (Test-Path -LiteralPath $P.Settings) { Set-SecureAcl -Path $P.Settings -Directory -Writers @($Names.ServiceAcct) }
+        $recovery.Venv = Invoke-RecoveryStep 'Trả môi trường Python cũ' {
+            if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả môi trường Python.' }
+            if ($State.venv_moved) {
+                if (-not (Test-Path -LiteralPath $OldVenv -PathType Container)) { throw 'Thiếu môi trường Python cũ.' }
+                Wait-MinhDucVenvPythonExit @venvScan -LogLockDiagnostics
+                Restore-MinhDucOldVenv -Venv $P.Venv -OldVenv $OldVenv -LogLockDiagnostics
+                if (Test-Path -LiteralPath $OldVenv) { throw 'Chưa chuyển xong môi trường Python cũ.' }
             }
-            $verified = Get-Fingerprint
-            if (-not $verified -or $verified -ne $State.fingerprint) { throw 'Dấu vân tay CSDL chưa khớp bản trước cập nhật.' }
+            if (-not (Test-Path -LiteralPath $P.VenvPython -PathType Leaf)) { throw 'Không có trình Python của bản cũ.' }
+            $r = Invoke-Python -Paths $P -Quiet -Arguments @('-c', 'import sys; print(sys.prefix)')
+            if (-not $r.Ok) { throw ('Python bản cũ không chạy được, mã ' + $r.Code) }
         }
-    }
-    $recovery.Tasks = Invoke-RecoveryStep 'Khôi phục lịch sao lưu cũ' {
-        if ($State.backup_tasks_changed) { Restore-MinhDucBackupTasks -Snapshot $State.backup_task_snapshot }
+        $recovery.Database = Invoke-RecoveryStep 'Khôi phục CSDL và tệp đính kèm' {
+            if (-not $recovery.Code -or -not $recovery.Venv) { throw 'Mã hoặc Python chưa phục hồi đúng; chưa thể phục hồi CSDL.' }
+            if ($State.migrated) {
+                if (-not $State.fingerprint) { throw 'Thiếu dấu vân tay CSDL trước cập nhật.' }
+                $now = Get-Fingerprint
+                if (-not $now -or $now -ne $State.fingerprint) {
+                    $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv, '--owner-env', $P.OwnerEnv,
+                        '--super-env', $P.SuperEnv, 'rollback', '--file', $State.backup, '--key', $P.BackupKey)
+                    if (-not $r.Ok) { throw ('Lệnh khôi phục CSDL trả mã ' + $r.Code + '; KHÔNG dùng phần mềm.') }
+                    Set-SecureAcl -Path $P.Attachments -Directory -Writers @($Names.ServiceAcct)
+                    if (Test-Path -LiteralPath $P.Settings) { Set-SecureAcl -Path $P.Settings -Directory -Writers @($Names.ServiceAcct) }
+                }
+                $verified = Get-Fingerprint
+                if (-not $verified -or $verified -ne $State.fingerprint) { throw 'Dấu vân tay CSDL chưa khớp bản trước cập nhật.' }
+            }
+        }
+        $recovery.Tasks = Invoke-RecoveryStep 'Khôi phục lịch sao lưu cũ' {
+            if ($State.backup_tasks_changed) { Restore-MinhDucBackupTasks -Snapshot $State.backup_task_snapshot }
+        }
     }
     $startupRestored = $true
-    if ($recovery.ServiceConfig) {
-        $startupRestored = Invoke-RecoveryStep 'Trả chế độ khởi động dịch vụ' {
-            Set-RecoveryServiceStartMode $recovery.ServiceConfig $recovery.StartupMode
-            Write-Host ('[S2F2-VENV] Đã trả chế độ khởi động dịch vụ: ' + $recovery.StartupMode)
+    if ($needsRecovery -and $GuardServiceStartup) {
+        $startupRestored = Invoke-RecoveryStep 'Khóa và trả chế độ khởi động dịch vụ' {
+            Invoke-WithMinhDucServiceStartupDisabled -Name $Names.Service -Paths $P -ScriptName 'CapNhat.ps1' -Action $restoreFiles -AllowAlreadyDisabled
         }
+    } else {
+        & $restoreFiles
     }
     [void](Invoke-RecoveryStep 'Khởi động và kiểm HTTPS bản cũ' {
         if (-not $recovery.Code -or -not $recovery.Venv -or -not $recovery.Database) { throw 'Mã/Python/CSDL chưa đạt; giữ dịch vụ dừng để tránh dùng sai phiên bản.' }
@@ -185,6 +182,11 @@ $transcript = $false
 try {
     $admin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { Stop-CaiDat 'Cần quyền Administrator.' @('Bấm đúp CAP_NHAT.bat và chọn "Có".') 30 }
+    try { Resume-MinhDucServiceStartMode -Paths $P -ScriptName 'CapNhat.ps1' | Out-Null }
+    catch {
+        Write-Loi $_.Exception.Message
+        Stop-CaiDat 'Chưa trả được chế độ khởi động dịch vụ web.' @('Báo người hỗ trợ và gửi nội dung lỗi ở trên.') 1
+    }
     if (-not (Test-Path -LiteralPath $P.ClinicEnv) -or -not (Get-Service -Name $Names.Service -ErrorAction SilentlyContinue)) {
         Stop-CaiDat 'Máy này chưa cài đặt bằng CAI_DAT.bat.' @('Chạy CAI_DAT.bat trước.') 2
     }

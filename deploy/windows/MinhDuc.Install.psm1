@@ -67,6 +67,7 @@ function Get-MinhDucPaths {
         Journal     = Join-Path $Data 'nhatky'
         Tls         = Join-Path $Data 'tls'
         ServiceDir  = Join-Path $Data 'service'
+        ServiceStartModePending = Join-Path $Data 'service-startmode-pending.json'
         Downloads   = Join-Path $Data 'taive'
         Updates     = Join-Path $Data 'capnhat'
         Share       = 'C:\MinhDuc-ChiaSe'
@@ -417,9 +418,143 @@ function New-ServiceXml {
 }
 
 function Set-RecoveryServiceStartMode($Service, [string]$Mode) {
-    # ChangeStartMode leaves DelayedAutoStart and SCM failure actions intact.
     $result = Invoke-CimMethod -InputObject $Service -MethodName ChangeStartMode -Arguments @{ StartMode = $Mode } -ErrorAction Stop
     if ($result.ReturnValue -ne 0) { throw ('Không đổi được chế độ khởi động dịch vụ sang ' + $Mode + ', mã ' + $result.ReturnValue) }
+}
+
+function Get-MinhDucDelayedAutoStart([string]$Name) {
+    $key = Get-Item -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\' + $Name) -ErrorAction Stop
+    try { return ($key.GetValue('DelayedAutoStart', 0) -ne 0) }
+    finally { $key.Dispose() }
+}
+
+function Open-MinhDucServiceStartModeLock([string]$Path) {
+    # Windows nhả khóa khi tiến trình thoát, kể cả khi finally không chạy.
+    try { return [IO.File]::Open(($Path + '.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+    catch { throw ('Không khóa được tệp theo dõi chế độ khởi động. Kiểm tra xem có thao tác bảo trì khác đang chạy và báo người hỗ trợ nếu lỗi vẫn còn. ' + $_.Exception.Message) }
+}
+
+function Get-MinhDucServiceStartModeMarkerFile([string]$Path) {
+    try { return Get-Item -LiteralPath $Path -Force -ErrorAction Stop }
+    catch [Management.Automation.ItemNotFoundException] { return $null }
+}
+
+function Write-MinhDucServiceStartModeMarker([string]$Path, $Marker) {
+    $temp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes(($Marker | ConvertTo-Json -Compress))
+        $file = [IO.File]::Open($temp, 'CreateNew', 'Write', 'None')
+        try {
+            $file.Write($bytes, 0, $bytes.Length)
+            $file.Flush($true)
+        } finally { $file.Dispose() }
+        [IO.File]::Move($temp, $Path)
+    } finally {
+        if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) }
+    }
+}
+
+function Restore-MinhDucServiceStartMode([string]$Name, $Paths, [string]$ScriptName) {
+    # Bên gọi phải giữ khóa suốt lúc đọc, sửa SCM và xóa dấu.
+    $path = $Paths.ServiceStartModePending
+    $markerFile = Get-MinhDucServiceStartModeMarkerFile $path
+    if (-not $markerFile) { return }
+
+    $invalid = 'Tệp đánh dấu chế độ khởi động bị hỏng hoặc thiếu thông tin. Giữ nguyên tệp.'
+    try {
+        $json = [IO.File]::ReadAllText($markerFile.FullName)
+        if (-not $json.TrimStart().StartsWith('{')) { throw $invalid }
+        $marker = ConvertFrom-Json -InputObject $json -ErrorAction Stop
+    }
+    catch { throw $invalid }
+    $timestamp = [datetime]::MinValue
+    if ($marker -isnot [pscustomobject] -or
+        @('Service', 'StartMode', 'DelayedAutoStart', 'CreatedAt', 'Script' | Where-Object { $_ -cnotin $marker.PSObject.Properties.Name }).Count -gt 0 -or
+        $marker.Service -isnot [string] -or $marker.Service -cne $Name -or
+        $marker.StartMode -isnot [string] -or $marker.StartMode -cnotin @('Automatic', 'Manual') -or
+        $marker.DelayedAutoStart -isnot [bool] -or
+        $marker.Script -isnot [string] -or $marker.Script -cnotin @('CapNhat.ps1', 'GiaHanChungChi.ps1') -or
+        $marker.CreatedAt -isnot [string] -or
+        -not [datetime]::TryParseExact($marker.CreatedAt, "dd/MM/yyyy HH:mm:ss 'UTC+7'", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref]$timestamp)) { throw $invalid }
+
+    $filter = "Name='$Name'"
+    $config = Get-CimInstance Win32_Service -Filter $filter -ErrorAction Stop
+    if (-not $config) { throw "Không tìm thấy dịch vụ $Name để trả chế độ khởi động." }
+    $expected = if ($marker.StartMode -eq 'Automatic') { 'Auto' } else { 'Manual' }
+    if ($config.StartMode -ne $expected) { Set-RecoveryServiceStartMode $config $marker.StartMode }
+    if ((Get-MinhDucDelayedAutoStart $Name) -ne $marker.DelayedAutoStart) {
+        if ($marker.StartMode -eq 'Automatic') {
+            $mode = if ($marker.DelayedAutoStart) { 'delayed-auto' } else { 'auto' }
+            $result = Invoke-Native -FilePath 'sc.exe' -Arguments @('config', $Name, 'start=', $mode) -Quiet
+            if (-not $result.Ok) { throw ('Không trả được DelayedAutoStart, mã ' + $result.Code) }
+        } else {
+            # Với Manual, Windows không dùng cờ này. Giữ lại giá trị đã lưu.
+            Set-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\' + $Name) -Name 'DelayedAutoStart' -Value ([int]$marker.DelayedAutoStart) -Type DWord -ErrorAction Stop
+        }
+    }
+    $actual = Get-CimInstance Win32_Service -Filter $filter -ErrorAction Stop
+    if (-not $actual -or $actual.StartMode -ne $expected -or (Get-MinhDucDelayedAutoStart $Name) -ne $marker.DelayedAutoStart) {
+        throw 'Kiểm lại chế độ khởi động hoặc DelayedAutoStart chưa đạt. Giữ nguyên tệp đánh dấu.'
+    }
+
+    $detail = "Đã trả chế độ khởi động dịch vụ $Name về $($marker.StartMode) (DelayedAutoStart=$($marker.DelayedAutoStart)). $($marker.Script) ghi dấu lúc $($marker.CreatedAt)."
+    $now = [datetime]::UtcNow.AddHours(7).ToString("dd/MM/yyyy HH:mm:ss 'UTC+7'", [Globalization.CultureInfo]::InvariantCulture)
+    Add-Content -LiteralPath (Join-Path $Paths.Journal 'service-startmode.log') -Value "[$now] $ScriptName - $detail" -Encoding UTF8 -ErrorAction Stop
+    Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+    if ($ScriptName -eq 'CapNhat.ps1') { Write-Dat ('[S2F2-VENV] ' + $detail) }
+    else { Write-Dat $detail }
+    return $detail
+}
+
+function Resume-MinhDucServiceStartMode {
+    param([Parameter(Mandatory=$true)]$Paths, [Parameter(Mandatory=$true)][string]$ScriptName)
+    $path = $Paths.ServiceStartModePending
+    if (-not (Get-MinhDucServiceStartModeMarkerFile $path)) { return }
+    $lock = Open-MinhDucServiceStartModeLock $path
+    try { Restore-MinhDucServiceStartMode (Get-MinhDucNames).Service $Paths $ScriptName }
+    finally { $lock.Dispose() }
+}
+
+function Invoke-WithMinhDucServiceStartupDisabled {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)]$Paths,
+        [Parameter(Mandatory=$true)][ValidateSet('CapNhat.ps1','GiaHanChungChi.ps1')][string]$ScriptName,
+        [Parameter(Mandatory=$true)][scriptblock]$Action,
+        [switch]$AllowAlreadyDisabled
+    )
+    $path = $Paths.ServiceStartModePending
+    $lock = Open-MinhDucServiceStartModeLock $path
+    try {
+        if (Get-MinhDucServiceStartModeMarkerFile $path) {
+            throw 'Còn tệp đánh dấu chế độ khởi động. Báo người hỗ trợ hoặc chạy KIEM_TRA.bat trước khi bảo trì lại.'
+        }
+        $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Name + "'") -ErrorAction Stop
+        if ($AllowAlreadyDisabled -and $config -and $config.StartMode -eq 'Disabled') {
+            # Quay về mã và dữ liệu vẫn cần chạy nếu dịch vụ đã bị vô hiệu hóa từ trước.
+            & $Action $config
+            return
+        }
+        $startupModes = @{ Auto = 'Automatic'; Manual = 'Manual' }
+        if (-not $config -or -not $startupModes.ContainsKey([string]$config.StartMode)) {
+            throw 'Dịch vụ web đang bị vô hiệu hóa hoặc không xác định được chế độ khởi động.'
+        }
+        Write-MinhDucServiceStartModeMarker $path ([ordered]@{
+            Service = $Name
+            StartMode = $startupModes[$config.StartMode]
+            DelayedAutoStart = Get-MinhDucDelayedAutoStart $Name
+            CreatedAt = [datetime]::UtcNow.AddHours(7).ToString("dd/MM/yyyy HH:mm:ss 'UTC+7'", [Globalization.CultureInfo]::InvariantCulture)
+            Script = $ScriptName
+        })
+        try {
+            # Chặn SCM chạy lại WinSW trong khi đang chờ tiến trình cũ thoát.
+            Set-RecoveryServiceStartMode $config 'Disabled'
+            & $Action $config
+        } finally {
+            Restore-MinhDucServiceStartMode $Name $Paths $ScriptName | Out-Null
+        }
+    } finally { $lock.Dispose() }
 }
 
 function Stop-MinhDucService {
@@ -428,15 +563,7 @@ function Stop-MinhDucService {
         [Parameter(Mandatory=$true)]$Paths
     )
     $service = Get-Service -Name $Name -ErrorAction Stop
-    $config = Get-CimInstance Win32_Service -Filter ("Name='" + $Name + "'") -ErrorAction Stop
-    $startupModes = @{ Auto = 'Automatic'; Manual = 'Manual' }
-    if (-not $config -or -not $startupModes.ContainsKey([string]$config.StartMode)) {
-        throw 'Dịch vụ web đang bị vô hiệu hóa hoặc không xác định được chế độ khởi động.'
-    }
-    $startupMode = $startupModes[$config.StartMode]
-    try {
-        # Chặn SCM chạy lại WinSW trong khi đang chờ tiến trình cũ thoát.
-        Set-RecoveryServiceStartMode $config 'Disabled'
+    Invoke-WithMinhDucServiceStartupDisabled -Name $Name -Paths $Paths -ScriptName 'GiaHanChungChi.ps1' -Action {
         $service.Refresh()
         if ($service.Status -notin @('Stopped', 'StopPending')) {
             try {
@@ -448,8 +575,6 @@ function Stop-MinhDucService {
         }
         $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
         Wait-MinhDucVenvPythonExit -Venv $Paths.Venv -ClinicEnv $Paths.ClinicEnv
-    } finally {
-        Set-RecoveryServiceStartMode $config $startupMode
     }
 }
 
@@ -559,13 +684,31 @@ function Get-WindowsFacts {
 
 function Invoke-HealthReport {
     # Bước m và KIEM_TRA: in ĐẠT/KHÔNG ĐẠT từng mục, lưu tệp .txt.
-    param([Parameter(Mandatory = $true)]$Paths, [Parameter(Mandatory = $true)][string]$Output, [string]$Title = 'KẾT QUẢ KIỂM TRA SỨC KHỎE')
+    param([Parameter(Mandatory = $true)]$Paths, [Parameter(Mandatory = $true)][string]$Output,
+          [string]$Title = 'KẾT QUẢ KIỂM TRA SỨC KHỎE', $ServiceStartupCheck)
     $factsFile = Join-Path $env:TEMP ('minhduc-facts-' + [guid]::NewGuid().ToString('N') + '.json')
     try {
         (Get-WindowsFacts -Paths $Paths | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $factsFile -Encoding UTF8
         $r = Invoke-Python -Paths $Paths -Quiet -OkCodes @(0, 1) -Arguments @('-m', 'scripts.with_env', $Paths.ClinicEnv, 'scripts.install_health',
             '--windows-facts', $factsFile, '--state', $Paths.BackupState, '--output', $Output, '--title', $Title)
     } finally { Remove-Item -LiteralPath $factsFile -Force -ErrorAction SilentlyContinue }
+    if ($ServiceStartupCheck) {
+        $lines = if (Test-Path -LiteralPath $Output) { Get-Content -LiteralPath $Output -Encoding UTF8 }
+        $inserted = $false
+        $report = foreach ($line in $lines) {
+            if ($line -match '^Tổng: (\d+)/(\d+) mục ĐẠT\.$') {
+                $inserted = $true
+                $passed = [int]$Matches[1] + [int]$ServiceStartupCheck.Ok
+                $total = [int]$Matches[2] + 1
+                $ServiceStartupCheck.Row
+                ''
+                "Tổng: $passed/$total mục ĐẠT."
+                if (-not $ServiceStartupCheck.Ok -and $r.Code -eq 0) { 'Có mục KHÔNG ĐẠT: gửi tệp này cho người hỗ trợ.' }
+            } else { $line }
+        }
+        if ($inserted) { Set-Content -LiteralPath $Output -Value $report -Encoding UTF8 }
+        else { Add-Content -LiteralPath $Output -Value $ServiceStartupCheck.Row -Encoding UTF8 }
+    }
     if (Test-Path -LiteralPath $Output) {
         foreach ($line in (Get-Content -LiteralPath $Output -Encoding UTF8)) {
             if ($line -match '^\[ĐẠT') { Write-Host $line -ForegroundColor Green }
@@ -576,7 +719,7 @@ function Invoke-HealthReport {
         Write-Loi 'Không tạo được báo cáo sức khỏe.'
         $r.Output | ForEach-Object { Write-Host ('    ' + $_) }
     }
-    return ($r.Code -eq 0)
+    return ($r.Code -eq 0 -and (-not $ServiceStartupCheck -or $ServiceStartupCheck.Ok))
 }
 
 function Find-Browser {

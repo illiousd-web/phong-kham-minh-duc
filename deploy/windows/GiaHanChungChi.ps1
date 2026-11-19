@@ -45,6 +45,11 @@ $changed = $false   # đã có tệp tạm hoặc đã thay tệp: cần khôi p
 try {
     $admin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { Stop-CaiDat 'Cần quyền Administrator.' @('Bấm đúp GIA_HAN_CHUNG_CHI.bat và chọn "Yes".') 30 }
+    try { Resume-MinhDucServiceStartMode -Paths $P -ScriptName 'GiaHanChungChi.ps1' | Out-Null }
+    catch {
+        Write-Loi $_.Exception.Message
+        Stop-CaiDat 'Chưa trả được chế độ khởi động dịch vụ web.' @('Báo người hỗ trợ và gửi nội dung lỗi ở trên.') 1
+    }
     $cert = Join-Path $P.Tls 'server.crt'
     $key = Join-Path $P.Tls 'server.key'
     $ca = Join-Path $P.Tls 'ca.crt'
