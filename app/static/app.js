@@ -480,7 +480,8 @@ async function stockScreen() {
 }
 async function stockDownload(path,filename) {
  const response=await fetch('/api'+path,{headers:authHeader()});
- if(!response.ok){const data=await response.json();throw new Error(data.detail||'Không xuất được phiếu kho');}
+ if(response.status===401){auth=null;sessionStorage.removeItem('md_token');renderLogin();throw new Error('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại');}
+ if(!response.ok){const data=await response.json().catch(()=>null);throw new Error(data?.detail||'Không xuất được phiếu kho');}
  const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');
  a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);
 }
