@@ -17,7 +17,15 @@ foreach($name in @('Get-MinhDucScheduledTask','Get-MinhDucBackupTaskSnapshot','G
 }
 function Get-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) return $script:fakeTasks[$TaskName]}
 function Export-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) return $script:fakeTasks[$TaskName].Xml}
-function Suspend-MinhDucBackupTasks {foreach($task in $script:fakeTasks.Values){$task.Settings.Enabled=$false}}
+function Suspend-MinhDucMaintenanceWindow {
+    param($Window, [switch]$AllowAlreadyDisabled)
+    foreach ($task in $script:fakeTasks.Values) { $task.Settings.Enabled = $false }
+    $Window.FirewallReady = $true
+}
+function Set-MinhDucRollbackPending { param($Window) }
+function Start-MinhDucMaintenanceService { param($Window) Start-Service -Name $Window.Name }
+function Resume-MinhDucMaintenanceWindow { param($Window, [switch]$VerifiedRollback, $BackupTaskSnapshot) $Window.FirewallReady = $false }
+function Hold-MinhDucFailedMaintenanceWindow { param($Window) $script:serviceStatus = 'Stopped' }
 function Invoke-Native {
     param($FilePath, $Arguments, [switch]$Quiet, $OkCodes)
     if ($script:mode -eq 'Code') { return [pscustomobject]@{ Ok = $false; Code = 16; Output = @() } }
@@ -36,10 +44,10 @@ function Invoke-Python {
 function Get-Fingerprint { return $script:fp }
 function Set-SecureAcl { param($Path, [switch]$Directory, $Writers) }
 function Restore-MinhDucBackupTasks {
-    param($Snapshot)
+    param($Snapshot, [switch]$Disabled)
     $script:calls.Add('Tasks')
     if ($script:mode -in @('Tasks','DatabaseAndTasks')) { throw 'Lỗi lịch giả lập' }
-    foreach($task in $script:fakeTasks.Values){$task.Settings.Enabled=$true}
+    foreach ($task in $script:fakeTasks.Values) { $task.Settings.Enabled = -not $Disabled }
 }
 function Stop-Service { param($Name, [switch]$Force, $ErrorAction)
     if ($script:mode -eq 'Stop') { throw 'Không dừng được dịch vụ giả lập' }
@@ -61,6 +69,8 @@ try {
         $homeForCase = Join-Path $root $script:mode
         $OldCode = Join-Path $homeForCase 'old'
         $P = [pscustomobject]@{ Code = (Join-Path $homeForCase 'live'); Venv = (Join-Path $homeForCase 'live\.venv'); VenvPython = (Join-Path $homeForCase 'live\.venv\Scripts\python.exe'); ClinicEnv = 'fake'; OwnerEnv = 'fake'; SuperEnv = 'fake'; Attachments = (Join-Path $homeForCase 'attachments'); Settings = (Join-Path $homeForCase 'settings'); BackupKey = 'fake' }
+        $P | Add-Member -NotePropertyName ServiceStartModePending -NotePropertyValue (Join-Path $homeForCase 'pending.json')
+        $P | Add-Member -NotePropertyName MaintenanceLockBase -NotePropertyValue $P.ServiceStartModePending
         $OldVenv = Join-Path $P.Code '.venv-cu'
         foreach ($folder in @((Join-Path $OldCode 'app'),(Join-Path $P.Code 'app'),(Join-Path $OldVenv 'Scripts'),(Join-Path $P.Venv 'Scripts'),$P.Attachments,$P.Settings)) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
         Set-Content -LiteralPath (Join-Path $OldCode 'app\main.py') -Value 'synthetic old'
@@ -78,7 +88,9 @@ try {
         $script:serviceStatus = 'Running'
         $script:calls = New-Object System.Collections.Generic.List[string]
         $thrown = $false
-        try { Invoke-QuayVe } catch { $thrown = $true }
+        $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'CapNhat.ps1' -GuardHttps
+        try { Invoke-QuayVe -Window $window } catch { $thrown = $true }
+        finally { Exit-MinhDucMaintenanceWindow -Window $window -KeepPending }
         if (($script:mode -eq 'Success') -eq $thrown) { throw ('Incorrect success/failure result: ' + $script:mode) }
         if ($script:mode -ne 'Success' -and $State.rollback_errors.Count -eq 0) { throw 'Failure was swallowed' }
         if (-not $script:calls.Contains('Tasks')) { throw 'Recovery stopped before attempting independent task restoration' }

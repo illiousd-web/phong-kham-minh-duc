@@ -112,7 +112,7 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     function Stop-Service {param($Name,[switch]$Force,$ErrorAction) $script:serviceStatus='Stopped'}
     function Start-Service {param($Name,$ErrorAction) $script:serviceStatus='Running'}
     $script:Names=@{BackupTask='fake-daily'}
-    foreach($helper in @('Get-MinhDucScheduledTask','Get-MinhDucBackupTaskSnapshot','Get-MinhDucBackupTaskSignature','Restore-MinhDucBackupTasks','Assert-MinhDucBackupTaskSnapshot')) {
+    foreach($helper in @('Get-MinhDucScheduledTask','Get-MinhDucBackupTaskSnapshot','Get-MinhDucBackupTaskSignature','ConvertTo-MinhDucDisabledTaskXml','Restore-MinhDucBackupTasks','Assert-MinhDucBackupTaskSnapshot')) {
         $found=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $helper},$true)
         Invoke-Expression $found.Extent.Text
     }
@@ -124,12 +124,55 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
         return $script:tasks[$TaskName]
     }
     function Export-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:snapshotReads++;return $script:tasks[$TaskName].Xml}
-    function Disable-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:disabled++;$script:tasks[$TaskName].Settings.Enabled=$false }
-    function Enable-ScheduledTask {param($TaskName,$TaskPath,$ErrorAction) $script:enabled.Add($TaskName);$script:tasks[$TaskName].Settings.Enabled=$true }
-    function Register-ScheduledTask {param($TaskName,$TaskPath,$Xml,[switch]$Force,$ErrorAction)
+    function Set-FakeTaskEnabled($TaskName, [bool]$Enabled) {
+        $task = $script:tasks[$TaskName]
+        $task.State = if ($Enabled) { 'Ready' } else { 'Disabled' }
+        $task.Settings.Enabled = $Enabled
+        [xml]$xml = $task.Xml
+        $setting = $xml.SelectSingleNode('/Task/Settings').SelectSingleNode("*[local-name()='Enabled']")
+        if ($setting) {
+            $setting.InnerText = ([string]$Enabled).ToLowerInvariant()
+            $task.Xml = $xml.OuterXml
+        }
+    }
+    function Disable-ScheduledTask {
+        param($TaskName,$TaskPath,$ErrorAction)
+        $script:disabled++
+        Set-FakeTaskEnabled $TaskName $false
+    }
+    function Enable-ScheduledTask {
+        param($TaskName,$TaskPath,$ErrorAction)
+        $script:enabled.Add($TaskName)
+        Set-FakeTaskEnabled $TaskName $true
+    }
+    function Register-ScheduledTask {
+        param($TaskName,$TaskPath,$Xml,[switch]$Force,$ErrorAction)
         $script:registrations++
-        if(($script:taskCase -eq 'RegisterSecond' -and $script:registrations -eq 2) -or ($script:taskCase -eq 'RegisterFirst' -and $script:registrations -eq 1)){throw 'register second failed'}
-        $script:tasks[$TaskName]=[pscustomobject]@{State='Ready';Settings=[pscustomobject]@{Enabled=$true};Xml=$Xml}
+        if (($script:taskCase -like '*RegisterSecond' -and $script:registrations -eq 2) -or
+            ($script:taskCase -like '*RegisterFirst' -and $script:registrations -eq 1)) { throw 'register second failed' }
+        $script:tasks[$TaskName] = [pscustomobject]@{ State = 'Ready'; Settings = [pscustomobject]@{ Enabled = $true }; Xml = $Xml }
+        if ($Xml -match '<Enabled>false</Enabled>') { Set-FakeTaskEnabled $TaskName $false }
+    }
+    function Suspend-MinhDucMaintenanceWindow {
+        param($Window, [switch]$AllowAlreadyDisabled)
+        if (-not $Window.TasksSuspended) {
+            Suspend-MinhDucBackupTasks
+            $Window.TasksSuspended = $true
+        }
+        $Window.FirewallReady = $true
+    }
+    function Set-MinhDucRollbackPending { param($Window) $Window.Status = 'quay_ve_that_bai' }
+    function Start-MinhDucMaintenanceService { param($Window) Start-Service -Name $Window.Name }
+    function Resume-MinhDucMaintenanceWindow {
+        param($Window, [switch]$VerifiedRollback, $BackupTaskSnapshot)
+        foreach ($task in $BackupTaskSnapshot) { Enable-ScheduledTask -TaskName $task.Name -TaskPath '\' }
+        Assert-MinhDucBackupTaskSnapshot -Snapshot $BackupTaskSnapshot -RequireBoth
+        $Window.FirewallReady = $false
+    }
+    function Hold-MinhDucFailedMaintenanceWindow {
+        param($Window)
+        Stop-Service -Name $Window.Name
+        foreach ($name in @($script:tasks.Keys)) { Set-FakeTaskEnabled $name $false }
     }
     function Unregister-ScheduledTask {param($TaskName,$TaskPath,$Confirm,$ErrorAction) $script:removals++;$script:tasks.Remove($TaskName)}
     function Wait-MinhDucVenvPythonExit {param($Venv)
@@ -149,11 +192,13 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
     function Wait-Https {param($Origin,$Seconds) return $true}
     $root=Join-Path ([IO.Path]::GetTempPath()) ('robocopy-fake-'+[guid]::NewGuid().ToString('N'))
     try {
-        foreach($script:taskCase in @('Normal','CopyFailure','RegisterSecond','RegisterFirst','Scheduler','NoDaily','Legacy')) {
+        foreach($script:taskCase in @('Normal','CopyFailure','RegisterSecond','RegisterFirst','GuardRegisterSecond','GuardRegisterFirst','Scheduler','NoDaily','Legacy')) {
             $script:alwaysFail=$script:taskCase -eq 'CopyFailure'
             $caseRoot=Join-Path $root $script:taskCase
             $OldCode=Join-Path $caseRoot 'old'
             $P=[pscustomobject]@{Code=(Join-Path $caseRoot 'live');Venv=(Join-Path $caseRoot '.venv');VenvPython=(Join-Path $caseRoot 'fake.exe');ClinicEnv='fake'}
+            $P | Add-Member -NotePropertyName ServiceStartModePending -NotePropertyValue (Join-Path $caseRoot 'pending.json')
+            $P | Add-Member -NotePropertyName MaintenanceLockBase -NotePropertyValue $P.ServiceStartModePending
             foreach($dir in @((Join-Path $OldCode 'app'),(Join-Path $P.Code 'app'))){New-Item -ItemType Directory -Force -Path $dir | Out-Null}
             Set-Content (Join-Path $OldCode 'app/main.py') 'old synthetic'
             Set-Content (Join-Path $P.Code 'app/main.py') 'new synthetic'
@@ -181,7 +226,16 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
                 }
                 Save-InitialBackupTaskSnapshot
                 if($script:snapshotReads -ne $reads -or $State.backup_task_snapshot.Count -ne $saved.Count){throw 'Snapshot was recaptured'}
-                Invoke-QuayVe
+                if ($script:taskCase -in @('RegisterSecond','RegisterFirst')) {
+                    # The standalone scheduler repair leaves a running web service
+                    # alone and enables surviving tasks after failed registration.
+                    try { Restore-MinhDucBackupTasks -Snapshot $saved }
+                    catch { $State.rollback_errors = @($_.Exception.Message); throw }
+                } else {
+                    $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'CapNhat.ps1' -GuardHttps
+                    try { Invoke-QuayVe -Window $window }
+                    finally { Exit-MinhDucMaintenanceWindow -Window $window -KeepPending }
+                }
                 if($script:taskCase -eq 'Legacy' -and $script:tasks.Count -ne 1){throw 'Legacy layout not restored exactly'}
             } catch {$thrown=$true}
             $expected=3;if($script:alwaysFail){$expected=5}
@@ -194,6 +248,15 @@ Write-Output 'PASS: venv natural exit, timeout kill, unrelated paths, PID reuse;
                 if($script:enabled.Count -ne 2 -or -not $script:enabled.Contains('fake-daily') -or -not $script:enabled.Contains('fake-daily - Chay bu')){throw 'Not every surviving task was enabled'}
                 if(($State.rollback_errors -join ' ') -notmatch 'register second failed'){throw 'Original registration error was lost'}
                 if($script:serviceStatus -ne 'Running'){throw 'Scheduler failure blocked web service'}
+                continue
+            }
+            if ($script:taskCase -like 'GuardRegister*') {
+                if (-not $thrown -or $script:enabled.Count -ne 0 -or $script:removals -ne 0 -or
+                    ($State.rollback_errors -join ' ') -notmatch 'register second failed' -or
+                    $script:serviceStatus -ne 'Stopped' -or -not $window.FirewallReady -or
+                    @($script:tasks.Values | Where-Object { $_.Settings.Enabled }).Count) {
+                    throw 'Failed registration during update did not preserve tasks and keep maintenance closed'
+                }
                 continue
             }
             if($script:copies -ne $expected -or $thrown -ne $script:alwaysFail){throw 'Wrong robocopy recovery outcome'}

@@ -16,9 +16,11 @@ if ($RealVenvLock) {
     $quit = Join-Path $root 'quit.txt'
     $fixture = Join-Path $root 'hold_rust.py'
     $launcher = $null
+    $window = $null
     try {
+        $window = Enter-MinhDucMaintenanceWindow -Name $serviceName -Paths $paths -ScriptName 'CapNhat.ps1'
         # Lần quét venv thử cũng nhận diện Python đang chạy clinic.env thật.
-        Stop-MinhDucService -Name $serviceName -Paths $paths
+        Stop-MinhDucService -Window $window
         New-Item -ItemType Directory -Path $root | Out-Null
         Copy-Item -LiteralPath $paths.Venv -Destination $venv -Recurse
         & $paths.BasePython -m venv --without-pip $oldVenv
@@ -69,9 +71,14 @@ while not (root / 'quit.txt').exists() and time.monotonic() < deadline:
             }
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
         } finally {
-            if ($wasRunning) {
-                Start-Service -Name $serviceName -ErrorAction Stop
-                $service.WaitForStatus('Running', (New-TimeSpan -Seconds 30))
+            if ($window) {
+                try {
+                    if ($wasRunning) {
+                        Resume-MinhDucMaintenanceWindow -Window $window
+                        Start-Service -Name $serviceName -ErrorAction Stop
+                        $service.WaitForStatus('Running', (New-TimeSpan -Seconds 30))
+                    }
+                } finally { Exit-MinhDucMaintenanceWindow -Window $window }
             }
         }
     }
@@ -84,7 +91,10 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($module, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
 foreach ($name in 'Get-MinhDucVenvProcessTree', 'Wait-MinhDucVenvPythonExit', 'Set-RecoveryServiceStartMode',
-                  'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode', 'Invoke-WithMinhDucServiceStartupDisabled') {
+                  'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode',
+                  'Read-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartup', 'Set-MinhDucRollbackPending', 'Hold-MinhDucFailedMaintenanceWindow',
+                  'Disable-MinhDucServiceStartup', 'Enter-MinhDucMaintenanceWindow', 'Suspend-MinhDucMaintenanceWindow',
+                  'Resume-MinhDucMaintenanceWindow', 'Exit-MinhDucMaintenanceWindow') {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
@@ -179,9 +189,22 @@ Write-Output 'PASS: kiểm module, chặn khóa ngoài phạm vi và dừng ti�
     function Start-Service { param($Name,$ErrorAction) $events.Add('Start'); $service.Status = 'Running' }
     function Get-MinhDucVenvProcessTree { param($Venv,$ClinicEnv,$Known) }
     function Write-MinhDucVenvLockDiagnostics { param($Venv,$Context,$ObservedProcesses) }
-    function Suspend-MinhDucBackupTasks {}
-    function Restore-MinhDucBackupTasks { param($Snapshot) }
+    function Get-MinhDucBackupTaskSnapshot {}
+    function Suspend-MinhDucBackupTasks { param([switch]$WaitForIdle) }
+    function Restore-MinhDucBackupTasks { param($Snapshot, [switch]$Disabled) }
     function Assert-MinhDucBackupTaskSnapshot { param($Snapshot,[switch]$RequireBoth) }
+    function Get-MinhDucNames { @{ BackupTask = 'test'; FirewallMaintenance = 'test firewall' } }
+    function Enable-MinhDucMaintenanceFirewall { param($Paths) }
+    function Remove-MinhDucMaintenanceFirewall {
+        param($Name)
+        $marker = Read-MinhDucServiceStartModeMarker $Names.Service $P
+        if ($marker.Status -ne 'da_quay_ve') { throw 'Chưa ghi xác nhận quay về trước khi gỡ tường lửa.' }
+    }
+    function Start-MinhDucMaintenanceService {
+        param($Window)
+        Restore-MinhDucServiceStartup $Window.Name (Read-MinhDucServiceStartModeMarker $Window.Name $Window.Paths)
+        Start-Service -Name $Window.Name
+    }
     function Wait-MinhDucVenvPythonExit {
         param($Venv,$ClinicEnv,$Known,[switch]$LogLockDiagnostics)
         if ($service.StartMode -ne 'Disabled' -or $service.Status -ne 'Stopped') { throw 'SCM vẫn có thể khởi động lại dịch vụ.' }
@@ -191,19 +214,30 @@ Write-Output 'PASS: kiểm module, chặn khóa ngoài phạm vi và dừng ti�
     function Test-Path { param($LiteralPath,$PathType) return $true }
     function Invoke-Python { param($Paths,$Arguments,[switch]$Quiet) $events.Add('Python'); return @{Ok=$true} }
     function Read-EnvFile { param($Path) return @{CLINIC_ORIGIN='https://127.0.0.1'} }
-    function Wait-Https { param($Origin,$Seconds) return $true }
+    function Wait-Https { param($Origin,$Seconds,[switch]$LocalOnly) return $true }
     $journal = Join-Path ([IO.Path]::GetTempPath()) ('minhduc-rollback-' + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $journal | Out-Null
     $P = @{ Code=$venv; Venv=$venv; VenvPython=$venvPython; ClinicEnv=$envPath; Journal=$journal
-            ServiceStartModePending=(Join-Path $journal 'service-startmode-pending.json') }
+            ServiceStartModePending=(Join-Path $journal 'service-startmode-pending.json')
+            MaintenanceLockBase=(Join-Path $journal 'service-startmode-pending.json') }
     $Names = @{ Service='MinhDuc' }
     try {
         foreach ($lockOutside in $false,$true) {
             $events.Clear()
             $service.Status = 'Running'; $service.StartMode = 'Auto'
             $State = @{ stopped=$true; code_replaced=$false; venv_moved=$false; migrated=$false; backup_tasks_changed=$false; backup_task_snapshot=@('old') }
-            try { Invoke-QuayVe -GuardServiceStartup }
-            catch { if (-not $lockOutside -or $_.Exception.Message -notmatch 'Khóa giả lập ngoài phạm vi') { throw } }
+            $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'CapNhat.ps1' -GuardHttps
+            try { Invoke-QuayVe -Window $window }
+            catch {
+                if (-not $lockOutside -or $_.Exception.Message -notmatch 'Khóa giả lập ngoài phạm vi') { throw }
+                $marker = Read-MinhDucServiceStartModeMarker $window.Name $window.Paths
+                if ($service.StartMode -ne 'Disabled' -or $marker.Status -ne 'quay_ve_that_bai' -or -not $window.FirewallReady) {
+                    throw 'Gặp tiến trình ngoài phần mềm phải giữ cửa sổ khóa chờ hỗ trợ.'
+                }
+                # Mô phỏng người hỗ trợ đã xử lý khóa và xác minh phương án khôi phục.
+                Resume-MinhDucMaintenanceWindow -Window $window -VerifiedRollback -BackupTaskSnapshot $State.backup_task_snapshot
+            }
+            finally { Exit-MinhDucMaintenanceWindow -Window $window }
             $expected = if ($lockOutside) { 'Disabled,Stop,Wait,Automatic' } else { 'Disabled,Stop,Wait,Python,Automatic,Start' }
             if (($events -join ',') -ne $expected) { throw ('Sai thứ tự khóa và trả chế độ khởi động: ' + ($events -join ',')) }
         }

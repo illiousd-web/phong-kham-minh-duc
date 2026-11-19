@@ -767,6 +767,39 @@ def test_plan_space_with_fewer_than_three_verified_deletes_none_of_them():
     assert deleted == [] and over
 
 
+@pytest.mark.parametrize('disk_free, expected_code', [(100, 0), (9, 1)])
+def test_update_backup_never_deletes_old_backups(tmp_path, monkeypatch, disk_free, expected_code):
+    from scripts import backup_lan
+
+    for number in range(4):
+        _real_backup(tmp_path, f'minhduc-old-{number}.mdbackup', b'old backup')
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    new_backup = tmp_path / 'minhduc-new.mdbackup'
+
+    def make_backup(directory, key, *, prune, enforce_budget):
+        assert directory == tmp_path and not prune and not enforce_budget
+        new_backup.write_bytes(b'new backup')
+        return new_backup
+
+    monkeypatch.setenv('CLINIC_BACKUP_KEEP', '3')
+    monkeypatch.setenv('CLINIC_DATA_DIR', str(tmp_path))
+    monkeypatch.delenv('CLINIC_TLS_CERT', raising=False)
+    monkeypatch.setattr(backup_job, 'disk_free', lambda directory: disk_free)
+    monkeypatch.setattr(backup_job, 'space_required', lambda directory: 10)
+    monkeypatch.setattr(backup_job, 'publish_alert', lambda *args: None)
+    monkeypatch.setattr(backup_lan, 'backup', make_backup)
+    monkeypatch.setattr(backup_lan, 'unpack_verified', lambda *args: {'files': ['database.dump']})
+    state_file = tmp_path / 'state.json'
+    assert backup_job.main(['--key', 'test-key', '--directory', str(tmp_path),
+                            '--state', str(state_file), '--no-prune']) == expected_code
+    assert {name: (tmp_path / name).read_bytes() for name in before} == before
+    state = json.loads(state_file.read_text(encoding='utf-8'))
+    if expected_code == 0:
+        assert state['last_file'] == new_backup.name and state['verified_count'] == 5
+    else:
+        assert state['space_error'] and not new_backup.exists()
+
+
 def test_warnings_corrupt_and_space_freed():
     ok = {'last_success_utc': (NOW - timedelta(hours=1)).isoformat()}
     warnings = backup_job.evaluate({**ok, 'corrupt': ['minhduc-x.mdbackup']}, None, NOW)

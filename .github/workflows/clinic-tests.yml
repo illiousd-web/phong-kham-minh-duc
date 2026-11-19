@@ -217,6 +217,25 @@ jobs:
           fetch-depth: 0
       - name: Installer logic checks (PowerShell 5.1)
         run: .\deploy\windows\Test-Installer.ps1
+      - name: Installer logic checks (PowerShell 7)
+        shell: pwsh
+        run: .\deploy\windows\Test-Installer.ps1
+      - name: Update data safety fault drills (PowerShell 5.1)
+        run: .\tests\Test-UpdateDataSafety.ps1
+      - name: Maintenance window logic on PowerShell 5.1 and PowerShell 7
+        run: |
+          foreach ($file in 'Test-CertificateRestart.ps1','Test-ServiceStartMode.ps1','Test-UpdateDataSafety.ps1','Test-VenvRollbackTree.ps1') {
+            foreach ($engine in 'powershell.exe','pwsh.exe') {
+              & $engine -NoProfile -ExecutionPolicy Bypass -File (Join-Path tests $file)
+              if ($LASTEXITCODE -ne 0) { throw "$file failed in $engine" }
+            }
+          }
+      - name: Backup task XML round-trip on PowerShell 5.1 and PowerShell 7
+        run: |
+          foreach ($engine in 'powershell.exe','pwsh.exe') {
+            & $engine -NoProfile -ExecutionPolicy Bypass -File tests/Test-BackupTaskRestoration.ps1
+            if ($LASTEXITCODE -ne 0) { throw "Backup task round-trip failed in $engine" }
+          }
       - name: Synthetic CI administrator credential (masked, never committed)
         run: |
           $pw = [guid]::NewGuid().ToString('N') + 'Ci!9x'
@@ -336,6 +355,8 @@ jobs:
           Pop-Location
       - name: Seed a real installation with one legacy --scheduled backup task
         run: .\.github\scripts\Test-S1BackupTasks.ps1 -Mode Legacy
+      - name: Record the original Enabled state of the legacy daily task
+        run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Capture
       - name: CAP_NHAT task-registration failure must roll back (expected exit 50)
         shell: cmd
         run: |
@@ -349,6 +370,8 @@ jobs:
             $text = [IO.File]::ReadAllText($f)
             [IO.File]::WriteAllText($f, $text.Replace('CLINIC_BACKUP_KEEP=14', 'CLINIC_BACKUP_KEEP=30'), (New-Object Text.UTF8Encoding($false)))
           }
+      - name: Verify Enabled state after legacy registration rollback
+        run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Rollback
       - name: CAP_NHAT.bat with a valid update
         shell: cmd
         run: call C:\MinhDuc\deploy\windows\CAP_NHAT.bat -KhongHoi -TepZip "%RUNNER_TEMP%\minhduc-ok.zip"
@@ -367,6 +390,32 @@ jobs:
           $now = & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py count | Select-Object -Last 1
           if ($now -ne $env:COUNT_BEFORE) { throw "Data changed by update: $now vs $env:COUNT_BEFORE" }
           Write-Output 'PASS: CAP_NHAT thanh cong, du lieu giu nguyen'
+      - name: Verify the legacy daily state and the Enabled default for new catchup
+        run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Success
+      - name: Record a mixed Enabled and Disabled pair before updating
+        run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Capture -DisableCatchup
+      - name: Exclusive maintenance, real backup guard and post-HTTPS warning
+        run: .\.github\scripts\Test-S2f2dMaintenanceWindow.ps1
+      - name: Verify the mixed task states after a successful update
+        run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Success
+      - name: Recover real backup tasks, service and HTTPS firewall after abrupt termination
+        run: |
+          foreach ($engine in 'powershell.exe','pwsh.exe') {
+            & $engine -NoProfile -ExecutionPolicy Bypass -File .\.github\scripts\Test-S2f2dMaintenanceRecovery.ps1
+            if ($LASTEXITCODE -ne 0) { throw "Abrupt maintenance recovery failed in $engine" }
+          }
+      - name: Keep real service, schedules and firewall closed after interrupted data change
+        run: |
+          foreach ($engine in 'powershell.exe','pwsh.exe') {
+            & $engine -NoProfile -ExecutionPolicy Bypass -File .\.github\scripts\Test-S2f2dMaintenanceRecovery.ps1 -AfterDataChange
+            if ($LASTEXITCODE -ne 0) { throw "Abrupt data change drill failed in $engine" }
+          }
+      - name: Record mixed task states again after the interruption drills
+        run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Capture -DisableCatchup
+      - name: CAP_NHAT exit 8 and KIEM_TRA finish a committed update after a firewall fault
+        run: .\.github\scripts\Test-S2f2dCommittedRecovery.ps1
+      - name: Verify the mixed task states after retrying maintenance cleanup
+        run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Success
       - name: Administrator saves UI settings over HTTPS before the broken update
         run: |
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py settings-set; if ($LASTEXITCODE) { throw 'settings-set' }
@@ -387,6 +436,8 @@ jobs:
           if ($now -ne $env:COUNT_BEFORE) { throw "Rollback did not restore database: $now vs $env:COUNT_BEFORE" }
           Write-Output 'PASS: CAP_NHAT loi -> tu quay ve ban cu (ma, thu vien, CSDL), dich vu chay lai'
           & C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py settings-check; if ($LASTEXITCODE) { throw 'settings after rollback' }
+      - name: Verify the mixed task signatures and states after rollback and reset the fixture
+        run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Rollback -ResetCatchup
       - name: Rollback CLI nonzero must report quay_ve_that_bai (synthetic VM only)
         run: .\.github\scripts\Test-S1RecoveryFailures.ps1 -Mode Database
       - name: Old service cannot start must report quay_ve_that_bai (synthetic VM only)

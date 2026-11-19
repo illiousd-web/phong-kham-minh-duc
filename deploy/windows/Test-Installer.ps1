@@ -93,12 +93,12 @@ $batText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'CAP_NHAT.bat'))
 $tail = $batText.Substring($batText.IndexOf('  call set "RC=%%errorlevel%%"'))
 $probe = Join-Path $env:TEMP ('minhduc-exit-' + [guid]::NewGuid().ToString('N') + '.bat')
 try {
-    foreach ($expected in @(0, 23, 50)) {
+    foreach ($expected in @(0, 6, 7, 8, 23, 50, 51, 52)) {
         [IO.File]::WriteAllText($probe, ("@echo off`r`nsetlocal`r`n(`r`n  cmd /c exit " + $expected + "`r`n" + $tail), [Text.Encoding]::ASCII)
         $result = Invoke-Native -FilePath 'cmd.exe' -Arguments @('/c', $probe, '-KhongHoi') -Quiet
         Assert-True ($result.Code -eq $expected) ('CAP_NHAT wrapper exit: expected ' + $expected + ', got ' + $result.Code)
     }
 } finally { Remove-Item -LiteralPath $probe -Force }
-Write-Output 'PASS: CAP_NHAT preserves process exits 0, 23 and 50'
+Write-Output 'PASS: CAP_NHAT preserves process exits 0, 6, 7, 8, 23, 50, 51 and 52'
 # Expected nonzero probe exits must not become the test runner exit status.
 $global:LASTEXITCODE = 0
