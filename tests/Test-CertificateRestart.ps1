@@ -274,6 +274,32 @@ try {
             }
         }
     }
+    # Chạy đúng hàm và các điểm chèn của diễn tập Windows trên bản sao mã nguồn.
+    $drillPath = Join-Path $PSScriptRoot '../.github/scripts/Test-S2f2dMaintenanceWindow.ps1'
+    $drill = [Management.Automation.Language.Parser]::ParseFile($drillPath, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw ($errors | Out-String) }
+    $writer = $drill.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-Fixture' }, $true)
+    Invoke-Expression $writer.Extent.Text
+    $fixture = Join-Path $root 'maintenance-drill'
+    New-Item -ItemType Directory -Path $fixture | Out-Null
+    foreach ($file in 'GiaHanChungChi.ps1', 'CapNhat.ps1', 'MinhDuc.Install.psm1') {
+        Copy-Item -LiteralPath (Join-Path $windows $file) -Destination $fixture
+    }
+    $insertions = $drill.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fixture' }, $true)
+    foreach ($call in $insertions) {
+        $elements = $call.CommandElements
+        Write-Fixture $elements[1].Value $elements[2].Value $elements[3].Value
+    }
+    $drillRenewal = Join-Path $fixture 'GiaHanChungChi.ps1'
+    $source = Get-Content -LiteralPath $drillRenewal -Raw -Encoding UTF8
+    $source = $source -replace '(?m)^    Import-Module .*$', '' -replace '(?m)^    \$admin = .*$', '    $$admin = $$true'
+    Set-Content -LiteralPath $drillRenewal -Value $source -Encoding UTF8
+    New-Item -ItemType File -Path (Join-Path $fixture 'release') | Out-Null
+    $test = @{ resultFile = Join-Path $fixture 'ket-qua-gia-han.json' }
+    & $drillRenewal -KhongHoi -ThuMucMa $fixture -ThuMucDuLieu $fixture
+    if ($LASTEXITCODE -ne 0 -or (Get-Content -LiteralPath (Join-Path $fixture 'ready') -Raw) -ne 'locked') {
+        throw 'Diễn tập không đi qua lệnh Enter-MinhDucMaintenanceWindow đầy đủ để ghi tệp ready.'
+    }
     Write-Output 'PASS: certificate restart'
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force

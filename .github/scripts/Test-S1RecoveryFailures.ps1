@@ -29,10 +29,12 @@ try {
     if ($Mode -eq 'Database') {
         $file = $files[0]
         $source = [IO.File]::ReadAllText($file)
-        $needle = "            result = rollback_database("
-        if (-not $source.Contains($needle)) { throw 'Rollback CLI injection location missing' }
+        $needle = "            result = rollback_database(urls['super'], urls['owner'], app, args.file, args.key, urls['uploads'])"
+        $lines = [regex]::Matches($source, ('(?m)^' + [regex]::Escape($needle) + '(?=\r?$)'))
+        if ($lines.Count -ne 1) { throw 'Expected one complete line for rollback CLI injection' }
         # This source is captured in the OLD-code snapshot. The real CLI will exit 23.
-        [IO.File]::WriteAllText($file, $source.Replace($needle, ("            return 23  # CI rollback failure`n" + $needle)), (New-Object Text.UTF8Encoding($false)))
+        $source = $source.Insert($lines[0].Index, "            return 23  # CI rollback failure`n")
+        [IO.File]::WriteAllText($file, $source, (New-Object Text.UTF8Encoding($false)))
     } else {
         # The running old process remains healthy until stopped; the copied-back old
         # source will then fail to start, proving that Wait-Https gates the result.

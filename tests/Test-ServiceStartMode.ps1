@@ -73,6 +73,7 @@ function Get-CimInstance {
 }
 function Invoke-CimMethod {
     param($InputObject, $MethodName, $Arguments, $ErrorAction)
+    if ($fixture.ContainsKey('BootModeChanges')) { $fixture.BootModeChanges.Add($Arguments.StartMode) }
     if ($MethodName -ne 'ChangeStartMode') { throw 'Sai phương thức SCM.' }
     $state = Get-Content -LiteralPath $fixture.ScmFile -Raw | ConvertFrom-Json
     if ($Arguments.StartMode -eq 'Disabled') {
@@ -114,11 +115,33 @@ function Read-EnvFile {
     return @{ CLINIC_ORIGIN = 'https://127.0.0.1:8443' }
 }
 function Start-Service {
-    param($Name, $ErrorAction)
+    [CmdletBinding()]
+    param($Name)
     if ($Name -ne 'MinhDuc' -or (Get-Service).StartType -ne 'Automatic' -or
         (Test-Path -LiteralPath $fixture.Paths.ServiceStartModePending) -or $fixture.Firewall -or
         -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu']) { throw 'Khởi động trước khi trả đủ bảo trì.' }
-    $fixture.ServiceStarts++
+    $fixture.BootStartAttempts++
+    if ($fixture.BootStartAttempts -le $fixture.BootStartFailures) { throw 'Start-Service lỗi giả lập.' }
+    $fixture.ServiceStarts = 1
+}
+function Start-Sleep {
+    param([int]$Seconds)
+    $fixture.BootSleeps.Add($Seconds)
+    $fixture.BootClock.Elapsed += [timespan]::FromSeconds($Seconds)
+    if ($fixture.BootReleaseAfter -eq $fixture.BootSleeps.Count) { $fixture.BootLock.Dispose() }
+}
+function Reset-BootFixture {
+    $fixture.BootClock = [pscustomobject]@{ Elapsed = [timespan]::Zero }
+    $fixture.BootSleeps = New-Object 'System.Collections.Generic.List[int]'
+    $fixture.BootStartAttempts = 0
+    $fixture.BootModeChanges = New-Object 'System.Collections.Generic.List[string]'
+    $fixture.BootStartFailures = 0
+    $fixture.BootHttpsFailures = 0
+    $fixture.BootProbes = New-Object 'System.Collections.Generic.List[int]'
+    $fixture.BootReleaseAfter = 0
+    $fixture.ServiceStarts = 0
+    $fixture.HttpsChecks = 0
+    $fixture.HttpsOk = $true
 }
 function Wait-Https {
     param($Origin, $Seconds, [switch]$LocalOnly)
@@ -132,7 +155,12 @@ function Wait-Https {
         throw 'Đã nhả khóa bảo trì trước khi kiểm HTTPS.'
     }
     $fixture.HttpsChecks++
-    return $fixture.HttpsOk
+    $fixture.BootProbes.Add($Seconds)
+    if (-not $fixture.HttpsOk -or $fixture.HttpsChecks -le $fixture.BootHttpsFailures) {
+        $fixture.BootClock.Elapsed += [timespan]::FromSeconds($Seconds)
+        return $false
+    }
+    return $true
 }
 
 if ($InterruptIn) {
@@ -345,6 +373,7 @@ try {
 
     $bootEntry = Join-Path $root 'TuGoBaoTri.ps1'
     $bootSource = Get-Content -LiteralPath (Join-Path $windows 'TuGoBaoTri.ps1') -Raw -Encoding UTF8
+    $bootSource = $bootSource.Replace('$clock = [Diagnostics.Stopwatch]::StartNew()', '$clock = $fixture.BootClock')
     Set-Content -LiteralPath $bootEntry -Value ($bootSource -replace '(?m)^    Import-Module .*$', '') -Encoding UTF8
     $bootLog = Join-Path $root 'nhatky/tu-go-bao-tri.log'
     New-Item -ItemType Directory -Path (Split-Path $bootLog) | Out-Null
@@ -362,9 +391,12 @@ try {
         if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force }
         $fixture.Tasks = @{ daily = $false; 'daily - Chay bu' = $false }
         $fixture.Firewall = $true
-        $fixture.ServiceStarts = 0
-        $fixture.HttpsChecks = 0
-        $fixture.HttpsOk = -not $boot['FailHttps']
+        Reset-BootFixture
+        if ($boot['FailHttps']) {
+            # Cấu hình đã được trả muộn. Lần kiểm HTTPS còn thời gian, nhưng hết thời gian để chờ lần kế tiếp.
+            $fixture.BootClock.Elapsed = [timespan]::FromSeconds(470)
+            $fixture.HttpsOk = $false
+        }
         @{ Mode = 'Disabled'; Delayed = $false } | ConvertTo-Json | Set-Content -LiteralPath $fixture.ScmFile -Encoding UTF8
         $scmHash = (Get-FileHash -LiteralPath $fixture.ScmFile).Hash
         if ($boot.Phase) {
@@ -383,6 +415,10 @@ try {
         if ($bootExit -ne $boot.Exit -or $logLine -notlike "[[]*UTC+7] Phase=$phaseLog Status=$statusLog Mã=$($boot.Exit) *$($boot.Message)*") {
             throw "Sai kết quả tự gỡ ở $($boot.Phase)/$($boot.Status) (mã $bootExit): $logLine"
         }
+        $expectedCalls = if ($boot['Restore']) { 1 } else { 0 }
+        if ($fixture.BootStartAttempts -ne $expectedCalls) { throw 'Số lần gọi Start-Service không khớp ca kiểm cũ.' }
+        $expectedSleeps = if ($boot['Busy']) { '60,60,60,60,60' } else { '' }
+        if (($fixture.BootSleeps -join ',') -ne $expectedSleeps) { throw 'Số lần hoặc thời gian chờ lấy khóa không đúng.' }
         if ($boot['Restore']) {
             if ($fixture.ServiceStarts -ne 1 -or $fixture.HttpsChecks -ne 1 -or (Test-Path -LiteralPath $pending) -or
                 (Get-Service).StartType -ne 'Automatic' -or -not (Get-MinhDucDelayedAutoStart MinhDuc) -or
@@ -393,6 +429,42 @@ try {
             (Get-FileHash -LiteralPath $fixture.ScmFile).Hash -ne $scmHash -or -not $fixture.Firewall -or $fixture.Tasks.Values -contains $true -or
             $(if ($boot.Phase) { (Get-FileHash -LiteralPath $pending).Hash -ne $markerHash } else { Test-Path -LiteralPath $pending })) {
             throw "Tự gỡ đã đổi dịch vụ, lịch, tường lửa hoặc dấu ở $($boot.Phase)/$($boot.Status)."
+        }
+    }
+    foreach ($retryCase in @(
+        @{ StartFailures = 2; HttpsFailures = 0; ReleaseAfter = 0; Attempts = 3; Probes = '120'; Exit = 0; Sleeps = '120,120'; Codes = '1,1,0' },
+        @{ StartFailures = 4; HttpsFailures = 0; ReleaseAfter = 0; Attempts = 4; Probes = ''; Exit = 1; Sleeps = '120,120,120'; Codes = '1,1,1,1' },
+        @{ StartFailures = 0; HttpsFailures = 0; ReleaseAfter = 2; Attempts = 1; Probes = '120'; Exit = 0; Sleeps = '60,60'; Codes = '52,52,0' },
+        @{ StartFailures = 0; HttpsFailures = 2; ReleaseAfter = 0; Attempts = 3; Probes = '120,120,120'; Exit = 0; Sleeps = '120,120'; Codes = '1,1,0' },
+        @{ StartFailures = 0; HttpsFailures = 4; ReleaseAfter = 2; Attempts = 3; Probes = '120,120,97'; Exit = 1; Sleeps = '60,60,120,120'; Codes = '52,52,1,1,1' }
+    )) {
+        Reset-BootFixture
+        $fixture.BootStartFailures = $retryCase.StartFailures
+        $fixture.BootHttpsFailures = $retryCase.HttpsFailures
+        $fixture.BootReleaseAfter = $retryCase.ReleaseAfter
+        $fixture.Tasks = @{ daily = $false; 'daily - Chay bu' = $false }
+        $fixture.Firewall = $true
+        @{ Mode = 'Disabled'; Delayed = $false } | ConvertTo-Json | Set-Content -LiteralPath $fixture.ScmFile -Encoding UTF8
+        $marker.Phase = 'chua_doi_du_lieu'
+        $marker.Status = 'dang_bao_tri'
+        Write-MinhDucServiceStartModeMarker $pending $marker
+        Remove-Item -LiteralPath $bootLog
+        $fixture.BootLock = if ($retryCase.ReleaseAfter) { Open-MinhDucServiceStartModeLock $fixture.Paths.MaintenanceLockBase }
+        try { & $bootEntry -ThuMucMa $root -ThuMucDuLieu $root }
+        finally { if ($fixture.BootLock) { $fixture.BootLock.Dispose() } }
+        $bootExit = $LASTEXITCODE
+        $lines = @(Get-Content -LiteralPath $bootLog -Encoding UTF8)
+        $codes = @($lines | ForEach-Object {
+            if ($_ -notmatch '\[.*UTC\+7\] Phase=\S+ Status=\S+ Mã=(\d+) Lần ') { throw "Thiếu thông tin lần thử: $_" }
+            $Matches[1]
+        })
+        if ($bootExit -ne $retryCase.Exit -or $fixture.BootStartAttempts -ne $retryCase.Attempts -or
+            ($fixture.BootProbes -join ',') -ne $retryCase.Probes -or ($fixture.BootSleeps -join ',') -ne $retryCase.Sleeps -or
+            $fixture.BootClock.Elapsed.TotalMinutes -gt 12 -or ($fixture.BootModeChanges -join ',') -ne 'Automatic' -or
+            ($codes -join ',') -ne $retryCase.Codes -or (Test-Path -LiteralPath $pending) -or
+            (Get-Service).StartType -ne 'Automatic' -or -not (Get-MinhDucDelayedAutoStart MinhDuc) -or
+            $fixture.Firewall -or -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu']) {
+            throw "Sai hành vi thử lại tự gỡ bảo trì ở ca $($retryCase.Codes)."
         }
     }
     Write-Output 'PASS: service startup recovery; data change holds maintenance; committed release retries tasks then firewall then startup'

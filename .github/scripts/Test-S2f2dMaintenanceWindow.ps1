@@ -13,8 +13,11 @@ $fixture = Join-Path $env:RUNNER_TEMP ('minhduc-maintenance-' + [guid]::NewGuid(
 New-Item -ItemType Directory -Path $fixture | Out-Null
 function Write-Fixture([string]$File, [string]$Needle, [string]$Insertion) {
     $text = [IO.File]::ReadAllText((Join-Path $fixture $File))
-    if (-not $text.Contains($Needle)) { throw ('Thiếu điểm chèn kiểm thử trong ' + $File) }
-    [IO.File]::WriteAllText((Join-Path $fixture $File), $text.Replace($Needle, ($Needle + [Environment]::NewLine + $Insertion)), [Text.UTF8Encoding]::new($true))
+    $lines = [regex]::Matches($text, ('(?m)^' + [regex]::Escape($Needle) + '(?=\r?$)'))
+    if ($lines.Count -ne 1) { throw ('Cần đúng một dòng chèn kiểm thử trong ' + $File) }
+    $line = $lines[0]
+    $text = $text.Insert($line.Index + $line.Length, [Environment]::NewLine + $Insertion)
+    [IO.File]::WriteAllText((Join-Path $fixture $File), $text, [Text.UTF8Encoding]::new($true))
 }
 function Assert-ServiceAndTasksRestored {
     $service = Get-Service -Name $names.Service
@@ -32,7 +35,7 @@ try {
     foreach ($file in @('CapNhat.ps1', 'GiaHanChungChi.ps1', 'MinhDuc.Install.psm1', 'DanhMucGoc.ps1')) {
         Copy-Item -LiteralPath (Join-Path $source $file) -Destination $fixture
     }
-    Write-Fixture 'GiaHanChungChi.ps1' '    $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName ''GiaHanChungChi.ps1''' @'
+    Write-Fixture 'GiaHanChungChi.ps1' '    $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName ''GiaHanChungChi.ps1'' -Lock $maintenanceLock' @'
     [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'ready'), 'locked')
     $deadline = (Get-Date).AddSeconds(40)
     while (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'release'))) {
@@ -89,7 +92,7 @@ try {
     Write-Fixture 'CapNhat.ps1' '    $committed = $true' @'
     Assert-MinhDucMaintenanceFirewall -Paths $P
 '@
-    Write-Fixture 'CapNhat.ps1' "        `$report = Join-Path `$P.Journal ('kiem-tra-sau-cap-nhat-' + `$Stamp + '.txt')" @'
+    Write-Fixture 'CapNhat.ps1' "            `$report = Join-Path `$P.Journal ('kiem-tra-sau-cap-nhat-' + `$Stamp + '.txt')" @'
         function Invoke-HealthReport {
             param($Paths, $Output, $Title)
             if (Get-MinhDucMaintenanceFirewall $Names.FirewallMaintenance ActiveStore) { throw 'Firewall still blocked after commit.' }
