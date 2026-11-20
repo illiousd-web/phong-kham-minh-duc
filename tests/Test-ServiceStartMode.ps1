@@ -17,11 +17,18 @@ foreach ($name in @('Set-RecoveryServiceStartMode', 'Open-MinhDucServiceStartMod
     Invoke-Expression $definition.Extent.Text
 }
 
-function Get-MinhDucNames { return @{ Service = 'MinhDuc'; BackupTask = 'daily'; FirewallMaintenance = 'fake HTTPS rule' } }
+function Get-MinhDucNames { return @{ Service = 'MinhDuc'; BackupTask = 'daily'; FirewallMaintenance = 'fake HTTPS rule'; StartupRecoveryTask = 'boot-recovery' } }
 function Get-MinhDucBackupTaskSnapshot {
     foreach ($name in $fixture.Tasks.Keys) { @{ Name = $name; Enabled = $fixture.Tasks[$name] } }
 }
-function Get-MinhDucScheduledTask { param($Name) @{ Settings = @{ Enabled = $fixture.Tasks[$Name] } } }
+function Get-MinhDucScheduledTask {
+    param($Name)
+    if ($Name -eq 'boot-recovery') {
+        if ($null -ne $fixture.BootTaskEnabled) { return @{ Settings = @{ Enabled = $fixture.BootTaskEnabled } } }
+        return
+    }
+    return @{ Settings = @{ Enabled = $fixture.Tasks[$Name] } }
+}
 function Enable-ScheduledTask {
     param($TaskName, $TaskPath, $ErrorAction)
     if ($fixture.FailTasks) { throw 'Bật lịch lỗi giả lập.' }
@@ -42,7 +49,7 @@ function Remove-MinhDucMaintenanceFirewall {
     if ($fixture.RequireStartupLast -and (Get-Service).StartType -ne 'Disabled') { throw 'Đã trả khởi động trước khi gỡ tường lửa.' }
     $fixture.Firewall = $false
 }
-$fixture = @{ IgnoreScmChange = $false; FailTasks = $false; FailFirewall = $false; RequireStartupLast = $false; RecoveryInProgress = $false }
+$fixture = @{ BootTaskEnabled = $true; IgnoreScmChange = $false; FailTasks = $false; FailFirewall = $false; RequireStartupLast = $false; RecoveryInProgress = $false }
 
 function Get-MinhDucPaths {
     param($Code, $Data)
@@ -66,6 +73,7 @@ function Get-CimInstance {
 }
 function Invoke-CimMethod {
     param($InputObject, $MethodName, $Arguments, $ErrorAction)
+    if ($fixture.ContainsKey('BootModeChanges')) { $fixture.BootModeChanges.Add($Arguments.StartMode) }
     if ($MethodName -ne 'ChangeStartMode') { throw 'Sai phương thức SCM.' }
     $state = Get-Content -LiteralPath $fixture.ScmFile -Raw | ConvertFrom-Json
     if ($Arguments.StartMode -eq 'Disabled') {
@@ -101,6 +109,59 @@ function Invoke-Python {
     return @{ Code = 0 }
 }
 function Write-Dat($Text) { Write-Host $Text }
+function Read-EnvFile {
+    param($Path)
+    if ($Path -ne $fixture.Paths.ClinicEnv) { throw 'Đọc nhầm cấu hình HTTPS.' }
+    return @{ CLINIC_ORIGIN = 'https://127.0.0.1:8443' }
+}
+function Start-Service {
+    [CmdletBinding()]
+    param($Name)
+    if ($Name -ne 'MinhDuc' -or (Get-Service).StartType -ne 'Automatic' -or
+        (Test-Path -LiteralPath $fixture.Paths.ServiceStartModePending) -or $fixture.Firewall -or
+        -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu']) { throw 'Khởi động trước khi trả đủ bảo trì.' }
+    $fixture.BootStartAttempts++
+    if ($fixture.BootStartAttempts -le $fixture.BootStartFailures) { throw 'Start-Service lỗi giả lập.' }
+    $fixture.ServiceStarts = 1
+}
+function Start-Sleep {
+    param([int]$Seconds)
+    $fixture.BootSleeps.Add($Seconds)
+    $fixture.BootClock.Elapsed += [timespan]::FromSeconds($Seconds)
+    if ($fixture.BootReleaseAfter -eq $fixture.BootSleeps.Count) { $fixture.BootLock.Dispose() }
+}
+function Reset-BootFixture {
+    $fixture.BootClock = [pscustomobject]@{ Elapsed = [timespan]::Zero }
+    $fixture.BootSleeps = New-Object 'System.Collections.Generic.List[int]'
+    $fixture.BootStartAttempts = 0
+    $fixture.BootModeChanges = New-Object 'System.Collections.Generic.List[string]'
+    $fixture.BootStartFailures = 0
+    $fixture.BootHttpsFailures = 0
+    $fixture.BootProbes = New-Object 'System.Collections.Generic.List[int]'
+    $fixture.BootReleaseAfter = 0
+    $fixture.ServiceStarts = 0
+    $fixture.HttpsChecks = 0
+    $fixture.HttpsOk = $true
+}
+function Wait-Https {
+    param($Origin, $Seconds, [switch]$LocalOnly)
+    if (-not $LocalOnly -or $Origin -ne 'https://127.0.0.1:8443' -or $fixture.ServiceStarts -ne 1) {
+        throw 'Chưa khởi động dịch vụ hoặc không kiểm HTTPS nội bộ.'
+    }
+    try { $unexpectedLock = Open-MinhDucServiceStartModeLock $fixture.Paths.MaintenanceLockBase }
+    catch { if ($_.Exception.Data['MinhDucExit'] -ne 52) { throw } }
+    if (Get-Variable unexpectedLock -ErrorAction SilentlyContinue) {
+        $unexpectedLock.Dispose()
+        throw 'Đã nhả khóa bảo trì trước khi kiểm HTTPS.'
+    }
+    $fixture.HttpsChecks++
+    $fixture.BootProbes.Add($Seconds)
+    if (-not $fixture.HttpsOk -or $fixture.HttpsChecks -le $fixture.BootHttpsFailures) {
+        $fixture.BootClock.Elapsed += [timespan]::FromSeconds($Seconds)
+        return $false
+    }
+    return $true
+}
 
 if ($InterruptIn) {
     $fixture.Paths = Get-MinhDucPaths -Data $InterruptIn
@@ -301,5 +362,110 @@ try {
     if ($script:CheckExit -ne 2 -or (Get-Service).StartType -ne 'Automatic' -or -not (Get-MinhDucDelayedAutoStart MinhDuc) -or
         $fixture.Firewall -or -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu'] -or
         (Test-Path -LiteralPath $pending)) { throw 'KIEM_TRA chưa trả đủ cấu hình sau khi đã chốt.' }
+    $null = New-Item -ItemType File -Path $fixture.Paths.ClinicEnv, $fixture.Paths.VenvPython
+    foreach ($enabled in @($true, $false, $null)) {
+        $fixture.BootTaskEnabled = $enabled
+        Run-Check
+        $expectedExit = if ($enabled) { 0 } else { 1 }
+        $taskLine = if ($enabled) { '\[ĐẠT\] Lịch tự gỡ bảo trì' } elseif ($null -eq $enabled) { 'Thiếu lịch tự gỡ bảo trì' } else { 'Lịch tự gỡ bảo trì .* đang tắt' }
+        if ($script:CheckExit -ne $expectedExit -or $script:CheckReport -notmatch $taskLine) { throw 'KIEM_TRA báo sai trạng thái tác vụ tự gỡ bảo trì.' }
+    }
+
+    $bootEntry = Join-Path $root 'TuGoBaoTri.ps1'
+    $bootSource = Get-Content -LiteralPath (Join-Path $windows 'TuGoBaoTri.ps1') -Raw -Encoding UTF8
+    $bootSource = $bootSource.Replace('$clock = [Diagnostics.Stopwatch]::StartNew()', '$clock = $fixture.BootClock')
+    Set-Content -LiteralPath $bootEntry -Value ($bootSource -replace '(?m)^    Import-Module .*$', '') -Encoding UTF8
+    $bootLog = Join-Path $root 'nhatky/tu-go-bao-tri.log'
+    New-Item -ItemType Directory -Path (Split-Path $bootLog) | Out-Null
+    $fixture.RequireStartupLast = $false
+    foreach ($boot in @(
+        @{ Phase = ''; Status = '-'; Exit = 0; Message = 'Không có tệp đánh dấu' },
+        @{ Phase = 'chua_doi_du_lieu'; Status = 'dang_bao_tri'; Restore = $true; Exit = 0; Message = 'HTTPS nội bộ đạt' },
+        @{ Phase = 'da_chot'; Status = 'dang_bao_tri'; Restore = $true; Exit = 0; Message = 'HTTPS nội bộ đạt' },
+        @{ Phase = 'da_doi_du_lieu'; Status = 'dang_bao_tri'; Exit = 1; Message = 'Cập nhật bị ngắt sau khi đã thay dữ liệu' },
+        @{ Phase = 'da_doi_du_lieu'; Status = 'da_quay_ve'; Exit = 1; Message = 'Cập nhật bị ngắt sau khi đã thay dữ liệu' },
+        @{ Phase = 'chua_doi_du_lieu'; Status = 'quay_ve_that_bai'; Exit = 1; Message = 'Quay về bản cũ chưa đạt' },
+        @{ Phase = 'chua_doi_du_lieu'; Status = 'dang_bao_tri'; Busy = $true; Exit = 52; Message = 'Đang có bảo trì khác' },
+        @{ Phase = 'da_chot'; Status = 'dang_bao_tri'; Restore = $true; FailHttps = $true; Exit = 1; Message = 'HTTPS nội bộ chưa đạt' }
+    )) {
+        if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force }
+        $fixture.Tasks = @{ daily = $false; 'daily - Chay bu' = $false }
+        $fixture.Firewall = $true
+        Reset-BootFixture
+        if ($boot['FailHttps']) {
+            # Cấu hình đã được trả muộn. Lần kiểm HTTPS còn thời gian, nhưng hết thời gian để chờ lần kế tiếp.
+            $fixture.BootClock.Elapsed = [timespan]::FromSeconds(470)
+            $fixture.HttpsOk = $false
+        }
+        @{ Mode = 'Disabled'; Delayed = $false } | ConvertTo-Json | Set-Content -LiteralPath $fixture.ScmFile -Encoding UTF8
+        $scmHash = (Get-FileHash -LiteralPath $fixture.ScmFile).Hash
+        if ($boot.Phase) {
+            $marker.Phase = $boot.Phase
+            $marker.Status = $boot.Status
+            Write-MinhDucServiceStartModeMarker $pending $marker
+            $markerHash = (Get-FileHash -LiteralPath $pending).Hash
+        }
+        $busyLock = if ($boot['Busy']) { Open-MinhDucServiceStartModeLock $fixture.Paths.MaintenanceLockBase }
+        try { & $bootEntry -ThuMucMa $root -ThuMucDuLieu $root }
+        finally { if ($busyLock) { $busyLock.Dispose() } }
+        $bootExit = $LASTEXITCODE
+        $logLine = Get-Content -LiteralPath $bootLog -Encoding UTF8 -Tail 1
+        $phaseLog = if ($boot.Phase -and -not $boot['Busy']) { $boot.Phase } else { '-' }
+        $statusLog = if ($boot['Busy']) { '-' } else { $boot.Status }
+        if ($bootExit -ne $boot.Exit -or $logLine -notlike "[[]*UTC+7] Phase=$phaseLog Status=$statusLog Mã=$($boot.Exit) *$($boot.Message)*") {
+            throw "Sai kết quả tự gỡ ở $($boot.Phase)/$($boot.Status) (mã $bootExit): $logLine"
+        }
+        $expectedCalls = if ($boot['Restore']) { 1 } else { 0 }
+        if ($fixture.BootStartAttempts -ne $expectedCalls) { throw 'Số lần gọi Start-Service không khớp ca kiểm cũ.' }
+        $expectedSleeps = if ($boot['Busy']) { '60,60,60,60,60' } else { '' }
+        if (($fixture.BootSleeps -join ',') -ne $expectedSleeps) { throw 'Số lần hoặc thời gian chờ lấy khóa không đúng.' }
+        if ($boot['Restore']) {
+            if ($fixture.ServiceStarts -ne 1 -or $fixture.HttpsChecks -ne 1 -or (Test-Path -LiteralPath $pending) -or
+                (Get-Service).StartType -ne 'Automatic' -or -not (Get-MinhDucDelayedAutoStart MinhDuc) -or
+                $fixture.Firewall -or -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu']) {
+                throw "Tự gỡ chưa trả đủ bảo trì hoặc kiểm HTTPS ở $($boot.Phase)."
+            }
+        } elseif ($fixture.ServiceStarts -ne 0 -or $fixture.HttpsChecks -ne 0 -or
+            (Get-FileHash -LiteralPath $fixture.ScmFile).Hash -ne $scmHash -or -not $fixture.Firewall -or $fixture.Tasks.Values -contains $true -or
+            $(if ($boot.Phase) { (Get-FileHash -LiteralPath $pending).Hash -ne $markerHash } else { Test-Path -LiteralPath $pending })) {
+            throw "Tự gỡ đã đổi dịch vụ, lịch, tường lửa hoặc dấu ở $($boot.Phase)/$($boot.Status)."
+        }
+    }
+    foreach ($retryCase in @(
+        @{ StartFailures = 2; HttpsFailures = 0; ReleaseAfter = 0; Attempts = 3; Probes = '120'; Exit = 0; Sleeps = '120,120'; Codes = '1,1,0' },
+        @{ StartFailures = 4; HttpsFailures = 0; ReleaseAfter = 0; Attempts = 4; Probes = ''; Exit = 1; Sleeps = '120,120,120'; Codes = '1,1,1,1' },
+        @{ StartFailures = 0; HttpsFailures = 0; ReleaseAfter = 2; Attempts = 1; Probes = '120'; Exit = 0; Sleeps = '60,60'; Codes = '52,52,0' },
+        @{ StartFailures = 0; HttpsFailures = 2; ReleaseAfter = 0; Attempts = 3; Probes = '120,120,120'; Exit = 0; Sleeps = '120,120'; Codes = '1,1,0' },
+        @{ StartFailures = 0; HttpsFailures = 4; ReleaseAfter = 2; Attempts = 3; Probes = '120,120,97'; Exit = 1; Sleeps = '60,60,120,120'; Codes = '52,52,1,1,1' }
+    )) {
+        Reset-BootFixture
+        $fixture.BootStartFailures = $retryCase.StartFailures
+        $fixture.BootHttpsFailures = $retryCase.HttpsFailures
+        $fixture.BootReleaseAfter = $retryCase.ReleaseAfter
+        $fixture.Tasks = @{ daily = $false; 'daily - Chay bu' = $false }
+        $fixture.Firewall = $true
+        @{ Mode = 'Disabled'; Delayed = $false } | ConvertTo-Json | Set-Content -LiteralPath $fixture.ScmFile -Encoding UTF8
+        $marker.Phase = 'chua_doi_du_lieu'
+        $marker.Status = 'dang_bao_tri'
+        Write-MinhDucServiceStartModeMarker $pending $marker
+        Remove-Item -LiteralPath $bootLog
+        $fixture.BootLock = if ($retryCase.ReleaseAfter) { Open-MinhDucServiceStartModeLock $fixture.Paths.MaintenanceLockBase }
+        try { & $bootEntry -ThuMucMa $root -ThuMucDuLieu $root }
+        finally { if ($fixture.BootLock) { $fixture.BootLock.Dispose() } }
+        $bootExit = $LASTEXITCODE
+        $lines = @(Get-Content -LiteralPath $bootLog -Encoding UTF8)
+        $codes = @($lines | ForEach-Object {
+            if ($_ -notmatch '\[.*UTC\+7\] Phase=\S+ Status=\S+ Mã=(\d+) Lần ') { throw "Thiếu thông tin lần thử: $_" }
+            $Matches[1]
+        })
+        if ($bootExit -ne $retryCase.Exit -or $fixture.BootStartAttempts -ne $retryCase.Attempts -or
+            ($fixture.BootProbes -join ',') -ne $retryCase.Probes -or ($fixture.BootSleeps -join ',') -ne $retryCase.Sleeps -or
+            $fixture.BootClock.Elapsed.TotalMinutes -gt 12 -or ($fixture.BootModeChanges -join ',') -ne 'Automatic' -or
+            ($codes -join ',') -ne $retryCase.Codes -or (Test-Path -LiteralPath $pending) -or
+            (Get-Service).StartType -ne 'Automatic' -or -not (Get-MinhDucDelayedAutoStart MinhDuc) -or
+            $fixture.Firewall -or -not $fixture.Tasks.daily -or $fixture.Tasks['daily - Chay bu']) {
+            throw "Sai hành vi thử lại tự gỡ bảo trì ở ca $($retryCase.Codes)."
+        }
+    }
     Write-Output 'PASS: service startup recovery; data change holds maintenance; committed release retries tasks then firewall then startup'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }

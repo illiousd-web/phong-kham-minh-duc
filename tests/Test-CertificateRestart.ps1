@@ -156,10 +156,24 @@ try {
     $entry = Join-Path $root 'GiaHanChungChi.ps1'
     $source = Get-Content -LiteralPath (Join-Path $windows 'GiaHanChungChi.ps1') -Raw -Encoding UTF8
     $source = $source -replace '(?m)^    Import-Module .*$', '' -replace '(?m)^    \$admin = .*$', '    $$admin = $$true'
+    $writer = 'function Write-Result([string]$Status, [string]$Detail) {'
+    $source = $source.Replace($writer, $writer + [Environment]::NewLine + @'
+    if ($test.case.ResultWriteFault) {
+        $test.resultWrites.Add($Status)
+        try { $unexpectedLock = Open-MinhDucServiceStartModeLock $P.MaintenanceLockBase }
+        catch { if ($_.Exception.Data['MinhDucExit'] -ne 52) { throw } }
+        if ($unexpectedLock) {
+            $unexpectedLock.Dispose()
+            $test.writeOutsideLock = $true
+        }
+        if ($Status -eq 'thanh_cong') { throw 'Lỗi ghi kết quả giả lập sau khi HTTPS đạt' }
+    }
+'@)
     Set-Content -LiteralPath $entry -Value $source -Encoding UTF8
 
     $cases = @(
         @{ Name = 'slow'; State = 'ok'; FailStarts = 0; Exit = 0; Result = 'thanh_cong'; Served = 'new'; Steps = 'verify,commit,start:new' }
+        @{ Name = 'write-result-after-https'; State = 'ok'; ResultWriteFault = $true; FailStarts = 0; Exit = 7; Result = 'dang_gia_han'; Served = 'new'; Steps = 'verify,commit,start:new' }
         @{ Name = 'skipped'; State = 'ok'; Skip = $true; Exit = 0; Result = 'bo_qua'; Served = 'old'; Steps = '' }
         @{ Name = 'damaged'; State = 'hong'; FailStarts = 1; Exit = 0; Result = 'thanh_cong'; Served = 'new'; Steps = 'verify,commit,start:new,start:new' }
         @{ Name = 'missing'; State = 'missing'; FailStarts = 1; Exit = 0; Result = 'thanh_cong'; Served = 'new'; Steps = 'verify,commit,start:new,start:new' }
@@ -189,8 +203,12 @@ try {
         $test.processScans = 0
         $test.starts = 0
         $test.steps = New-Object 'System.Collections.Generic.List[string]'
+        $test.resultWrites = New-Object 'System.Collections.Generic.List[string]'
         & $entry -KhongHoi -ThuMucMa $data -ThuMucDuLieu $data
         $exitCode = $LASTEXITCODE
+        if ($case.ResultWriteFault -and ($test.writeOutsideLock -or ($test.resultWrites -join ',') -ne 'dang_gia_han,thanh_cong')) {
+            throw 'Phải ghi trong khi giữ khóa và chỉ thử lưu thành công, không ghi dung sau lỗi mã 7.'
+        }
         $result = Get-Content -LiteralPath (Join-Path $data 'ket-qua-gia-han.json') -Raw | ConvertFrom-Json
         if ($exitCode -ne $case.Exit -or $result.status -ne $case.Result -or $test.served -ne $case.Served -or
             ($test.steps -join ',') -ne $case.Steps -or $test.startup -ne $test.originalStartup) {
@@ -213,7 +231,7 @@ try {
         $paths = Get-MinhDucPaths -Code $data -Data $data
         $resultFile = Join-Path $paths.Journal 'ket-qua-gia-han.json'
         '{"status":"thanh_cong","detail":"ket qua cu"}' | Set-Content -LiteralPath $resultFile -Encoding UTF8
-        $test = @{ startup = 'Disabled' }
+        $test = @{ startup = 'Disabled'; resultFile = $resultFile }
         if ($early.Name -ne 'missing-config') { New-Item -ItemType File -Path $paths.ClinicEnv | Out-Null }
         if ($early.Name -eq 'blocked-marker') {
             $test.watchResultAtStartup = $resultFile
@@ -225,15 +243,28 @@ try {
             $markerHash = (Get-FileHash -LiteralPath $paths.ServiceStartModePending).Hash
         }
         $lock = $null
-        if ($early.Name -eq 'busy-window') { $lock = Open-MinhDucServiceStartModeLock $paths.MaintenanceLockBase }
+        if ($early.Name -eq 'busy-window') {
+            $lock = Open-MinhDucServiceStartModeLock $paths.MaintenanceLockBase
+            '{"status":"dang_gia_han","detail":"phien dang giu khoa"}' | Set-Content -LiteralPath $resultFile -Encoding UTF8
+            $busyResultHash = (Get-FileHash -LiteralPath $resultFile -Algorithm SHA256).Hash
+        }
         if ($early.Name -eq 'requires-admin') {
             Set-Content -LiteralPath $entry -Value ($source.Replace('$admin = $true', '$admin = $false')) -Encoding UTF8
         }
-        try { & $entry -KhongHoi -ThuMucMa $data -ThuMucDuLieu $data }
+        try {
+            if ($early.Name -eq 'busy-window') {
+                $busyOutput = & $entry -KhongHoi -ThuMucMa $data -ThuMucDuLieu $data 6>&1
+            } else { & $entry -KhongHoi -ThuMucMa $data -ThuMucDuLieu $data }
+        }
         finally { if ($lock) { $lock.Dispose() } }
         $exitCode = $LASTEXITCODE
         $result = Get-Content -LiteralPath $resultFile -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($exitCode -ne $early.Code -or $result.status -ne 'dung' -or $result.detail -notlike "*$($early.Detail)*") {
+        if ($early.Name -eq 'busy-window') {
+            if ($exitCode -ne 52 -or (Get-FileHash -LiteralPath $resultFile -Algorithm SHA256).Hash -ne $busyResultHash -or
+                ($busyOutput -join "`n") -notmatch 'đang có bảo trì khác') {
+                throw 'Phiên gặp khóa bận phải trả mã 52, giữ nguyên tệp kết quả của phiên giữ khóa và in lý do.'
+            }
+        } elseif ($exitCode -ne $early.Code -or $result.status -ne 'dung' -or $result.detail -notlike "*$($early.Detail)*") {
             throw "Lỗi sớm $($early.Name) không ghi đúng kết quả. Mã $exitCode, trạng thái $($result.status), chi tiết $($result.detail)."
         }
         if ($early.Name -eq 'blocked-marker') {
@@ -242,6 +273,32 @@ try {
                 throw 'Gia hạn đã thay đổi dấu hoặc chế độ khởi động của phiên cập nhật bị khóa.'
             }
         }
+    }
+    # Chạy đúng hàm và các điểm chèn của diễn tập Windows trên bản sao mã nguồn.
+    $drillPath = Join-Path $PSScriptRoot '../.github/scripts/Test-S2f2dMaintenanceWindow.ps1'
+    $drill = [Management.Automation.Language.Parser]::ParseFile($drillPath, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw ($errors | Out-String) }
+    $writer = $drill.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-Fixture' }, $true)
+    Invoke-Expression $writer.Extent.Text
+    $fixture = Join-Path $root 'maintenance-drill'
+    New-Item -ItemType Directory -Path $fixture | Out-Null
+    foreach ($file in 'GiaHanChungChi.ps1', 'CapNhat.ps1', 'MinhDuc.Install.psm1') {
+        Copy-Item -LiteralPath (Join-Path $windows $file) -Destination $fixture
+    }
+    $insertions = $drill.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-Fixture' }, $true)
+    foreach ($call in $insertions) {
+        $elements = $call.CommandElements
+        Write-Fixture $elements[1].Value $elements[2].Value $elements[3].Value
+    }
+    $drillRenewal = Join-Path $fixture 'GiaHanChungChi.ps1'
+    $source = Get-Content -LiteralPath $drillRenewal -Raw -Encoding UTF8
+    $source = $source -replace '(?m)^    Import-Module .*$', '' -replace '(?m)^    \$admin = .*$', '    $$admin = $$true'
+    Set-Content -LiteralPath $drillRenewal -Value $source -Encoding UTF8
+    New-Item -ItemType File -Path (Join-Path $fixture 'release') | Out-Null
+    $test = @{ resultFile = Join-Path $fixture 'ket-qua-gia-han.json' }
+    & $drillRenewal -KhongHoi -ThuMucMa $fixture -ThuMucDuLieu $fixture
+    if ($LASTEXITCODE -ne 0 -or (Get-Content -LiteralPath (Join-Path $fixture 'ready') -Raw) -ne 'locked') {
+        throw 'Diễn tập không đi qua lệnh Enter-MinhDucMaintenanceWindow đầy đủ để ghi tệp ready.'
     }
     Write-Output 'PASS: certificate restart'
 } finally {

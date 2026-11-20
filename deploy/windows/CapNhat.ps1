@@ -27,7 +27,7 @@ $OldCode = Join-Path $P.Updates ('ma-cu-' + $Stamp)
 $NewDir = Join-Path $P.Updates ('moi-' + $Stamp)
 $OldVenv = Join-Path $P.Code '.venv-cu'
 $ResultFile = Join-Path $P.Updates 'ket-qua-cap-nhat.json'
-$State = @{ warnings = @(); rollback_errors = @(); backup_tasks_captured = $false; backup_tasks_changed = $false; backup_task_snapshot = @(); stopped = $false; code_replaced = $false; venv_moved = $false; migrated = $false; backup = $null; fingerprint = $null }
+$State = @{ warnings = @(); rollback_errors = @(); backup_tasks_captured = $false; backup_tasks_changed = $false; backup_task_snapshot = @(); startup_recovery_registered = $false; stopped = $false; code_replaced = $false; venv_moved = $false; migrated = $false; backup = $null; fingerprint = $null }
 
 function Get-AppVersion([string]$Root) {
     $main = Join-Path $Root 'app\main.py'
@@ -138,6 +138,11 @@ function Invoke-QuayVe {
                 }
             }
             if (-not (Test-Path -LiteralPath (Join-Path $P.Code 'app\main.py') -PathType Leaf)) { throw 'Thiếu app/main.py của bản cũ.' }
+            if ($State['startup_recovery_registered'] -and
+                -not (Test-Path -LiteralPath (Join-Path $P.Code 'deploy\windows\TuGoBaoTri.ps1') -PathType Leaf)) {
+                try { Unregister-ScheduledTask -TaskName $Names.StartupRecoveryTask -TaskPath '\' -Confirm:$false -ErrorAction Stop }
+                catch { Add-UpdateWarning ('Chưa gỡ được lịch tự gỡ bảo trì sau khi trả mã cũ: ' + $_.Exception.Message) }
+            }
         }
         $recovery.Venv = Invoke-RecoveryStep 'Trả môi trường Python cũ' {
             if (-not $recovery.Stopped) { throw 'Không dừng được dịch vụ, chưa thể trả môi trường Python.' }
@@ -354,8 +359,11 @@ try {
     & {
         Import-Module (Join-Path $P.Code 'deploy\windows\MinhDuc.Install.psm1') -Force -DisableNameChecking -Scope Local
         Set-MinhDucBackupTasks -Paths $P -Disabled
+        Set-MinhDucStartupRecoveryTask -Paths $P
+        $State.startup_recovery_registered = $true
     }
     Write-Dat 'Đã chuyển và kiểm lịch sao lưu: 20:00 và chạy bù riêng.'
+    Write-Dat 'Đã đăng ký tự gỡ bảo trì sau khi bật máy.'
 
 
     Write-Buoc 'Bước 8/8: Bật dịch vụ và kiểm tra sức khỏe'

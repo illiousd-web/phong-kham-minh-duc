@@ -17,10 +17,12 @@ try {
     $modulePath = Join-Path $fixture 'MinhDuc.Install.psm1'
     $text = [IO.File]::ReadAllText($modulePath)
     $needle = 'function Remove-MinhDucMaintenanceFirewall([string]$Name) {'
-    if (-not $text.Contains($needle)) { throw 'Thiếu điểm chèn lỗi gỡ tường lửa.' }
+    $lines = [regex]::Matches($text, ('(?m)^' + [regex]::Escape($needle) + '(?=\r?$)'))
+    if ($lines.Count -ne 1) { throw 'Cần đúng một dòng chèn lỗi gỡ tường lửa.' }
     $failure = 'S2f-2D CI: không gỡ được tường lửa'
-    $insertion = $needle + [Environment]::NewLine + "    throw '$failure'"
-    [IO.File]::WriteAllText($modulePath, $text.Replace($needle, $insertion), [Text.UTF8Encoding]::new($true))
+    $line = $lines[0]
+    $text = $text.Insert($line.Index + $line.Length, [Environment]::NewLine + "    throw '$failure'")
+    [IO.File]::WriteAllText($modulePath, $text, [Text.UTF8Encoding]::new($true))
 
     $beforeCount = & $paths.VenvPython (Join-Path $PSScriptRoot 'windows_e2e.py') count | Select-Object -Last 1
     if ($LASTEXITCODE) { throw 'Không đọc được dữ liệu trước diễn tập.' }

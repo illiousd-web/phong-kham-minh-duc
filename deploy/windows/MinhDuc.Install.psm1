@@ -24,6 +24,7 @@ $script:Names = @{
     FirewallGrp  = 'MinhDuc'
     FirewallMaintenance = 'MinhDuc - tam chan HTTPS bao tri'
     BackupTask   = 'MinhDuc - Sao luu 20h'
+    StartupRecoveryTask = 'MinhDuc - Tu go bao tri'
     Share        = 'MinhDuc'
     Port         = 8443
     Shortcut     = 'Phòng khám Minh Đức.lnk'
@@ -542,15 +543,17 @@ function Restore-MinhDucServiceStartup([string]$Name, $Marker) {
 }
 
 function Restore-MinhDucServiceStartMode {
-    param([string]$Name, $Paths, [string]$ScriptName, [switch]$VerifiedRollback, [object[]]$BackupTaskSnapshot)
+    param([string]$Name, $Paths, [string]$ScriptName, [switch]$VerifiedRollback, [object[]]$BackupTaskSnapshot,
+          [switch]$AtStartup, [hashtable]$RecoveryInfo)
     # Bên gọi giữ khóa đến khi đọc lại cấu hình và xóa dấu.
     $marker = Read-MinhDucServiceStartModeMarker $Name $Paths
     if (-not $marker) { return }
+    if ($null -ne $RecoveryInfo) { $RecoveryInfo.Marker = $marker }
     $extended = 'Status' -cin $marker.PSObject.Properties.Name
     if (-not $VerifiedRollback) {
         $blocked = if ($extended -and $marker.Status -eq 'quay_ve_that_bai') {
             'Quay về bản cũ chưa đạt (quay_ve_that_bai). Giữ khóa truy cập phần mềm.'
-        } elseif ($marker.Phase -eq 'da_doi_du_lieu' -and (-not $extended -or $marker.Status -ne 'da_quay_ve')) {
+        } elseif ($marker.Phase -eq 'da_doi_du_lieu' -and ($AtStartup -or -not $extended -or $marker.Status -ne 'da_quay_ve')) {
             'Cập nhật bị ngắt sau khi đã thay dữ liệu.'
         }
         if ($blocked) {
@@ -617,12 +620,16 @@ function Restore-MinhDucServiceStartMode {
 }
 
 function Resume-MinhDucServiceStartMode {
-    param([Parameter(Mandatory=$true)]$Paths, [Parameter(Mandatory=$true)][string]$ScriptName)
+    param([Parameter(Mandatory=$true)]$Paths, [Parameter(Mandatory=$true)][string]$ScriptName,
+          [switch]$AtStartup, [hashtable]$RecoveryInfo, [scriptblock]$AfterRestore)
     $path = $Paths.ServiceStartModePending
     if (-not (Get-MinhDucServiceStartModeMarkerFile $path)) { return }
     $lock = Open-MinhDucServiceStartModeLock $Paths.MaintenanceLockBase
-    try { Restore-MinhDucServiceStartMode (Get-MinhDucNames).Service $Paths $ScriptName }
-    finally { $lock.Dispose() }
+    try {
+        $detail = Restore-MinhDucServiceStartMode (Get-MinhDucNames).Service $Paths $ScriptName -AtStartup:$AtStartup -RecoveryInfo $RecoveryInfo
+        if ($detail -and $AfterRestore) { & $AfterRestore | Out-Null }
+        return $detail
+    } finally { $lock.Dispose() }
 }
 
 function Invoke-WithMinhDucServiceStartupDisabled {
@@ -682,17 +689,20 @@ function Disable-MinhDucServiceStartup {
 }
 
 function Enter-MinhDucMaintenanceWindow {
-    param([string]$Name, $Paths, [ValidateSet('CapNhat.ps1','GiaHanChungChi.ps1')][string]$ScriptName, [switch]$GuardHttps)
-    $lock = Open-MinhDucServiceStartModeLock $Paths.MaintenanceLockBase
+    param([string]$Name, $Paths, [ValidateSet('CapNhat.ps1','GiaHanChungChi.ps1')][string]$ScriptName, [switch]$GuardHttps,
+          [IO.FileStream]$Lock)
+    # Gia hạn giữ khóa qua cả lần ghi kết quả sau khi trả cấu hình.
+    $ownsLock = -not $Lock
+    if ($ownsLock) { $Lock = Open-MinhDucServiceStartModeLock $Paths.MaintenanceLockBase }
     try {
         Restore-MinhDucServiceStartMode $Name $Paths $ScriptName | Out-Null
         return @{
-            Lock = $lock; Name = $Name; Paths = $Paths; ScriptName = $ScriptName
+            Lock = $Lock; OwnsLock = $ownsLock; Name = $Name; Paths = $Paths; ScriptName = $ScriptName
             ServiceConfig = $null; RestoreStartup = $false; TasksSuspended = $false; TaskEnabled = @{}
             GuardHttps = [bool]$GuardHttps; FirewallReady = $false; SuspendedBackupTasks = $null
         }
     } catch {
-        $lock.Dispose()
+        if ($ownsLock) { $Lock.Dispose() }
         throw
     }
 }
@@ -805,7 +815,7 @@ function Resume-MinhDucMaintenanceWindow {
 function Exit-MinhDucMaintenanceWindow {
     param([Parameter(Mandatory=$true)]$Window, [switch]$KeepPending)
     try { if (-not $KeepPending) { Resume-MinhDucMaintenanceWindow -Window $Window } }
-    finally { $Window.Lock.Dispose() }
+    finally { if ($Window.OwnsLock) { $Window.Lock.Dispose() } }
 }
 
 function Stop-MinhDucService {
@@ -1099,6 +1109,22 @@ function Get-MinhDucScheduledTask {
         if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { return $null }
         throw
     }
+}
+
+function Set-MinhDucStartupRecoveryTask {
+    param([Parameter(Mandatory = $true)]$Paths)
+    $scriptPath = Join-Path $Paths.Code 'deploy\windows\TuGoBaoTri.ps1'
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw ('Thiếu tệp tự gỡ bảo trì: ' + $scriptPath) }
+    $engine = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -ThuMucMa "{1}" -ThuMucDuLieu "{2}"' -f $scriptPath, $Paths.Code, $Paths.Data
+    $action = New-ScheduledTaskAction -Execute $engine -Argument $arguments -WorkingDirectory $Paths.Code
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $trigger.Delay = 'PT1M'
+    $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 15) `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $script:Names.StartupRecoveryTask -TaskPath '\' -Action $action -Trigger $trigger `
+        -Principal $principal -Settings $settings -Description 'Tự gỡ bảo trì khi bật máy, nếu trạng thái cho phép.' -Force -ErrorAction Stop | Out-Null
 }
 
 # Snapshot only the two backup tasks managed by this installer. No other task is touched.
