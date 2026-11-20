@@ -408,6 +408,8 @@ function Step-SaoLuu {
     }
     $alert = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) $Names.AlertFile
     Set-MinhDucBackupTasks -Paths $P
+    Set-MinhDucStartupRecoveryTask -Paths $P
+    Write-Dat 'Đã đăng ký tự gỡ bảo trì sau khi bật máy.'
     Write-Dat 'Đã đặt lịch 20:00 luôn chạy và tác vụ chạy bù riêng sau khi khởi động.'
     Write-Thongtin 'Chạy sao lưu thử ngay bây giờ...'
     $r = Invoke-Python -Paths $P -Quiet -OkCodes @(0, 3) -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_job', '--key', $P.BackupKey,

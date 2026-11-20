@@ -264,6 +264,8 @@ jobs:
           if %errorlevel% equ 0 exit /b 0
           if %errorlevel% neq 40 exit /b %errorlevel%
           C:\MinhDuc\.venv\Scripts\python.exe .github\scripts\windows_e2e.py fresh-install-report
+      - name: CAI_DAT registered the startup recovery task
+        run: .\.github\scripts\Test-StartupRecoveryTask.ps1 -Mode Registration
       - name: Real venv Python child releases cryptography rust lock
         run: |
           Stop-Service MinhDuc -ErrorAction Stop
@@ -372,6 +374,8 @@ jobs:
           }
       - name: Verify Enabled state after legacy registration rollback
         run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Rollback
+      - name: Simulate an older installation without the startup recovery task
+        run: .\.github\scripts\Test-StartupRecoveryTask.ps1 -Mode PrepareUpdate
       - name: CAP_NHAT.bat with a valid update
         shell: cmd
         run: call C:\MinhDuc\deploy\windows\CAP_NHAT.bat -KhongHoi -TepZip "%RUNNER_TEMP%\minhduc-ok.zip"
@@ -392,6 +396,8 @@ jobs:
           Write-Output 'PASS: CAP_NHAT thanh cong, du lieu giu nguyen'
       - name: Verify the legacy daily state and the Enabled default for new catchup
         run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Success
+      - name: CAP_NHAT registered the startup recovery task and it recovers only safe interruptions
+        run: .\.github\scripts\Test-StartupRecoveryTask.ps1
       - name: Record a mixed Enabled and Disabled pair before updating
         run: .\.github\scripts\Test-S2f2dBackupTaskStates.ps1 -Mode Capture -DisableCatchup
       - name: Exclusive maintenance, real backup guard and post-HTTPS warning

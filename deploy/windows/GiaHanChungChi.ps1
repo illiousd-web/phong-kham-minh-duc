@@ -2,8 +2,8 @@
 # Tự nhận ra chứng chỉ/khóa máy chủ thiếu hoặc hỏng: CHẾ ĐỘ PHỤC HỒI cấp chứng chỉ mới từ
 # ca.key mà không đọc chứng chỉ cũ. Mất cả ca.key: báo phải tạo CA mới và cài lại mọi máy trạm.
 # Mã thoát: 0 đạt (hoặc không gia hạn theo lựa chọn); 50 lỗi nhưng đã trả chứng chỉ cũ và HTTPS
-# kiểm lại đạt; 51 không trả được chứng chỉ cũ / phục hồi không thành công. Mã 8: HTTPS đã dùng chứng chỉ mới,
-# còn cấu hình bảo trì cần kiểm tra.
+# kiểm lại đạt; 51 không trả được chứng chỉ cũ / phục hồi không thành công; 52 đang có bảo trì khác.
+# Mã 7: HTTPS đã dùng chứng chỉ mới, chưa ghi được kết quả. Mã 8: còn cấu hình bảo trì cần kiểm tra.
 # CA giữ nguyên nên máy trạm KHÔNG phải chạy lại CAI_MAY_TRAM.
 # Trình tự an toàn:
 #   1. Tạo mốc $stamp TRƯỚC mọi thay đổi (để khôi phục được ở bất kỳ giai đoạn nào).
@@ -46,6 +46,7 @@ $resultStatus = $null
 $resultDetail = ''
 $stamp = $null
 $window = $null
+$maintenanceLock = $null
 $changed = $false   # đã có tệp tạm hoặc đã thay tệp: cần khôi phục khi lỗi
 try {
     Import-Module (Join-Path $PSScriptRoot 'MinhDuc.Install.psm1') -Force -DisableNameChecking
@@ -54,11 +55,11 @@ try {
     $ResultFile = Join-Path $P.Journal 'ket-qua-gia-han.json'
     $admin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { Stop-CaiDat 'Cần quyền Administrator.' @('Bấm đúp GIA_HAN_CHUNG_CHI.bat và chọn "Yes".') 30 }
+    $maintenanceLock = Open-MinhDucServiceStartModeLock $P.MaintenanceLockBase
     try { Write-Result 'dang_gia_han' 'Đang gia hạn chứng chỉ HTTPS.' }
     catch { Write-Luu ('Chưa ghi được tệp kết quả gia hạn: ' + $_.Exception.Message) }
-    Resume-MinhDucServiceStartMode -Paths $P -ScriptName 'GiaHanChungChi.ps1' | Out-Null
+    $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'GiaHanChungChi.ps1' -Lock $maintenanceLock
     if (-not (Test-Path -LiteralPath $P.ClinicEnv)) { Stop-CaiDat 'Máy này chưa cài đặt bằng CAI_DAT.bat (thiếu tệp cấu hình).' @('Chạy CAI_DAT.bat.') 2 }
-    $window = Enter-MinhDucMaintenanceWindow -Name $Names.Service -Paths $P -ScriptName 'GiaHanChungChi.ps1'
     $cert = Join-Path $P.Tls 'server.crt'
     $key = Join-Path $P.Tls 'server.key'
     $ca = Join-Path $P.Tls 'ca.crt'
@@ -207,36 +208,35 @@ try {
         }
     }
 } finally {
-    if ($window) {
-        try { Exit-MinhDucMaintenanceWindow -Window $window }
-        catch {
-            $maintenanceError = 'Chưa trả được cấu hình bảo trì: ' + $_.Exception.Message
-            Write-Loi $maintenanceError
-            if ($resultStatus -eq 'thanh_cong') {
-                $resultStatus = 'thanh_cong_can_kiem_tra'
-                $exitCode = 8
-            } elseif (-not $exitCode) {
-                $resultStatus = 'khoi_phuc_that_bai'
-                $exitCode = 51
-            }
-            $resultDetail = (@($resultDetail, $maintenanceError) | Where-Object { $_ }) -join ' | '
-        }
-    }
-    if ($resultStatus) {
-        try { Write-Result $resultStatus $resultDetail }
-        catch {
-            $writeError = 'Chưa ghi được tệp kết quả gia hạn: ' + $_.Exception.Message
-            Write-Warning $writeError
-            if (-not $exitCode) {
-                $exitCode = 1
-                # HTTPS đã được kiểm nếu đã gia hạn. Chỉ báo lỗi ghi kết quả.
-                try { Write-Result 'dung' ($resultDetail + ' | ' + $writeError) }
-                catch { Write-Warning $_.Exception.Message }
+    try {
+        if ($window) {
+            try { Exit-MinhDucMaintenanceWindow -Window $window }
+            catch {
+                $maintenanceError = 'Chưa trả được cấu hình bảo trì: ' + $_.Exception.Message
+                Write-Loi $maintenanceError
+                if ($resultStatus -eq 'thanh_cong') {
+                    $resultStatus = 'thanh_cong_can_kiem_tra'
+                    $exitCode = 8
+                } elseif (-not $exitCode) {
+                    $resultStatus = 'khoi_phuc_that_bai'
+                    $exitCode = 51
+                }
+                $resultDetail = (@($resultDetail, $maintenanceError) | Where-Object { $_ }) -join ' | '
             }
         }
-    }
+        if ($resultStatus -and $exitCode -ne 52) {
+            try { Write-Result $resultStatus $resultDetail }
+            catch {
+                $writeError = 'Chưa ghi được tệp kết quả gia hạn: ' + $_.Exception.Message
+                Write-Warning $writeError
+                if ($exitCode -eq 0 -and $resultStatus -eq 'thanh_cong') { $exitCode = 7 }
+            }
+        }
+    } finally { if ($maintenanceLock) { $maintenanceLock.Dispose() } }
 }
-if ($exitCode -eq 8) {
+if ($exitCode -eq 7) {
+    Write-Luu 'GIA HẠN THÀNH CÔNG, HTTPS ĐÃ DÙNG CHỨNG CHỈ MỚI, CHƯA GHI ĐƯỢC TỆP KẾT QUẢ (mã 7). Báo người hỗ trợ.'
+} elseif ($exitCode -eq 8) {
     Write-Luu 'HTTPS ĐÃ DÙNG CHỨNG CHỈ MỚI, NHƯNG CHƯA KẾT THÚC BẢO TRÌ (mã 8). Chạy KIEM_TRA.bat để trả cấu hình còn thiếu.'
 } elseif ($exitCode -eq 0 -and $resultStatus -eq 'thanh_cong') {
     Write-Host ''

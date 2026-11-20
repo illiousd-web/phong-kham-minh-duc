@@ -131,6 +131,8 @@ function Set-MinhDucBackupTasks {
     param($Paths, [switch]$Disabled)
     if (-not $Disabled -or $scenario.Tasks -contains 'Enabled') { throw 'Đăng ký lịch mới trước khi mở lại web phải ở Disabled.' }
 }
+function Set-MinhDucStartupRecoveryTask { param($Paths) }
+function Unregister-ScheduledTask { param($TaskName, $TaskPath, $Confirm, $ErrorAction) }
 function Invoke-HealthReport {
     param($Paths, $Output, $Title)
     $result = Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json
