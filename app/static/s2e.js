@@ -68,10 +68,13 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
     ['Phải thu','charged','money'],['Đã thu thuần (sau hoàn tiền)','paid','money'],['Còn thiếu','known_due','money'],
     ['Khoản chưa có giá','unpriced_count','number'],['Ghi chú','note']
    ];
+   const waiverNote=data.totals.waived_visits?
+    '<p class="hint">Tiền miễn thu tính theo lần duyệt trong kỳ, kể cả lượt đã mở lại.</p>':'';
    return stats([
     ['Chưa thu – lượt khám trong kỳ',money(data.totals.known_due)],
-    ['Chênh lệch thu – phát sinh trong kỳ',money(data.totals.outstanding)]
-   ])+'<h3>Theo ngày</h3>'+this.table('revenue',columns,[...data.rows,{...data.totals,day:'Tổng kỳ'}])+
+    ['Chênh lệch thu – phát sinh trong kỳ',money(data.totals.outstanding)],
+    ['Miễn thu đã duyệt',money(data.totals.waived_amount)+' · '+data.totals.waived_visits+' lượt']
+   ])+waiverNote+'<h3>Theo ngày</h3>'+this.table('revenue',columns,[...data.rows,{...data.totals,day:'Tổng kỳ'}])+
     '<h3>Lượt khám còn thiếu tiền</h3>'+this.limitedTable('unpaid',unpaid,data.unpaid_visits);
   },
 

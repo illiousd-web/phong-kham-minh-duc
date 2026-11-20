@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from .domain import invoice
+from .financial_state import ensure_financial_open
 
 VN = timezone(timedelta(hours=7))
 
@@ -60,6 +61,7 @@ def manual_charge(c, cid):
     ch = c.execute('SELECT * FROM effective_charges WHERE id=?', (cid,)).fetchone()
     if not ch:
         raise HTTPException(404, 'Không có khoản phải thu')
+    ensure_financial_open(c, ch['visit_id'])
     if ch['original_amount'] is not None:
         raise HTTPException(409, 'Khoản này có giá cố định, không phải khoản giá nhập tay')
     if c.execute('SELECT 1 FROM charge_voids WHERE charge_id=?', (cid,)).fetchone():

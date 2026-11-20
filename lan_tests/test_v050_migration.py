@@ -79,7 +79,7 @@ def test_upgrade_preserves_every_old_column_and_backup_restore(version,tmp_path,
                     from app.controlled_migration import FILES
                     assert json.loads(added[-1][columns.index('details')])=={'substances':122,'limits':62,'files':{name:spec[1] for name,spec in FILES.items()}}
                     # S2c explicitly adds migration 17; keep the exact-version check.
-                    assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0]==19
+                    assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0]==20
                     assert c.execute('SELECT * FROM clinic_profile').fetchall()==[(1,'','','','','')]
                     assert c.execute('SELECT count(*) FROM user_signatures').fetchone()[0]==0
                     assert c.execute('SELECT count(*) FROM document_signatures').fetchone()[0]==0
