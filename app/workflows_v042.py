@@ -11,6 +11,7 @@ CLS = ('lab', 'ultrasound', 'xray', 'ecg')
 
 
 from .domain import ensure_open, dispense_rx, revision, status_refresh
+from .financial_state import ensure_financial_open
 
 class CancelRequest(BaseModel):
     reason: str = Field(min_length=8, max_length=500)
@@ -111,6 +112,7 @@ def install_workflows(app, db, principal, require, audit, visit_access, now):
             if r['status']!='pending':raise HTTPException(409,'Yêu cầu đã xử lý')
             if r['requested_by']==u['id']:raise HTTPException(403,'Không tự duyệt yêu cầu của mình')
             order=c.execute('SELECT * FROM orders WHERE id=?',(r['order_id'],)).fetchone()
+            if data.approve:ensure_financial_open(c,order['visit_id'])
             if c.execute('SELECT status FROM visits WHERE id=?',(order['visit_id'],)).fetchone()[0] in ('completed','cancelled'):raise HTTPException(409,'Lượt đã khóa; dùng phụ lục, không đổi chỉ định cũ')
             from .order_result_versions import has_approved_result
             if data.approve and has_approved_result(c,order):raise HTTPException(409,'Chỉ định đã có kết quả duyệt; dùng giảm phí nếu cần bỏ phí')

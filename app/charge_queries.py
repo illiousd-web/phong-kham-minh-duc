@@ -20,19 +20,31 @@ priced AS {materialized}(
  JOIN charge_changes x ON x.charge_id=e.id WHERE 1=1{selected})'''
 
 
-DUES_SQL='WITH '+priced_ctes()+''',
+DUES_CTES='WITH '+priced_ctes()+''',
      ch AS (SELECT visit_id,COALESCE(SUM(amount),0) AS total,
           SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS unpriced FROM priced GROUP BY visit_id),
      adj AS (SELECT visit_id,SUM(CASE WHEN kind='discount' THEN amount ELSE 0 END) AS discount,
           SUM(CASE WHEN kind='refund' THEN amount ELSE 0 END) AS refund
           FROM effective_adjustments WHERE status='approved' GROUP BY visit_id),
      pay AS (SELECT visit_id,SUM(amount) AS total FROM payments GROUP BY visit_id),
-     t AS (SELECT v.id,v.patient_id,v.created_at,COALESCE(ch.total,0)-COALESCE(adj.discount,0) AS charged,
+     t AS (SELECT v.id,v.patient_id,v.created_at,v.status,COALESCE(ch.total,0)-COALESCE(adj.discount,0) AS charged,
           COALESCE(pay.total,0)-COALESCE(adj.refund,0) AS paid,COALESCE(ch.unpriced,0) AS unpriced_count
-          FROM visits v LEFT JOIN ch ON ch.visit_id=v.id LEFT JOIN adj ON adj.visit_id=v.id LEFT JOIN pay ON pay.visit_id=v.id)
+          FROM visits v LEFT JOIN ch ON ch.visit_id=v.id LEFT JOIN adj ON adj.visit_id=v.id LEFT JOIN pay ON pay.visit_id=v.id)'''
+
+
+DUES_SQL=DUES_CTES+'''
 SELECT t.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,t.charged,t.paid,t.unpriced_count
 FROM t JOIN patients p ON p.id=t.patient_id
 WHERE t.charged<>t.paid OR t.unpriced_count>0 OR t.created_at>=?
+ORDER BY t.id DESC'''
+
+
+FINANCIAL_DUES_SQL=DUES_CTES+'''
+SELECT t.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,t.charged,t.paid,t.unpriced_count,
+       CASE WHEN t.status='completed' THEN 1 ELSE 0 END AS financial_pending
+FROM t JOIN patients p ON p.id=t.patient_id
+WHERE (t.charged<>t.paid OR t.unpriced_count>0 OR t.created_at>=? OR t.status='completed')
+ AND NOT EXISTS (SELECT 1 FROM active_visit_settlements s WHERE s.visit_id=t.id)
 ORDER BY t.id DESC'''
 
 
@@ -57,4 +69,6 @@ def orders_sql(where='',hide_results=False,limit=100,include_versions=True):
 
 
 # Cùng t và điều kiện nợ với /dues; không tải tên hoặc danh sách về Python.
-DUES_COUNT_SQL=DUES_SQL[:DUES_SQL.index('SELECT t.id AS visit_id')]+"SELECT COUNT(*) FROM t WHERE t.charged>t.paid OR t.unpriced_count>0"
+DUES_COUNT_SQL=DUES_CTES+'''
+SELECT COUNT(*) FROM t WHERE (t.charged>t.paid OR t.unpriced_count>0)
+ AND NOT EXISTS (SELECT 1 FROM active_visit_settlements s WHERE s.visit_id=t.id)'''

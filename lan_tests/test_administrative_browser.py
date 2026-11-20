@@ -468,3 +468,92 @@ def test_s2a_allergies_settings_and_today_at_vietnam_midnight(https_server, clie
         clients['admin'].put('/api/clinic-profile', json=before)
         with db(True) as c:
             c.execute('DELETE FROM user_signatures WHERE user_id=?', (IDS['doctor'],))
+
+
+def test_cashier_financial_settlement_over_https(https_server, clients, visit):
+    from tests.test_s2e_settlements import checked, complete_visit
+
+    complete_visit(clients['doctor'], visit)
+    origin, certdir = https_server
+    cert = x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    pin = base64.b64encode(hashlib.sha256(cert.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode()
+    errors = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'),
+            args=['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors-spki-list='+pin])
+        if os.getenv('MINHDUC_EXPECT_CHROMIUM_MAJOR'):
+            assert browser.version.split('.')[0] == os.environ['MINHDUC_EXPECT_CHROMIUM_MAJOR']
+        page = browser.new_page(viewport={'width': 390, 'height': 844})
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto(origin)
+        page.locator('[name=username]').fill('test_cashier')
+        page.locator('[name=password]').fill(PASSWORDS['cashier'])
+        page.locator('[data-form=login] button').click()
+        page.locator('.account-trigger').wait_for()
+        settle(page)
+        queue_row = page.locator(f'[data-kind=cash-settlement][data-id="{visit}"]')
+        expect(queue_row).to_be_visible()
+        queue_row.click()
+        settle(page)
+        finish = page.get_by_role('button', name='Kết thúc lượt', exact=True)
+        expect(finish).to_be_disabled()
+        expect(finish.locator('..')).to_contain_text('Còn phải thu 150.000 đồng')
+        no_horizontal_scroll(page)
+        with page.expect_response(lambda r: r.url.endswith('/api/payments') and r.request.method == 'POST') as payment_saved:
+            page.locator('[data-form=payment]').get_by_role('button', name='Thu tiền', exact=True).click()
+        assert payment_saved.value.status == 201
+        settle(page)
+        expect(finish).to_be_enabled()
+        expect(page.get_by_role('button', name='Duyệt miễn thu')).to_have_count(0)
+        with page.expect_response(lambda r: r.url.endswith(f'/api/visits/{visit}/settle')) as result:
+            finish.click()
+        assert result.value.status == 200 and result.value.json()['kind'] == 'du_thu'
+        settle(page)
+        expect(page.locator('#toast')).to_have_text('Đã kết thúc tài chính')
+        expect(queue_row).to_have_count(0)
+        stored = checked(clients['cashier'].get(f'/api/visits/{visit}/settlement'))
+        assert stored['financial_settlement']['kind'] == 'du_thu'
+
+        page.locator('.account-trigger').click()
+        page.locator('#logout').click()
+        page.locator('[name=username]').fill('test_admin')
+        page.locator('[name=password]').fill(PASSWORDS['admin'])
+        page.locator('[data-form=login] button').click()
+        page.locator('.account-trigger').wait_for()
+        settle(page)
+        go(page, 'financial-settlements')
+        page.get_by_role('button', name='Đã kết thúc', exact=True).click()
+        settle(page)
+        pick(page, 'financial-visit', visit)
+        page.once('dialog', lambda dialog: dialog.accept('Đối soát thử nghiệm trên trình duyệt'))
+        with page.expect_response(lambda r: r.url.endswith(f'/api/visits/{visit}/settlement-reopen')) as reopened:
+            page.get_by_role('button', name='Mở lại', exact=True).click()
+        assert reopened.value.status == 200
+        settle(page)
+        manager = browser.new_page(viewport={'width': 390, 'height': 844})
+        manager.on('pageerror', lambda error: errors.append(str(error)))
+        manager.goto(origin)
+        manager.locator('[name=username]').fill('test_manager')
+        manager.locator('[name=password]').fill(PASSWORDS['manager'])
+        manager.locator('[data-form=login] button').click()
+        manager.locator('.account-trigger').wait_for()
+        settle(manager)
+        manager.locator('[data-action=tab][data-tab=financial]').click()
+        settle(manager)
+        expect(manager.get_by_role('heading', name='Lượt bác sĩ đã khóa nhưng chưa kết thúc tài chính')).to_be_visible()
+        pick(manager, 'financial-visit', visit)
+        expect(manager.get_by_role('button', name='Duyệt miễn thu')).to_have_count(0)
+        no_horizontal_scroll(manager)
+        manager.close()
+        page.get_by_role('button', name='Chờ kết thúc', exact=True).click()
+        settle(page)
+        pick(page, 'financial-visit', visit)
+        page.once('dialog', lambda dialog: dialog.accept('Phê duyệt thử nghiệm trên trình duyệt'))
+        with page.expect_response(lambda r: r.url.endswith(f'/api/visits/{visit}/settlement-waiver')) as waived:
+            page.get_by_role('button', name='Duyệt miễn thu', exact=True).click()
+        assert waived.value.status == 200 and waived.value.json()['kind'] == 'mien_thu'
+        settle(page)
+        no_horizontal_scroll(page)
+        assert not errors, errors
+        browser.close()

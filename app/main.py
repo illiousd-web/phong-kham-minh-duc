@@ -7,7 +7,8 @@ import os
 import secrets
 import uuid
 from .domain import authorize_order, revision, status_refresh, invoice
-from .charge_queries import DUES_SQL,orders_sql
+from .charge_queries import FINANCIAL_DUES_SQL,orders_sql
+from .financial_state import ensure_financial_open
 from .work_queues import visit_predicate, ACTIVE_ORDERS, approval_predicate, history_limit
 from contextlib import asynccontextmanager
 from starlette.concurrency import run_in_threadpool
@@ -55,7 +56,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=16").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=20").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -94,6 +95,8 @@ def init_db():
         migrate_s2c(c)
         from .s2d_migration import migrate_s2d
         migrate_s2d(c)
+        from .s2e_settlement_migration import migrate_settlements
+        migrate_settlements(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -474,6 +477,7 @@ def add_order(data:OrderInput,u=Depends(principal)):
             v=visit_access(c,u,data.visit_id,clinical=False)
         else:
             v=visit_access(c,u,data.visit_id,clinical=True)
+        ensure_financial_open(c,data.visit_id)
         ensure_open(v)
         service=None
         if data.service_id is not None:
@@ -716,7 +720,7 @@ def get_rx(u=Depends(principal), visit_id:int|None=None,
         return rows
 
 # Hàng chờ thu ngân: KHÔNG cắt theo "100 lượt mới nhất". Trả mọi lượt còn nợ, còn khoản
-# chưa có giá, cần hoàn tiền (đã thu > phải thu), cộng mọi lượt tạo trong ngày hôm nay (giờ VN).
+# chưa có giá, cần hoàn tiền hoặc chờ kết thúc tài chính, cộng các lượt hôm nay chưa kết thúc.
 # Tính tổng một lần bằng GROUP BY (không truy vấn con theo từng lượt) để đủ nhanh với vài chục nghìn lượt.
 def today_start_utc():
     """0 giờ hôm nay theo giờ Việt Nam, dạng chuỗi UTC như cột created_at."""
@@ -725,7 +729,7 @@ def today_start_utc():
 
 
 def dues_rows(c,since=None):
-    return [dict(x) for x in c.execute(DUES_SQL,(since or today_start_utc(),))]
+    return [dict(x) for x in c.execute(FINANCIAL_DUES_SQL,(since or today_start_utc(),))]
 
 
 @app.get('/api/dues')
@@ -764,6 +768,7 @@ def create_payment(data:PaymentInput,u=Depends(principal)):
             if old['created_by']!=u['id'] or old['amount']!=data.amount or old['visit_id']!=data.visit_id or old['method']!=data.method or (old['external_ref'] or None)!=(data.external_ref or None) or old['is_advance']!=int(data.prepayment):raise HTTPException(409,'Khóa giao dịch đã được sử dụng với dữ liệu khác')
             return {'id':old['id'],'status':'already_recorded'}
         if not c.execute('SELECT 1 FROM visits WHERE id=?',(data.visit_id,)).fetchone():raise HTTPException(404,'Không có lượt khám')
+        ensure_financial_open(c,data.visit_id)
         if c.execute('SELECT status FROM visits WHERE id=?',(data.visit_id,)).fetchone()[0]=='cancelled':raise HTTPException(409,'Không nhận tiền mới cho lượt đã hủy')
         # Loại giao dịch do máy chủ quyết định lúc thu và lưu lại; in phiếu luôn theo loại đã lưu.
         if data.prepayment:kind='advance'
@@ -787,6 +792,9 @@ install_stock(app, db, principal, require, audit, NOW)
 
 from .s2e_reports import install_s2e_reports
 install_s2e_reports(app, db, principal, require)
+
+from .s2e_settlements import install_settlements
+install_settlements(app, db, principal, require, audit, NOW)
 
 @app.get('/api/overview')
 def overview(u=Depends(principal)):
@@ -849,6 +857,7 @@ def propose_adjustment(data:AdjustmentInput,u=Depends(principal)):
     with db(True) as c:
         if not c.execute('SELECT 1 FROM visits WHERE id=?',(data.visit_id,)).fetchone():
             raise HTTPException(404,'Không có lượt khám')
+        ensure_financial_open(c,data.visit_id)
         st=_invoice_state(c,data.visit_id)
         if data.kind=='discount':
             if data.payment_id is not None:raise HTTPException(422,'Giảm giá không gắn một phiếu thu')
@@ -891,6 +900,7 @@ def review_adjustment(adj_id:int,data:AdjustmentReview,u=Depends(principal)):
         if not a:raise HTTPException(404,'Không có đề nghị')
         if a['status']!='pending':raise HTTPException(409,'Đã giải quyết đề nghị này')
         if a['proposed_by']==u['id']:raise HTTPException(403,'Không được tự duyệt đề nghị của mình')
+        if data.approve:ensure_financial_open(c,a['visit_id'])
         st=_invoice_state(c,a['visit_id'])
         if data.approve:
             if a['kind']=='discount' and st['charged']-a['amount']<0:

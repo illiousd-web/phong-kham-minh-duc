@@ -92,11 +92,20 @@ def revenue_report(c, start, end):
               ('medicine','clinical','procedure','other','gross','discount','revenue',
                'payments','refund','paid','outstanding','unpriced_count')}
 
+    # Approvals are dated events. Reopening changes current debt and keeps approval history.
+    waivers = [row for row in c.execute("""SELECT visit_id,waived_amount,created_at
+        FROM visit_settlements WHERE kind='mien_thu'""")
+        if in_period(row['created_at'], start, end)]
+    totals['waived_amount'] = sum(row['waived_amount'] for row in waivers)
+    totals['waived_visits'] = len({row['visit_id'] for row in waivers})
+
     # Daily outstanding is an accounting flow; actual debt comes from a whole-visit invoice.
     unpaid_visits = []
     for visit in c.execute("""SELECT v.id,v.created_at,p.code AS patient_code,
         p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id
-        WHERE v.status <> 'cancelled' ORDER BY v.created_at,v.id"""):
+        WHERE v.status <> 'cancelled' AND NOT EXISTS (
+            SELECT 1 FROM active_visit_settlements s WHERE s.visit_id=v.id AND s.kind='mien_thu')
+        ORDER BY v.created_at,v.id"""):
         if not in_period(visit['created_at'], start, end):
             continue
         item = {'visit_id': visit['id'], 'patient_code': visit['patient_code'],
@@ -330,7 +339,9 @@ def xlsx(kind, data):
         total = dict(data['totals'], day='TỔNG KỲ')
         total_columns = [(key, 'Chênh lệch thu – phát sinh trong kỳ' if key == 'outstanding'
                           else label, fmt) for key, label, fmt in COLS[kind]]
-        total_columns.append(('known_due', 'Chưa thu', 'n'))
+        total_columns.extend([('known_due', 'Chưa thu', 'n'),
+                              ('waived_amount', 'Miễn thu đã duyệt', 'n'),
+                              ('waived_visits', 'Số lượt miễn thu', 'n')])
         add_sheet(book.create_sheet('Tổng kỳ'), total_columns, [total])
         add_sheet(book.create_sheet('Lượt khám còn thiếu tiền'), COLS['unpaid_visits'], data['unpaid_visits'])
     if kind == 'visits':

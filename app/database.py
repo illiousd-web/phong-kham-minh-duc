@@ -22,7 +22,7 @@ ID_TABLES=set(re.findall(r'CREATE TABLE IF NOT EXISTS (\w+)\s*\(\s*id\b',
 ID_TABLES.update(('catalog_imports','tech_catalog_pl02','order_result_versions'))
 ID_TABLES.update(('lab_tests','lab_reference_ranges','lab_reports','lab_results'))
 ID_TABLES.update(('drugs','clinical_prescriptions','clinical_prescription_items','prescription_outbox'))
-ID_TABLES.update(('stock_receipts', 'stock_issues', 'imaging_reports', 'imaging_images'))
+ID_TABLES.update(('stock_receipts', 'stock_issues', 'imaging_reports', 'imaging_images', 'visit_settlements'))
 _pool = None
 
 
@@ -184,3 +184,5 @@ def migrate():
         migrate_s2c(PGConnection(con), postgres=True)
         from .s2d_migration import migrate_s2d
         migrate_s2d(PGConnection(con), postgres=True)
+        from .s2e_settlement_migration import migrate_settlements
+        migrate_settlements(PGConnection(con), postgres=True)

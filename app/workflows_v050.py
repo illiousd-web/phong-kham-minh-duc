@@ -4,6 +4,8 @@ from .work_queues import approval_predicate,history_limit
 from fastapi import Depends,HTTPException
 from pydantic import BaseModel,Field
 from .domain import ensure_open,authorize_order,invoice,revision
+from .financial_state import ensure_financial_open
+from .s2e_settlements import financial_status
 
 class Reason(BaseModel):
     reason:str=Field(min_length=8,max_length=500)
@@ -60,7 +62,8 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
                 return {'clinical_status':v['status'],'version':v['version'],'billing':{'due':None,'refund_due':None},'payment_status':'restricted','dispensing_status':'restricted'}
             state=invoice(c,vid)
             rx=c.execute('SELECT id,status FROM prescriptions WHERE visit_id=?',(vid,)).fetchone()
-            return {'clinical_status':v['status'],'version':v['version'],'billing':state,'payment_status':'unpriced' if state['unpriced_count'] else ('refund_due' if state['refund_due'] else ('due' if state['due'] else 'settled')),'dispensing_status':rx['status'] if rx else 'not_prescribed'}
+            closure={'financial_settlement':financial_status(c,vid)} if {'cashier','manager','admin'}.intersection(u['roles']) else {}
+            return {**closure,'clinical_status':v['status'],'version':v['version'],'billing':state,'payment_status':'unpriced' if state['unpriced_count'] else ('refund_due' if state['refund_due'] else ('due' if state['due'] else 'settled')),'dispensing_status':rx['status'] if rx else 'not_prescribed'}
 
     @app.post('/api/charges/{cid}/reprice')
     def reprice(cid:int,data:Reprice,u=Depends(principal)):
@@ -72,6 +75,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
                 return {'id':prior['id'],'status':'already_recorded'}
             ch=c.execute('SELECT * FROM effective_charges WHERE id=?',(cid,)).fetchone()
             if not ch:raise HTTPException(404,'Không có khoản phí')
+            ensure_financial_open(c,ch['visit_id'])
             if ch['original_amount'] is None:raise HTTPException(409,'Khoản giá nhập tay phải nhập lần đầu hoặc gửi đề nghị sửa giá để quản lý duyệt')
             if c.execute('SELECT 1 FROM charge_voids WHERE charge_id=?',(cid,)).fetchone():raise HTTPException(409,'Khoản đã hủy')
             if c.execute('SELECT 1 FROM charge_credits WHERE charge_id=?',(cid,)).fetchone():raise HTTPException(409,'Khoản đã có trả thuốc; cần đối soát trước')
@@ -88,6 +92,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
         with db(True) as c:
             a=c.execute('SELECT * FROM adjustments WHERE id=?',(aid,)).fetchone()
             if not a or a['kind']!='discount' or a['status']!='approved':raise HTTPException(409,'Chỉ hoàn tác giảm phí đã duyệt')
+            ensure_financial_open(c,a['visit_id'])
             if c.execute('SELECT 1 FROM adjustment_reversals WHERE adjustment_id=?',(aid,)).fetchone():raise HTTPException(409,'Đã hoàn tác')
             c.execute('INSERT INTO adjustment_reversals(adjustment_id,reason,reversed_by,created_at) VALUES(?,?,?,?)',(aid,data.reason,u['id'],now()))
             audit(c,u,'discount_reversed','adjustment',aid,data.reason)
@@ -139,7 +144,9 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
                 existing=[(x['dispensation_item_id'],x['quantity']) for x in c.execute('SELECT * FROM medication_return_items WHERE return_id=? ORDER BY dispensation_item_id',(old['id'],))]
                 if old['dispensation_id']!=did or old['requested_by']!=u['id'] or old['reason']!=data.reason or existing!=sorted((x.dispensation_item_id,x.quantity) for x in data.items):raise HTTPException(409,'Khóa trả thuốc đã dùng khác nội dung')
                 return {'id':old['id'],'status':old['status']}
-            if not c.execute('SELECT 1 FROM dispensations WHERE id=?',(did,)).fetchone():raise HTTPException(404,'Không có phiếu cấp')
+            disp=c.execute('SELECT visit_id FROM dispensations WHERE id=?',(did,)).fetchone()
+            if not disp:raise HTTPException(404,'Không có phiếu cấp')
+            ensure_financial_open(c,disp['visit_id'])
             for item in data.items:
                 row=c.execute('SELECT di.*,m.controlled FROM dispensation_items di JOIN medicines m ON m.id=di.medicine_id WHERE di.id=? AND di.dispensation_id=?',(item.dispensation_item_id,did)).fetchone()
                 if not row:raise HTTPException(422,'Dòng không thuộc phiếu cấp')
@@ -167,6 +174,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
             if r['requested_by']==u['id']:raise HTTPException(403,'Không tự duyệt trả thuốc')
             if c.execute('SELECT 1 FROM medication_return_items ri JOIN dispensation_items di ON di.id=ri.dispensation_item_id JOIN medicines m ON m.id=di.medicine_id WHERE ri.return_id=? AND m.controlled=1',(rid,)).fetchone() and 'controlled_reviewer' not in u['roles']:raise HTTPException(403,'Thiếu quyền duyệt thuốc kiểm soát')
             if data.approve:
+                ensure_financial_open(c,r['visit_id'])
                 for it in c.execute('SELECT ri.*,di.quantity AS dispensed,di.medicine_id,di.stock_lot_id,di.unit_price,m.controlled,l.expiry_date FROM medication_return_items ri JOIN dispensation_items di ON di.id=ri.dispensation_item_id JOIN medicines m ON m.id=di.medicine_id JOIN stock_lots l ON l.id=di.stock_lot_id WHERE ri.return_id=? ORDER BY ri.id',(rid,)).fetchall():
                     if it['controlled'] and 'controlled_reviewer' not in u['roles']:raise HTTPException(403,'Thiếu quyền duyệt thuốc kiểm soát')
                     before=c.execute("SELECT COALESCE(SUM(ri.quantity),0) FROM medication_return_items ri JOIN medication_returns r ON r.id=ri.return_id WHERE ri.dispensation_item_id=? AND r.status='approved'",(it['dispensation_item_id'],)).fetchone()[0]
@@ -316,6 +324,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
         with db(True) as c:
             v=c.execute('SELECT * FROM visits WHERE id=?',(vid,)).fetchone()
             if not v:raise HTTPException(404,'Không có lượt')
+            ensure_financial_open(c,vid)
             ensure_open(v)
             if c.execute("SELECT 1 FROM orders WHERE visit_id=? AND status<>'cancelled'",(vid,)).fetchone():raise HTTPException(409,'Phải xử lý/hủy các chỉ định trước')
             rx=c.execute('SELECT * FROM prescriptions WHERE visit_id=?',(vid,)).fetchone()

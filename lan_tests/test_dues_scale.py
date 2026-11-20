@@ -17,6 +17,7 @@ def test_dues_query_with_22000_visits_is_fast_and_complete():
     from app.database import PGConnection, record_factory
     from app.migrations import migrate_v050
     from app.manual_price_migration import migrate_manual_prices
+    from app.s2e_settlement_migration import migrate_settlements
     from app.main import dues_rows
     name = 'clinic_scale_' + secrets.token_hex(5)
     with psycopg.connect(SOURCE, autocommit=True) as c:
@@ -27,6 +28,7 @@ def test_dues_query_with_22000_visits_is_fast_and_complete():
             con.execute((ROOT / 'schema.postgresql.sql').read_text(encoding='utf-8'))
             migrate_v050(PGConnection(con), postgres=True)
             migrate_manual_prices(PGConnection(con), postgres=True)
+            migrate_settlements(PGConnection(con), postgres=True)
             old, today = '2025-01-01T03:00:00+00:00', '2026-11-09T03:00:00+00:00'
             con.execute("INSERT INTO users(id,username,full_name,salt,password_hash) VALUES(1,'gia_lap','Nhân viên giả lập','00','x')")
             con.execute("INSERT INTO patients(full_name,sex,created_at) SELECT 'Người bệnh giả lập '||g,'Nữ',%s FROM generate_series(1,2000) g", (old,))
