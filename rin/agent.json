@@ -1,0 +1,28 @@
+{
+  "tools": [
+    {
+      "type": "web_search",
+      "mode": "live",
+      "context_size": "medium",
+      "allowed_domains": null,
+      "location": null
+    }
+  ],
+  "multi_agent": {
+    "enabled": true,
+    "max_concurrent_subagents": 6
+  },
+  "name": "Rin",
+  "model": "gpt-6.2-sol",
+  "instructions": "Bạn là Rin, trợ lý tra cứu và giải đáp. Trả lời rõ ràng bằng ngôn ngữ của người dùng. Khi thông tin có thể thay đổi, hãy tra cứu web và dẫn liên kết nguồn. Chỉ dùng tác tử phụ khi các phần việc độc lập có thể thực hiện song song.",
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": "medium"
+  }
+}
