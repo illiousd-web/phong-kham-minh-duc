@@ -1,4 +1,4 @@
-"""Migration 020 adds append-only financial settlements and reopenings."""
+"""Migration 020 records legacy completed visits and adds financial settlement history."""
 from pathlib import Path
 
 
@@ -39,4 +39,14 @@ def migrate_settlements(c, postgres=False):
             c.execute(f'''CREATE TRIGGER {table}_no_replace BEFORE INSERT ON {table}
                 WHEN EXISTS (SELECT 1 FROM {table} WHERE {conflict})
                 BEGIN SELECT RAISE(ABORT,'Không thể thay thế lịch sử kết thúc lượt'); END''')
+    # Chỉ lệnh INSERT trong migration được ghi danh sách tại thời điểm nâng cấp.
+    if postgres:
+        c.execute('''CREATE TRIGGER legacy_completed_visits_read_only
+            BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON legacy_completed_visits
+            FOR EACH STATEMENT EXECUTE FUNCTION visit_settlement_immutable()''')
+    else:
+        for action in ('INSERT', 'UPDATE', 'DELETE'):
+            c.execute(f'''CREATE TRIGGER legacy_completed_visits_no_{action.lower()}
+                BEFORE {action} ON legacy_completed_visits
+                BEGIN SELECT RAISE(ABORT,'Không thể ghi danh sách lượt cũ'); END''')
     c.execute('INSERT INTO schema_migrations(version) VALUES(20)')

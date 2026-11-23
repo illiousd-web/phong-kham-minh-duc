@@ -1,5 +1,6 @@
 """Financial settlement contract. The LAN suite runs the same cases on PostgreSQL."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from io import BytesIO
 import os
 import secrets
@@ -183,6 +184,7 @@ def test_waiver_is_reported_without_becoming_payment(clients, visit):
     assert after['totals']['known_due'] == before['totals']['known_due'] - 130000
     assert after['totals']['waived_amount'] == before['totals']['waived_amount'] + 130000
     assert after['totals']['waived_visits'] == before['totals']['waived_visits'] + 1
+    assert after['totals']['waiver_approval_count'] == before['totals']['waiver_approval_count'] + 1
     assert visit not in {row['visit_id'] for row in after['unpaid_visits']}
     response = admin.get(report+'/export', params=params)
     assert response.status_code == 200
@@ -191,11 +193,38 @@ def test_waiver_is_reported_without_becoming_payment(clients, visit):
     columns = rows[-2]
     assert rows[-1][columns.index('Miễn thu đã duyệt')] == after['totals']['waived_amount']
     assert rows[-1][columns.index('Số lượt miễn thu')] == after['totals']['waived_visits']
+    assert rows[-1][columns.index('Số lần duyệt miễn thu (kể cả đã mở lại)')] == after['totals']['waiver_approval_count']
     book.close()
     checked(admin.post(prefix+'/settlement-reopen', json={'reason': REOPEN}))
     reopened = checked(manager.get(report, params=params))
-    assert reopened['totals']['waived_amount'] == after['totals']['waived_amount']
+    assert reopened['totals']['waived_amount'] == before['totals']['waived_amount'] == after['totals']['waived_amount'] - 130000
+    assert reopened['totals']['waived_visits'] == before['totals']['waived_visits']
+    assert reopened['totals']['waiver_approval_count'] == after['totals']['waiver_approval_count']
     assert reopened['totals']['known_due'] == before['totals']['known_due']
+    checked(cashier.post('/api/payments', json=payment(visit, 10000)), 201)
+    checked(admin.post(prefix+'/settlement-waiver', json={'reason': REASON}))
+    waived_again = checked(manager.get(report, params=params))['totals']
+    assert waived_again['waived_amount'] == before['totals']['waived_amount'] + 120000
+    assert waived_again['waived_visits'] == before['totals']['waived_visits'] + 1
+    assert waived_again['waiver_approval_count'] == before['totals']['waiver_approval_count'] + 2
+
+
+def test_overview_excludes_active_waiver_and_restores_outstanding_after_reopen(clients, visit):
+    prefix = f'/api/visits/{visit}'
+    cashier, admin, manager = (clients[name] for name in ('cashier', 'admin', 'manager'))
+    complete_visit(clients['doctor'], visit)
+    checked(cashier.post('/api/payments', json=payment(visit, 20000)), 201)
+    before = checked(manager.get('/api/overview'))
+    checked(admin.post(prefix+'/settlement-waiver', json={'reason': REASON}))
+    after = checked(manager.get('/api/overview'))
+    assert (after['charged'], after['paid'], after['unpriced_count']) == (
+        before['charged'], before['paid'], before['unpriced_count'])
+    assert after['known_outstanding'] == before['known_outstanding'] - 130000
+    assert after['outstanding'] == (None if before['unpriced_count'] else after['known_outstanding'])
+    checked(admin.post(prefix+'/settlement-reopen', json={'reason': REOPEN}))
+    reopened = checked(manager.get('/api/overview'))
+    assert reopened['known_outstanding'] == before['known_outstanding']
+    assert reopened['outstanding'] == before['outstanding']
 
 
 def test_closed_visit_blocks_all_financial_writes(clients, visit):
@@ -283,6 +312,9 @@ def test_sqlite_upgrade_19_to_20_preserves_existing_data(monkeypatch, tmp_path):
         assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 19
         c.execute("INSERT INTO patients(code,full_name,sex,created_at) VALUES('VA19','Bệnh nhân giả lập','Nam','2026-01-01')")
         c.execute("INSERT INTO visits(patient_id,doctor_id,created_by,created_at,status) VALUES(1,3,3,'2026-01-01','completed')")
+        c.execute("""INSERT INTO visits(patient_id,doctor_id,created_by,created_at)
+                     SELECT 1,id,3,'2026-01-01' FROM users WHERE username='bs_noi'""")
+        c.execute("INSERT INTO prescription_settings(key,value) VALUES('require_primary_icd10','false') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
         c.execute("INSERT INTO charges(visit_id,label,amount,created_at) VALUES(1,'Khám',1000,'2026-01-01')")
         c.execute("""INSERT INTO payments(visit_id,amount,method,created_by,created_at,idempotency_key)
                      VALUES(1,700,'cash',9,'2026-01-01','v19-payment')""")
@@ -306,6 +338,43 @@ def test_sqlite_upgrade_19_to_20_preserves_existing_data(monkeypatch, tmp_path):
         ):
             with pytest.raises(sqlite3.IntegrityError, match='lịch sử kết thúc lượt'):
                 c.execute(statement)
+        assert [row[0] for row in c.execute('SELECT visit_id FROM legacy_completed_visits')] == [1]
+        for statement in (
+            'INSERT INTO legacy_completed_visits VALUES(2)',
+            'UPDATE legacy_completed_visits SET visit_id=2',
+            'DELETE FROM legacy_completed_visits',
+        ):
+            with pytest.raises(sqlite3.IntegrityError, match='Không thể ghi danh sách lượt cũ'):
+                c.execute(statement)
+
+    with ExitStack() as stack:
+        actors = {}
+        for role, username in (('cashier', 'thungan'), ('doctor', 'bs_noi'), ('manager', 'quanly'), ('admin', 'quantri')):
+            actor = stack.enter_context(TestClient(main.app))
+            login = checked(actor.post('/api/login', json={'username': username, 'password': os.environ['DEMO_PASSWORD']}))
+            actor.headers['Authorization'] = 'Bearer '+login['access_token']
+            actors[role] = actor
+        cashier, manager = actors['cashier'], actors['manager']
+        legacy = checked(cashier.get('/api/visits/1/settlement'))
+        assert legacy['billing']['due'] == 300
+        assert legacy['financial_legacy'] and legacy['financial_settlement'] is None
+        assert checked(cashier.get('/api/dues'))[0]['financial_pending'] == 0
+        checked(cashier.post('/api/visits/1/settle'), 409, 'Lượt cũ không cần kết thúc tài chính')
+        checked(actors['admin'].post('/api/visits/1/settlement-waiver', json={'reason': REASON}), 409,
+                'Lượt cũ không cần kết thúc tài chính')
+        assert not checked(manager.get('/api/financial-settlements'))['items']
+        report = checked(manager.get('/api/reports/revenue', params={'date_from':'2026-01-01', 'date_to':'2026-01-01'}))
+        assert [(row['visit_id'], row['known_due']) for row in report['unpaid_visits']] == [(1, 300)]
+        before = checked(manager.get('/api/overview'))
+        assert before['outstanding'] == 300
+        checked(cashier.post('/api/payments', json=payment(1, 300)), 201)
+        assert checked(cashier.get('/api/dues')) == []
+        complete_visit(actors['doctor'], 2)
+        assert [row['visit_id'] for row in checked(manager.get('/api/financial-settlements'))['items']] == [2]
+        pending = checked(cashier.get('/api/dues'))
+        assert [(row['visit_id'], row['financial_pending']) for row in pending] == [(2, 1)]
+        assert not checked(cashier.get('/api/visits/2/settlement'))['financial_legacy']
+        assert checked(cashier.post('/api/visits/2/settle'))['kind'] == 'du_thu'
 
 
 def snapshot(c):

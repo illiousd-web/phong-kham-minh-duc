@@ -27,7 +27,7 @@ DUES_CTES='WITH '+priced_ctes()+''',
           SUM(CASE WHEN kind='refund' THEN amount ELSE 0 END) AS refund
           FROM effective_adjustments WHERE status='approved' GROUP BY visit_id),
      pay AS (SELECT visit_id,SUM(amount) AS total FROM payments GROUP BY visit_id),
-     t AS (SELECT v.id,v.patient_id,v.created_at,v.status,COALESCE(ch.total,0)-COALESCE(adj.discount,0) AS charged,
+     t AS (SELECT v.id,v.patient_id,v.created_at,COALESCE(ch.total,0)-COALESCE(adj.discount,0) AS charged,
           COALESCE(pay.total,0)-COALESCE(adj.refund,0) AS paid,COALESCE(ch.unpriced,0) AS unpriced_count
           FROM visits v LEFT JOIN ch ON ch.visit_id=v.id LEFT JOIN adj ON adj.visit_id=v.id LEFT JOIN pay ON pay.visit_id=v.id)'''
 
@@ -39,11 +39,15 @@ WHERE t.charged<>t.paid OR t.unpriced_count>0 OR t.created_at>=?
 ORDER BY t.id DESC'''
 
 
-FINANCIAL_DUES_SQL=DUES_CTES+'''
+FINANCIAL_DUES_SQL=DUES_CTES+''',
+     pending_close AS (SELECT v.id FROM visits v
+         WHERE v.status='completed' AND NOT EXISTS (
+             SELECT 1 FROM legacy_completed_visits legacy WHERE legacy.visit_id=v.id))
 SELECT t.id AS visit_id,p.code AS patient_code,p.full_name AS patient_name,t.charged,t.paid,t.unpriced_count,
-       CASE WHEN t.status='completed' THEN 1 ELSE 0 END AS financial_pending
+       CASE WHEN pending_close.id IS NOT NULL THEN 1 ELSE 0 END AS financial_pending
 FROM t JOIN patients p ON p.id=t.patient_id
-WHERE (t.charged<>t.paid OR t.unpriced_count>0 OR t.created_at>=? OR t.status='completed')
+LEFT JOIN pending_close ON pending_close.id=t.id
+WHERE (t.charged<>t.paid OR t.unpriced_count>0 OR t.created_at>=? OR pending_close.id IS NOT NULL)
  AND NOT EXISTS (SELECT 1 FROM active_visit_settlements s WHERE s.visit_id=t.id)
 ORDER BY t.id DESC'''
 

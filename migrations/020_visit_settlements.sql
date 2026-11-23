@@ -1,3 +1,12 @@
+CREATE TABLE legacy_completed_visits (
+    visit_id BIGINT PRIMARY KEY NOT NULL REFERENCES visits(id)
+);
+
+INSERT INTO legacy_completed_visits(visit_id)
+    SELECT id FROM visits WHERE status = 'completed';
+
+CREATE INDEX visits_completed_id ON visits(id) WHERE status = 'completed';
+
 CREATE TABLE visit_settlements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     visit_id BIGINT NOT NULL REFERENCES visits(id),

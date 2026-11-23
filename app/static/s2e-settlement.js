@@ -44,7 +44,7 @@ const S2ESettlement={
  },
 
  actions(id,state){
-  if(state.clinical_status!=='completed')return '';
+  if(state.clinical_status!=='completed'||state.financial_legacy)return '';
   const admin=role()==='admin';
   const closure=state.financial_settlement;
   if(closure){

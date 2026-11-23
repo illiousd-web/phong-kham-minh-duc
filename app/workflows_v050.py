@@ -5,7 +5,7 @@ from fastapi import Depends,HTTPException
 from pydantic import BaseModel,Field
 from .domain import ensure_open,authorize_order,invoice,revision
 from .financial_state import ensure_financial_open
-from .s2e_settlements import financial_status
+from .s2e_settlements import financial_status, is_legacy_completed
 
 class Reason(BaseModel):
     reason:str=Field(min_length=8,max_length=500)
@@ -62,7 +62,10 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
                 return {'clinical_status':v['status'],'version':v['version'],'billing':{'due':None,'refund_due':None},'payment_status':'restricted','dispensing_status':'restricted'}
             state=invoice(c,vid)
             rx=c.execute('SELECT id,status FROM prescriptions WHERE visit_id=?',(vid,)).fetchone()
-            closure={'financial_settlement':financial_status(c,vid)} if {'cashier','manager','admin'}.intersection(u['roles']) else {}
+            closure={}
+            if {'cashier','manager','admin'}.intersection(u['roles']):
+                closure={'financial_settlement':financial_status(c,vid),
+                         'financial_legacy':v['status']=='completed' and is_legacy_completed(c,vid)}
             return {**closure,'clinical_status':v['status'],'version':v['version'],'billing':state,'payment_status':'unpriced' if state['unpriced_count'] else ('refund_due' if state['refund_due'] else ('due' if state['due'] else 'settled')),'dispensing_status':rx['status'] if rx else 'not_prescribed'}
 
     @app.post('/api/charges/{cid}/reprice')

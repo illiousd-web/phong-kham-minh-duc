@@ -10,6 +10,10 @@ class SettlementReason(BaseModel):
     reason: str = Field(max_length=500)
 
 
+def is_legacy_completed(c, visit_id):
+    return c.execute('SELECT 1 FROM legacy_completed_visits WHERE visit_id=?', (visit_id,)).fetchone() is not None
+
+
 def financial_status(c, visit_id):
     row = c.execute('''SELECT id,kind,created_at,waived_amount FROM active_visit_settlements
         WHERE visit_id=?''', (visit_id,)).fetchone()
@@ -23,6 +27,8 @@ def close_visit(c, visit_id, user, audit, now, reason=None):
     ensure_financial_open(c, visit_id)
     if visit['status'] != 'completed':
         raise HTTPException(409, 'Bác sĩ chưa khóa phiếu')
+    if is_legacy_completed(c, visit_id):
+        raise HTTPException(409, 'Lượt cũ không cần kết thúc tài chính')
     bill = invoice(c, visit_id)
     if bill['unpriced_count']:
         raise HTTPException(409, 'Còn khoản chưa có giá')
@@ -96,5 +102,7 @@ def install_settlements(app, db, principal, require, audit, now):
                 p.code AS patient_code,p.full_name AS patient_name
                 FROM visits v JOIN patients p ON p.id=v.patient_id
                 LEFT JOIN active_visit_settlements s ON s.visit_id=v.id
-                WHERE v.status='completed' AND ''' + where + ' ORDER BY ' + order + ' DESC LIMIT 51 OFFSET ?', (offset,))]
+                WHERE v.status='completed'
+                AND NOT EXISTS (SELECT 1 FROM legacy_completed_visits legacy WHERE legacy.visit_id=v.id)
+                AND ''' + where + ' ORDER BY ' + order + ' DESC LIMIT 51 OFFSET ?', (offset,))]
         return {'items': rows[:50], 'has_more': len(rows) > 50}

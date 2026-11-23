@@ -803,11 +803,21 @@ def overview(u=Depends(principal)):
         orders=c.execute("SELECT COUNT(*) FROM orders WHERE status!='approved'").fetchone()[0]
         out={'visits':visits,'pending_orders':orders,'role':u['roles'][0]}
         if 'manager' in u['roles']:
-            charged=c.execute("SELECT (SELECT COALESCE(SUM(ch.amount),0) FROM effective_charges ch WHERE NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id))-(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE kind='discount' AND status='approved')").fetchone()[0]
-            paid=c.execute("SELECT (SELECT COALESCE(SUM(amount),0) FROM payments)-(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments WHERE kind='refund' AND status='approved')").fetchone()[0]
-            unpriced=c.execute('SELECT COUNT(*) FROM effective_charges WHERE amount IS NULL').fetchone()[0]
-            out.update(charged=charged,paid=paid,outstanding=None if unpriced else charged-paid,
-                       known_outstanding=charged-paid,unpriced_count=unpriced,
+            summary=c.execute("""SELECT
+                (SELECT COALESCE(SUM(ch.amount),0) FROM effective_charges ch WHERE NOT EXISTS (
+                    SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id))
+                -(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments
+                    WHERE kind='discount' AND status='approved') AS charged,
+                (SELECT COALESCE(SUM(amount),0) FROM payments)
+                -(SELECT COALESCE(SUM(amount),0) FROM effective_adjustments
+                    WHERE kind='refund' AND status='approved') AS paid,
+                (SELECT COUNT(*) FROM effective_charges WHERE amount IS NULL) AS unpriced,
+                (SELECT COALESCE(SUM(waived_amount),0) FROM active_visit_settlements
+                    WHERE kind='mien_thu') AS waived""").fetchone()
+            outstanding=summary['charged']-summary['paid']-summary['waived']
+            out.update(charged=summary['charged'],paid=summary['paid'],
+                       outstanding=None if summary['unpriced'] else outstanding,
+                       known_outstanding=outstanding,unpriced_count=summary['unpriced'],
                        stock_warning=c.execute("SELECT COUNT(*) FROM stock_lots WHERE quarantined=1 OR expiry_date<=date('now','+90 days')").fetchone()[0])
         return out
 

@@ -451,7 +451,8 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                 expected_state['tables']['tech_pl02_links']=8252 # exact fragments in the SHA-256-pinned public PL02
                 expected_state['tables']['patient_catalog'] = 3411
                 expected_state['tables'].update(imaging_templates=28, imaging_reports=0, imaging_images=0,
-                                                visit_settlements=0, visit_settlement_reopens=0)
+                                                visit_settlements=0, visit_settlement_reopens=0,
+                                                legacy_completed_visits=manifest['counts']['visits']-manifest['active_visits'])
                 assert new_state == expected_state, 'Migration M0 làm đổi dữ liệu C5'
                 report['m0_migration'] = {'seconds': migration_seconds, 'preserved': True,
                     'visits': new_state['tables']['visits'], 'patients': new_state['tables']['patients']}
