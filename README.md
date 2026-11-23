@@ -1,5 +1,10 @@
 # Minh Đức LAN v0.5.0 — A, B, C, D
 
+Phần mềm quản lý Phòng khám đa khoa Minh Đức hỗ trợ nhân viên theo dõi các lượt khám trên mạng nội bộ.
+Lễ tân quản lý hồ sơ, lịch hẹn và tiếp đón. Bác sĩ, điều dưỡng và kỹ thuật viên ghi nhận quá trình khám, chăm sóc và kết quả cận lâm sàng.
+Phần mềm cũng hỗ trợ kê đơn, quản lý kho thuốc, thu phí và theo dõi công nợ theo phân quyền.
+Phiên bản hiện tại dùng để thử nghiệm với dữ liệu giả lập.
+
 Danh mục/chỉ định và công nợ; đơn thuốc cấu trúc, quy đổi, cấp/trả và kiểm soát riêng; điều dưỡng được phân công; hoàn tất, khóa và phụ lục có phiên bản. Chỉ dùng dữ liệu giả lập. Giữ profile Windows 11 / i3 / 8 GB / SSD 256 GB.
 
 - [Danh mục chuẩn D0 và năm file gốc công khai](docs/D0_DANH_MUC_CHUAN.md)
