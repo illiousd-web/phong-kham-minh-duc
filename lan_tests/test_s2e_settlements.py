@@ -1,6 +1,10 @@
 """Financial settlement with PostgreSQL transactions and migration 19 to 20."""
+from contextlib import ExitStack
+import secrets
+
 import psycopg
 import pytest
+from psycopg import sql
 
 from app import database, s2e_settlement_migration
 from tests.test_s2e_settlements import (
@@ -8,6 +12,7 @@ from tests.test_s2e_settlements import (
     test_fully_paid_waiver_rejected_and_not_reported as test_fully_paid_waiver_rejected_and_not_reported,
     test_waiver_with_fifty_thousand_due as test_waiver_with_fifty_thousand_due,
     test_fully_paid_pending_refund_blocks_closure as test_fully_paid_pending_refund_blocks_closure,
+    test_each_pending_request_blocks_closure as test_each_pending_request_blocks_closure,
     test_concurrent_request_and_closure_cannot_both_succeed as test_concurrent_request_and_closure_cannot_both_succeed,
     test_resolved_request_allows_closure as test_resolved_request_allows_closure,
     test_closed_visit_blocks_all_financial_writes as test_closed_visit_blocks_all_financial_writes,
@@ -18,6 +23,7 @@ from tests.test_s2e_settlements import (
     test_waiver_is_reported_without_becoming_payment as test_waiver_is_reported_without_becoming_payment,
     test_waiver_requires_admin_and_an_independent_approver as test_waiver_requires_admin_and_an_independent_approver,
 )
+from .conftest import URL
 from .test_ui_settings_backup import _new_db, _drop
 
 
@@ -71,3 +77,63 @@ def test_postgres_upgrade_19_to_20_preserves_existing_data(monkeypatch):
                     c.execute(statement)
     finally:
         _drop(name)
+
+
+def test_postgres_settlement_acl_before_and_after_backup_restore(tmp_path, monkeypatch):
+    from scripts import backup_lan, install_db
+
+    # grant() substitutes the configured runtime role for clinic_app. Use a
+    # disposable role so the test never changes a role shared by other databases.
+    runtime = 's2e_runtime_' + secrets.token_hex(6)
+    role = sql.Identifier(runtime)
+    with psycopg.connect(URL, autocommit=True) as admin, ExitStack() as cleanup:
+        admin.execute(sql.SQL('CREATE ROLE {} NOLOGIN').format(role))
+        cleanup.callback(admin.execute, sql.SQL('DROP ROLE {}').format(role))
+        source_name, source = _new_db()
+        cleanup.callback(_drop, source_name)
+        target_name, target = _new_db()
+        cleanup.callback(_drop, target_name)
+
+        monkeypatch.setattr(database, 'DATABASE_URL', source)
+        monkeypatch.setattr(backup_lan, 'DATABASE_URL', source)
+        monkeypatch.setenv('CLINIC_UPLOAD_DIR', str(tmp_path/'source-files'))
+        database.migrate()
+        with psycopg.connect(source) as c:
+            assert not c.execute(
+                "SELECT has_function_privilege(%s, 'public.visit_settlement_immutable()', 'EXECUTE')",
+                (runtime,)).fetchone()[0]
+
+        install_db.grant(source, runtime, source_name)
+        assert_settlement_runtime_acl(source, role)
+
+        key = tmp_path/'backup.key'
+        key.write_bytes(secrets.token_bytes(32))
+        backup = backup_lan.backup(tmp_path/'backups', key)
+        backup_lan.restore(backup, key, target, tmp_path/'restored-files')
+        # Same restore-then-grant sequence as the Windows rollback path.
+        install_db.grant(target, runtime, target_name)
+        assert_settlement_runtime_acl(target, role)
+
+
+def assert_settlement_runtime_acl(url, role):
+    statements = (
+        ('UPDATE visit_settlements SET waived_amount=500', 'visit_settlements'),
+        ('DELETE FROM visit_settlements', 'visit_settlements'),
+        ('TRUNCATE visit_settlements', 'visit_settlements'),
+        ("UPDATE visit_settlement_reopens SET reason='Lý do khác'", 'visit_settlement_reopens'),
+        ('DELETE FROM visit_settlement_reopens', 'visit_settlement_reopens'),
+        ('TRUNCATE visit_settlement_reopens', 'visit_settlement_reopens'),
+        ('INSERT INTO legacy_completed_visits VALUES(2)', 'legacy_completed_visits'),
+        ('UPDATE legacy_completed_visits SET visit_id=2', 'legacy_completed_visits'),
+        ('DELETE FROM legacy_completed_visits', 'legacy_completed_visits'),
+        ('TRUNCATE legacy_completed_visits', 'legacy_completed_visits'),
+    )
+    with psycopg.connect(url) as c:
+        c.execute(sql.SQL('SET ROLE {}').format(role))
+        assert not c.execute(
+            "SELECT has_function_privilege('public.visit_settlement_immutable()', 'EXECUTE')").fetchone()[0]
+        for statement, table in statements:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege) as denied, c.transaction():
+                c.execute(statement)
+            assert denied.value.sqlstate == '42501'
+            assert table in denied.value.diag.message_primary

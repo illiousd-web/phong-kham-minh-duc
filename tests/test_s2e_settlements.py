@@ -1,6 +1,7 @@
 """Financial settlement contract. The LAN suite runs the same cases on PostgreSQL."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import os
 import secrets
@@ -292,6 +293,78 @@ def test_overview_excludes_active_waiver_and_restores_outstanding_after_reopen(c
     assert reopened['outstanding'] == before['outstanding']
 
 
+def propose_price_change(cashier, manual_charge):
+    price = {'amount': 5000, 'description': 'Thủ thuật giả lập', 'request_key': key()}
+    checked(cashier.post(f'/api/charges/{manual_charge}/manual-price', json=price))
+    change = {**price, 'amount': 6000, 'request_key': key(), 'reason': REASON}
+    price_request = checked(cashier.post(f'/api/charges/{manual_charge}/manual-price-requests', json=change), 201)['id']
+    return price, change, price_request
+
+
+def propose_medication_return(doctor, pharmacy, manager, visit):
+    med = checked(manager.post('/api/catalog/medicines', json={'name': 'Thuốc giả lập '+key(), 'base_unit': 'viên'}), 201)['id']
+    checked(manager.put(f'/api/medicines/{med}/price', json={'unit_price': 1000}))
+    checked(pharmacy.post('/api/stock/receipts', json={'medicine_id': med, 'lot_number': key(),
+                    'expiry_date': '2099-12-31', 'quantity': 3}), 201)
+    version = record_clinical(doctor, visit)
+    rx = checked(doctor.post('/api/prescriptions', json={'visit_id': visit,
+                 'items': [{'medicine_id': med, 'quantity': 2}]}), 201)['id']
+    disp = checked(pharmacy.post(f'/api/prescriptions/{rx}/dispense'), 201)
+    return_input = {'request_key': key(), 'reason': REASON,
+                    'items': [{'dispensation_item_id': disp['lots'][0]['id'], 'quantity': 1}]}
+    return_path = f"/api/dispensations/{disp['dispensation_id']}/returns"
+    pending_return = checked(pharmacy.post(return_path, json=return_input), 201)['id']
+    return version, rx, return_path, return_input, pending_return
+
+
+@pytest.mark.parametrize(('kind', 'label', 'total'), [
+    ('discount', 'giảm phí 500 đ', 150000),
+    ('refund', 'hoàn tiền 1.000 đ', 150000),
+    ('price', 'sửa giá 6.000 đ', 155000),
+    ('return', 'trả thuốc 1.000 đ', 152000),
+])
+def test_each_pending_request_blocks_closure(clients, visit, kind, label, total):
+    cashier, admin, manager, doctor, pharmacy = (
+        clients[role] for role in ('cashier', 'admin', 'manager', 'doctor', 'pharmacy'))
+    version = None
+    if kind == 'price':
+        with database.db(True) as c:
+            c.execute("INSERT INTO charges(visit_id,label,created_at) VALUES(?,'Phí nhập tay giả lập',?)",
+                      (visit, '2026-10-15T00:00:00+00:00'))
+            charge = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        _, _, request_id = propose_price_change(cashier, charge)
+        table, actor_col, time_col = 'manual_price_requests', 'proposed_by', 'proposed_at'
+        review = f'/api/manual-price-requests/{request_id}/review'
+    elif kind == 'return':
+        version, _, _, _, request_id = propose_medication_return(doctor, pharmacy, manager, visit)
+        table, actor_col, time_col = 'medication_returns', 'requested_by', 'created_at'
+        review = f'/api/medication-returns/{request_id}/review'
+
+    complete_visit(doctor, visit, version)
+    pay_id = checked(cashier.post('/api/payments', json=payment(visit, total)), 201)['id']
+    if kind in ('discount', 'refund'):
+        payload = {'visit_id': visit, 'kind': kind, 'amount': 500, 'reason': REASON}
+        if kind == 'refund':
+            payload.update(payment_id=pay_id, amount=1000)
+        request_id = checked(cashier.post('/api/adjustments', json=payload), 201)['id']
+        table, actor_col, time_col = 'adjustments', 'proposed_by', 'proposed_at'
+        review = f'/api/adjustments/{request_id}/review'
+
+    with database.db() as c:
+        row = c.execute(
+            f'SELECT u.full_name,r.{time_col} FROM {table} r JOIN users u ON u.id=r.{actor_col} WHERE r.id=?',
+            (request_id,)).fetchone()
+    proposer, timestamp = row[0], row[1]
+    vietnam_time = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00')).astimezone(
+        timezone(timedelta(hours=7))).strftime('%d/%m/%Y %H:%M')
+    expected = f'Chưa kết thúc được: còn 1 đề nghị {label} ({proposer}, {vietnam_time}) chờ duyệt.'
+    prefix = f'/api/visits/{visit}'
+    checked(cashier.post(prefix+'/settle'), 409, expected)
+    checked(admin.post(prefix+'/settlement-waiver', json={'reason': REASON}), 409, expected)
+    checked(manager.post(review, json={'approve': False}))
+    checked(cashier.post(prefix+'/settle'))
+
+
 def test_closed_visit_blocks_all_financial_writes(clients, visit):
     doctor, cashier, pharmacy, manager = (clients[r] for r in ('doctor','cashier','pharmacy','manager'))
     prefix = f'/api/visits/{visit}'
@@ -315,28 +388,15 @@ def test_closed_visit_blocks_all_financial_writes(clients, visit):
         c.execute('INSERT INTO order_cancel_requests(order_id,reason,requested_by,requested_at) VALUES(?,?,?,?)',
                   (order, REASON, doctor_id, stamp))
         cancel = c.execute('SELECT last_insert_rowid()').fetchone()[0]
-    price = {'amount': 5000, 'description': 'Thủ thuật giả lập', 'request_key': key()}
-    checked(cashier.post(f'/api/charges/{manual_charge}/manual-price', json=price))
-    change = {**price, 'amount': 6000, 'request_key': key(), 'reason': REASON}
-    price_request = checked(cashier.post(f'/api/charges/{manual_charge}/manual-price-requests', json=change), 201)['id']
-
-    med = checked(manager.post('/api/catalog/medicines', json={'name': 'Thuốc giả lập '+key(), 'base_unit': 'viên'}), 201)['id']
-    checked(manager.put(f'/api/medicines/{med}/price', json={'unit_price': 1000}))
-    checked(pharmacy.post('/api/stock/receipts', json={'medicine_id': med, 'lot_number': key(),
-                    'expiry_date': '2099-12-31', 'quantity': 3}), 201)
-    version = record_clinical(doctor, visit)
-    rx = checked(doctor.post('/api/prescriptions', json={'visit_id': visit,
-                 'items': [{'medicine_id': med, 'quantity': 2}]}), 201)['id']
-    disp = checked(pharmacy.post(f'/api/prescriptions/{rx}/dispense'), 201)
-    return_input = {'request_key': key(), 'reason': REASON,
-                    'items': [{'dispensation_item_id': disp['lots'][0]['id'], 'quantity': 1}]}
-    return_path = f"/api/dispensations/{disp['dispensation_id']}/returns"
-    pending_return = checked(pharmacy.post(return_path, json=return_input), 201)['id']
+    price, change, price_request = propose_price_change(cashier, manual_charge)
+    version, rx, return_path, return_input, pending_return = propose_medication_return(
+        doctor, pharmacy, manager, visit)
     complete_visit(doctor, visit, version)
     checked(cashier.post('/api/payments', json=payment(visit, 146500)), 201)
     for endpoint, actor in (('settle', cashier), ('settlement-waiver', clients['admin'])):
         response = actor.post(prefix+'/'+endpoint, json={'reason': REASON} if endpoint != 'settle' else None)
         assert response.status_code == 409
+        assert 'còn 4 đề nghị' in response.json()['detail']
         for detail in ('giảm phí 500 đ', 'hoàn tiền 1.000 đ', 'sửa giá 6.000 đ', 'trả thuốc 1.000 đ'):
             assert detail in response.json()['detail']
     for path, label in ((f'/api/adjustments/{pending_discount}/review', 'giảm phí'),
