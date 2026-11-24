@@ -92,7 +92,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($module, [ref]$tokens,
 if ($errors.Count) { throw ($errors | Out-String) }
 foreach ($name in 'Get-MinhDucVenvProcessTree', 'Wait-MinhDucVenvPythonExit', 'Set-RecoveryServiceStartMode',
                   'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode',
-                  'Read-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartup', 'Set-MinhDucRollbackPending', 'Hold-MinhDucFailedMaintenanceWindow',
+                  'Read-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartup', 'Set-MinhDucRollbackPending', 'Hold-MinhDucFailedMaintenanceWindow', 'Get-MinhDucServiceStopWait',
                   'Disable-MinhDucServiceStartup', 'Enter-MinhDucMaintenanceWindow', 'Suspend-MinhDucMaintenanceWindow',
                   'Resume-MinhDucMaintenanceWindow', 'Exit-MinhDucMaintenanceWindow') {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)

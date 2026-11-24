@@ -53,7 +53,7 @@ try {
     if ($AfterDataChange) { $workerArgs += '-AfterDataChange' }
     $stderr = Join-Path $dir 'worker-stderr.txt'
     $worker = Start-Process -FilePath $engine -ArgumentList $workerArgs -RedirectStandardError $stderr -PassThru
-    if (-not $worker.WaitForExit(45000)) { throw 'Tiến trình thử bảo trì chưa thoát.' }
+    if (-not $worker.WaitForExit(300000)) { throw 'Tiến trình thử bảo trì chưa thoát.' }
     if ($worker.ExitCode -eq 0) { throw 'Tiến trình con trả mã 0. Diễn tập phải kết thúc bằng gián đoạn.' }
     if (-not (Test-Path -LiteralPath $ready -PathType Leaf)) { throw "Tiến trình con trả mã $($worker.ExitCode) trước khi có tệp ready." }
     if (Test-Path -LiteralPath ($ready + '.error.txt')) { throw "Tiến trình con báo lỗi với mã $($worker.ExitCode)." }

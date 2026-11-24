@@ -51,7 +51,7 @@ try {
         $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $drill + '"'), '-InterruptAfter', ('"' + $ready + '"'))
         if ($blocked) { $arguments += '-AfterDataChange' }
         $worker = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -PassThru
-        if (-not $worker.WaitForExit(45000)) { throw 'Tiến trình diễn tập chưa thoát.' }
+        if (-not $worker.WaitForExit(300000)) { throw 'Tiến trình diễn tập chưa thoát.' }
         if ($worker.ExitCode -eq 0 -or -not (Test-Path -LiteralPath $ready -PathType Leaf)) {
             if (Test-Path -LiteralPath ($ready + '.error.txt')) { Get-Content -LiteralPath ($ready + '.error.txt') -Encoding UTF8 | Out-Host }
             throw "Chưa mô phỏng gián đoạn ở $phase."
