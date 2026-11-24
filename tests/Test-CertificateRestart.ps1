@@ -5,7 +5,7 @@ $tokens = $null
 $errors = $null
 $module = [Management.Automation.Language.Parser]::ParseFile((Join-Path $windows 'MinhDuc.Install.psm1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in @('Stop-CaiDat', 'Set-RecoveryServiceStartMode', 'Stop-MinhDucService', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit', 'Resume-MinhDucServiceStartMode',
+foreach ($name in @('Stop-CaiDat', 'Get-MinhDucServiceStopWait', 'Set-RecoveryServiceStartMode', 'Stop-MinhDucService', 'Restart-MinhDucService', 'Wait-MinhDucVenvPythonExit', 'Resume-MinhDucServiceStartMode',
                     'Open-MinhDucServiceStartModeLock', 'Get-MinhDucServiceStartModeMarkerFile', 'Write-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartMode',
                     'Read-MinhDucServiceStartModeMarker', 'Restore-MinhDucServiceStartup', 'Disable-MinhDucServiceStartup', 'Enter-MinhDucMaintenanceWindow', 'Suspend-MinhDucMaintenanceWindow',
                     'Resume-MinhDucMaintenanceWindow', 'Exit-MinhDucMaintenanceWindow')) {
@@ -99,7 +99,8 @@ function Get-Service {
     $service | Add-Member ScriptMethod Refresh { $this.Status = $test.status }
     $service | Add-Member ScriptMethod WaitForStatus {
         param($target, $timeout)
-        if ($timeout.TotalSeconds -ne 30) { throw 'Sai giới hạn chờ trạng thái SCM' }
+        $expectedSeconds = if ($target -eq 'Stopped') { (Get-MinhDucServiceStopWait).TotalSeconds } else { 30 }
+        if ($timeout.TotalSeconds -ne $expectedSeconds) { throw 'Sai giới hạn chờ trạng thái SCM' }
         if ($target -eq 'Stopped') {
             if ($test.startup -ne 'Disabled' -or $test.status -notin @('StopPending', 'Stopped')) { throw 'Chờ dừng sai trạng thái' }
             $test.stoppedWaits++

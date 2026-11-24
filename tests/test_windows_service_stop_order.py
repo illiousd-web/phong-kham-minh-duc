@@ -22,6 +22,12 @@ def _module_seconds(name):
     return int(match.group(1))
 
 
+def _stop_wait_seconds():
+    match = re.search(r'function Get-MinhDucServiceStopWait \{\s*return New-TimeSpan -Seconds (\d+)\s*\}', _read(MODULE))
+    assert match, 'Thiếu hàm Get-MinhDucServiceStopWait trả số giây cố định'
+    return int(match.group(1))
+
+
 def _graceful_seconds():
     tree = ast.parse(_read(ROOT / 'scripts/run_lan.py'))
     for node in ast.walk(tree):
@@ -35,7 +41,7 @@ def _graceful_seconds():
 def test_stop_timeouts_are_strictly_ordered():
     graceful = _graceful_seconds()
     winsw = _module_seconds('ServiceStopTimeoutSec')
-    wait = _module_seconds('ServiceStopWaitSec')
+    wait = _stop_wait_seconds()
     assert graceful < winsw < wait
     # Đủ khoảng trống để WinSW cưỡng chế xong trước khi PowerShell bỏ cuộc.
     assert wait - winsw >= 20
@@ -51,6 +57,7 @@ def test_no_stopped_wait_shorter_than_winsw_kill():
     winsw = _module_seconds('ServiceStopTimeoutSec')
     files = list((ROOT / 'deploy/windows').glob('*.ps1')) + [MODULE]
     files += list((ROOT / '.github/scripts').glob('*.ps1')) + [ROOT / '.github/workflows/clinic-tests.yml']
+    files += list((ROOT / 'tests').glob('*.ps1'))
     pattern = re.compile(r"WaitForStatus\('Stopped',\s*(?:\(New-TimeSpan -Seconds (\d+)\)|\[TimeSpan\]::FromSeconds\((\d+)\))")
     short = []
     for path in files:

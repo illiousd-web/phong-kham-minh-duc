@@ -18,10 +18,10 @@ $script:Pins = @{
 # Hai mốc WinSW và PowerShell trước đây cùng 30 giây nên chạy đua: PowerShell bỏ cuộc
 # đúng lúc WinSW còn đang chờ. Kiểm bởi tests/test_windows_service_stop_order.py.
 $script:ServiceStopTimeoutSec = 30
-$script:ServiceStopWaitSec = 60
 
+# Số giây ghi thẳng trong hàm để bài thử trích riêng hàm (không nạp mô-đun) vẫn chạy đúng.
 function Get-MinhDucServiceStopWait {
-    return New-TimeSpan -Seconds $script:ServiceStopWaitSec
+    return New-TimeSpan -Seconds 60
 }
 
 $script:Names = @{
