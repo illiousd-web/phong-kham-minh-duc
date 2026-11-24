@@ -14,14 +14,15 @@ $script:Pins = @{
 }
 
 # Thứ tự thời gian dừng dịch vụ, phải luôn đúng: Python tự dừng (scripts/run_lan.py,
-# timeout_graceful_shutdown) < WinSW cưỡng chế (stoptimeout) < PowerShell chờ Stopped.
+# timeout_graceful_shutdown 60 giây, đủ cho xuất báo cáo/in phiếu đang chạy dở)
+# < WinSW cưỡng chế (stoptimeout) < PowerShell chờ Stopped.
 # Hai mốc WinSW và PowerShell trước đây cùng 30 giây nên chạy đua: PowerShell bỏ cuộc
 # đúng lúc WinSW còn đang chờ. Kiểm bởi tests/test_windows_service_stop_order.py.
-$script:ServiceStopTimeoutSec = 30
+$script:ServiceStopTimeoutSec = 90
 
 # Số giây ghi thẳng trong hàm để bài thử trích riêng hàm (không nạp mô-đun) vẫn chạy đúng.
 function Get-MinhDucServiceStopWait {
-    return New-TimeSpan -Seconds 60
+    return New-TimeSpan -Seconds 120
 }
 
 $script:Names = @{
