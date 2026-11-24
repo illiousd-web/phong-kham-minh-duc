@@ -549,10 +549,12 @@ def test_cashier_financial_settlement_over_https(https_server, clients, visit):
         page.get_by_role('button', name='Chờ kết thúc', exact=True).click()
         settle(page)
         pick(page, 'financial-visit', visit)
-        page.once('dialog', lambda dialog: dialog.accept('Phê duyệt thử nghiệm trên trình duyệt'))
-        with page.expect_response(lambda r: r.url.endswith(f'/api/visits/{visit}/settlement-waiver')) as waived:
-            page.get_by_role('button', name='Duyệt miễn thu', exact=True).click()
-        assert waived.value.status == 200 and waived.value.json()['kind'] == 'mien_thu'
+        waiver = page.get_by_role('button', name='Duyệt miễn thu', exact=True)
+        expect(waiver).to_be_disabled()
+        expect(waiver.locator('..')).to_contain_text('Lượt khám đã thu đủ, không có khoản để miễn thu.')
+        with page.expect_response(lambda r: r.url.endswith(f'/api/visits/{visit}/settle')) as closed:
+            page.get_by_role('button', name='Kết thúc lượt', exact=True).click()
+        assert closed.value.status == 200 and closed.value.json()['kind'] == 'du_thu'
         settle(page)
         no_horizontal_scroll(page)
         assert not errors, errors

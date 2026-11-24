@@ -32,6 +32,7 @@ const S2ESettlement={
  blockReason(bill, waiver=false){
   if(bill.unpriced_count)return 'Còn khoản chưa có giá';
   if(bill.refund_due)return 'Còn phải hoàn '+money(bill.refund_due).replace(/ đ$/,' đồng');
+  if(waiver&&!bill.due)return 'Lượt khám đã thu đủ, không có khoản để miễn thu. Dùng Kết thúc thường.';
   if(!waiver&&bill.due)return 'Còn phải thu '+money(bill.due).replace(/ đ$/,' đồng');
   return '';
  },
