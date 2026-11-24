@@ -1,9 +1,12 @@
 """Cashier and administrator actions for financial closure."""
+from datetime import datetime
+
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .domain import invoice
 from .financial_state import ensure_financial_open
+from .labels import VN_TZ
 
 
 class SettlementReason(BaseModel):
@@ -20,6 +23,41 @@ def financial_status(c, visit_id):
     return dict(row) if row else None
 
 
+def pending_requests(c, visit_id):
+    # db(True) serializes these reads with all financial proposal writes.
+    rows = [dict(row) for row in c.execute("""SELECT a.kind, a.amount, u.full_name, a.proposed_at AS created_at
+        FROM adjustments a JOIN users u ON u.id=a.proposed_by
+        WHERE a.visit_id=? AND a.status='pending' AND a.kind IN ('discount','refund')""", (visit_id,))]
+    rows += [dict(row) for row in c.execute("""SELECT 'price' AS kind, r.new_amount AS amount,
+        u.full_name, r.proposed_at AS created_at FROM manual_price_requests r
+        JOIN charges ch ON ch.id=r.charge_id JOIN users u ON u.id=r.proposed_by
+        WHERE ch.visit_id=? AND r.status='pending'""", (visit_id,))]
+    rows += [dict(row) for row in c.execute("""SELECT 'return' AS kind,
+        COALESCE((SELECT SUM(ri.quantity * di.unit_price) FROM medication_return_items ri
+        JOIN dispensation_items di ON di.id=ri.dispensation_item_id WHERE ri.return_id=r.id), 0) AS amount,
+        u.full_name, r.created_at FROM medication_returns r
+        JOIN dispensations d ON d.id=r.dispensation_id JOIN users u ON u.id=r.requested_by
+        WHERE d.visit_id=? AND r.status='pending'""", (visit_id,))]
+    return rows
+
+
+def pending_message(rows):
+    labels = {'discount': 'giảm phí', 'refund': 'hoàn tiền', 'price': 'sửa giá', 'return': 'trả thuốc'}
+    details = []
+    for row in rows:
+        stamp = str(row['created_at'])
+        try:
+            parsed = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(VN_TZ)
+            stamp = parsed.strftime('%d/%m/%Y %H:%M')
+        except ValueError:
+            pass
+        amount = f"{row['amount']:,}".replace(',', '.')
+        details.append(f"{labels[row['kind']]} {amount} đ ({row['full_name']}, {stamp})")
+    return f"Chưa kết thúc được: còn {len(rows)} đề nghị " + '; '.join(details) + ' chờ duyệt.'
+
+
 def close_visit(c, visit_id, user, audit, now, reason=None):
     visit = c.execute('SELECT status FROM visits WHERE id=?', (visit_id,)).fetchone()
     if not visit:
@@ -29,6 +67,9 @@ def close_visit(c, visit_id, user, audit, now, reason=None):
         raise HTTPException(409, 'Bác sĩ chưa khóa phiếu')
     if is_legacy_completed(c, visit_id):
         raise HTTPException(409, 'Lượt cũ không cần kết thúc tài chính')
+    pending = pending_requests(c, visit_id)
+    if pending:
+        raise HTTPException(409, pending_message(pending))
     bill = invoice(c, visit_id)
     if bill['unpriced_count']:
         raise HTTPException(409, 'Còn khoản chưa có giá')
@@ -38,6 +79,8 @@ def close_visit(c, visit_id, user, audit, now, reason=None):
     if reason is None and bill['due']:
         amount = f"{bill['due']:,}".replace(',', '.')
         raise HTTPException(409, f'Còn phải thu {amount} đồng')
+    if reason is not None and bill['due'] == 0:
+        raise HTTPException(409, 'Lượt khám đã thu đủ, không có khoản để miễn thu. Dùng Kết thúc thường.')
     if reason is not None and c.execute('SELECT 1 FROM payments WHERE visit_id=? AND created_by=?',
                                        (visit_id, user['id'])).fetchone():
         raise HTTPException(403, 'Người đã thu tiền lượt này không được duyệt miễn thu')

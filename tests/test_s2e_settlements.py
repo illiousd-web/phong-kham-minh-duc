@@ -129,6 +129,71 @@ def test_waiver_requires_admin_and_an_independent_approver(clients, visit):
         assert invoice(c, visit)['due'] == 120000
 
 
+
+def test_fully_paid_waiver_rejected_and_not_reported(clients, visit):
+    cashier, admin, manager = (clients[name] for name in ('cashier', 'admin', 'manager'))
+    complete_visit(clients['doctor'], visit)
+    checked(cashier.post('/api/payments', json=payment(visit, 150000)), 201)
+    with database.db() as c:
+        day = local_day(c.execute('SELECT created_at FROM visits WHERE id=?', (visit,)).fetchone()[0])[:10]
+    params = {'date_from': day, 'date_to': day}
+    before = checked(manager.get('/api/reports/revenue', params=params))['totals']
+    checked(admin.post(f'/api/visits/{visit}/settlement-waiver', json={'reason': REASON}), 409,
+            'Lượt khám đã thu đủ, không có khoản để miễn thu. Dùng Kết thúc thường.')
+    with database.db() as c:
+        assert c.execute('SELECT COUNT(*) FROM visit_settlements WHERE visit_id=?', (visit,)).fetchone()[0] == 0
+    after = checked(manager.get('/api/reports/revenue', params=params))['totals']
+    for field in ('waived_amount', 'waived_visits', 'waiver_approval_count'):
+        assert after[field] == before[field]
+
+
+def test_waiver_with_fifty_thousand_due(clients, visit):
+    complete_visit(clients['doctor'], visit)
+    checked(clients['cashier'].post('/api/payments', json=payment(visit, 100000)), 201)
+    result = checked(clients['admin'].post(f'/api/visits/{visit}/settlement-waiver', json={'reason': REASON}))
+    assert (result['kind'], result['waived_amount']) == ('mien_thu', 50000)
+
+
+def test_fully_paid_pending_refund_blocks_closure(clients, visit):
+    cashier = clients['cashier']
+    complete_visit(clients['doctor'], visit)
+    pay_id = checked(cashier.post('/api/payments', json=payment(visit, 150000)), 201)['id']
+    checked(cashier.post('/api/adjustments', json={'visit_id': visit, 'kind': 'refund',
+            'payment_id': pay_id, 'amount': 10000, 'reason': REASON}), 201)
+    response = cashier.post(f'/api/visits/{visit}/settle')
+    assert response.status_code == 409
+    assert 'hoàn tiền 10.000 đ' in response.json()['detail']
+    with database.db() as c:
+        assert c.execute('SELECT COUNT(*) FROM visit_settlements WHERE visit_id=?', (visit,)).fetchone()[0] == 0
+
+
+def test_concurrent_request_and_closure_cannot_both_succeed(clients, visit):
+    cashier, admin = clients['cashier'], clients['admin']
+    complete_visit(clients['doctor'], visit)
+    pay_id = checked(cashier.post('/api/payments', json=payment(visit, 150000)), 201)['id']
+    proposal = {'visit_id': visit, 'kind': 'refund', 'payment_id': pay_id,
+                'amount': 10000, 'reason': REASON}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        request = pool.submit(cashier.post, '/api/adjustments', json=proposal)
+        closure = pool.submit(admin.post, f'/api/visits/{visit}/settle')
+        statuses = (request.result().status_code, closure.result().status_code)
+    assert statuses in ((201, 409), (409, 200))
+    with database.db() as c:
+        pending = c.execute("SELECT COUNT(*) FROM adjustments WHERE visit_id=? AND status='pending'", (visit,)).fetchone()[0]
+        closed = c.execute('SELECT COUNT(*) FROM visit_settlements WHERE visit_id=?', (visit,)).fetchone()[0]
+        assert (pending, closed) in ((1, 0), (0, 1))
+
+
+@pytest.mark.parametrize('approve', [True, False])
+def test_resolved_request_allows_closure(clients, visit, approve):
+    cashier, manager = clients['cashier'], clients['manager']
+    request = checked(cashier.post('/api/adjustments', json={'visit_id': visit, 'kind': 'discount',
+                      'amount': 10000, 'reason': REASON}), 201)['id']
+    checked(manager.post(f'/api/adjustments/{request}/review', json={'approve': approve}))
+    complete_visit(clients['doctor'], visit)
+    checked(cashier.post('/api/payments', json=payment(visit, 140000 if approve else 150000)), 201)
+    checked(cashier.post(f'/api/visits/{visit}/settle'))
+
 def test_reopen_restores_queue_and_allows_new_payment_and_a_second_closure(clients, visit):
     prefix = f'/api/visits/{visit}'
     cashier, admin, manager = (clients[name] for name in ('cashier','admin','manager'))
@@ -269,6 +334,18 @@ def test_closed_visit_blocks_all_financial_writes(clients, visit):
     pending_return = checked(pharmacy.post(return_path, json=return_input), 201)['id']
     complete_visit(doctor, visit, version)
     checked(cashier.post('/api/payments', json=payment(visit, 146500)), 201)
+    for endpoint, actor in (('settle', cashier), ('settlement-waiver', clients['admin'])):
+        response = actor.post(prefix+'/'+endpoint, json={'reason': REASON} if endpoint != 'settle' else None)
+        assert response.status_code == 409
+        for detail in ('giảm phí 500 đ', 'hoàn tiền 1.000 đ', 'sửa giá 6.000 đ', 'trả thuốc 1.000 đ'):
+            assert detail in response.json()['detail']
+    for path, label in ((f'/api/adjustments/{pending_discount}/review', 'giảm phí'),
+                        (f'/api/adjustments/{pending_refund}/review', 'hoàn tiền'),
+                        (f'/api/manual-price-requests/{price_request}/review', 'sửa giá'),
+                        (f'/api/medication-returns/{pending_return}/review', 'trả thuốc')):
+        response = cashier.post(prefix+'/settle')
+        assert response.status_code == 409 and label in response.json()['detail']
+        checked(manager.post(path, json={'approve': False}))
     checked(cashier.post(prefix+'/settle'))
 
     writes = [
@@ -276,27 +353,21 @@ def test_closed_visit_blocks_all_financial_writes(clients, visit):
         (cashier, '/api/payments', payment(visit, 1, prepayment=True)),
         (cashier, '/api/adjustments', discount),
         (cashier, '/api/adjustments', refund),
-        (manager, f'/api/adjustments/{pending_discount}/review', {'approve': True}),
-        (manager, f'/api/adjustments/{pending_refund}/review', {'approve': True}),
         (manager, f'/api/adjustments/{approved}/reverse', {'reason': REASON}),
         (manager, f'/api/charges/{fixed_charge}/reprice', {'amount': 1, 'request_key': key(), 'reason': REASON}),
         (cashier, f'/api/charges/{manual_charge}/manual-price', {**price, 'request_key': key()}),
         (cashier, f'/api/charges/{manual_charge}/manual-price-requests', {**change, 'request_key': key()}),
-        (manager, f'/api/manual-price-requests/{price_request}/review', {'approve': True}),
         (doctor, '/api/orders', {'visit_id': visit, 'category': 'lab', 'request_key': key()}),
         (doctor, f'/api/orders/{order}/authorize', None),
         (manager, f'/api/orders/cancellation-requests/{cancel}/review', {'approve': True}),
         (manager, prefix+'/cancel', {'reason': REASON}),
         (pharmacy, f'/api/prescriptions/{rx}/dispense', None),
         (pharmacy, return_path, {**return_input, 'request_key': key()}),
-        (manager, f'/api/medication-returns/{pending_return}/review', {'approve': True}),
     ]
     for actor, path, data in writes:
         response = actor.post(path, json=data)
         assert response.status_code == 409, (path, response.text)
         assert response.json()['detail'] == CLOSED, (path, response.text)
-    # A rejection resolves a pending proposal without changing money or stock.
-    checked(manager.post(f'/api/adjustments/{pending_discount}/review', json={'approve': False}))
 
 
 def test_sqlite_upgrade_19_to_20_preserves_existing_data(monkeypatch, tmp_path):

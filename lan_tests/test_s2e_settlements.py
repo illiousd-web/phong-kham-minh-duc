@@ -5,6 +5,11 @@ import pytest
 from app import database, s2e_settlement_migration
 from tests.test_s2e_settlements import (
     REASON, REOPEN, snapshot,
+    test_fully_paid_waiver_rejected_and_not_reported as test_fully_paid_waiver_rejected_and_not_reported,
+    test_waiver_with_fifty_thousand_due as test_waiver_with_fifty_thousand_due,
+    test_fully_paid_pending_refund_blocks_closure as test_fully_paid_pending_refund_blocks_closure,
+    test_concurrent_request_and_closure_cannot_both_succeed as test_concurrent_request_and_closure_cannot_both_succeed,
+    test_resolved_request_allows_closure as test_resolved_request_allows_closure,
     test_closed_visit_blocks_all_financial_writes as test_closed_visit_blocks_all_financial_writes,
     test_overview_excludes_active_waiver_and_restores_outstanding_after_reopen as test_overview_excludes_active_waiver_and_restores_outstanding_after_reopen,
     test_reopen_restores_queue_and_allows_new_payment_and_a_second_closure as test_reopen_restores_queue_and_allows_new_payment_and_a_second_closure,
