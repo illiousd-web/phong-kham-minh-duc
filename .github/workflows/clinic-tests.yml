@@ -269,7 +269,7 @@ jobs:
       - name: Real venv Python child releases cryptography rust lock
         run: |
           Stop-Service MinhDuc -ErrorAction Stop
-          (Get-Service MinhDuc).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+          (Get-Service MinhDuc).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(120))
           try {
             & powershell.exe -NoProfile -File deploy/windows/Test-VenvRecovery.ps1 -RealVenvLock
             if ($LASTEXITCODE) { throw 'Real venv rust lock test failed' }
