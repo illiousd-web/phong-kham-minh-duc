@@ -120,6 +120,9 @@ def assert_settlement_runtime_acl(url, role):
         ('UPDATE visit_settlements SET waived_amount=500', 'visit_settlements'),
         ('DELETE FROM visit_settlements', 'visit_settlements'),
         ('TRUNCATE visit_settlements', 'visit_settlements'),
+        ('UPDATE active_visit_settlements SET waived_amount=500', 'active_visit_settlements'),
+        ('DELETE FROM active_visit_settlements', 'active_visit_settlements'),
+        ('INSERT INTO active_visit_settlements(visit_id) VALUES(2)', 'active_visit_settlements'),
         ("UPDATE visit_settlement_reopens SET reason='Lý do khác'", 'visit_settlement_reopens'),
         ('DELETE FROM visit_settlement_reopens', 'visit_settlement_reopens'),
         ('TRUNCATE visit_settlement_reopens', 'visit_settlement_reopens'),
@@ -130,6 +133,7 @@ def assert_settlement_runtime_acl(url, role):
     )
     with psycopg.connect(url) as c:
         c.execute(sql.SQL('SET ROLE {}').format(role))
+        assert c.execute('SELECT id FROM active_visit_settlements').fetchall() == []
         assert not c.execute(
             "SELECT has_function_privilege('public.visit_settlement_immutable()', 'EXECUTE')").fetchone()[0]
         for statement, table in statements:
