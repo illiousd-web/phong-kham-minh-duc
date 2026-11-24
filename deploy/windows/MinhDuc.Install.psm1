@@ -13,6 +13,17 @@ $script:Pins = @{
     WinSW    = @{ Version = '2.12.0'; File = 'WinSW-x64-2.12.0.exe'; Url = 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe'; Sha256 = '05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da' }
 }
 
+# Thứ tự thời gian dừng dịch vụ, phải luôn đúng: Python tự dừng (scripts/run_lan.py,
+# timeout_graceful_shutdown) < WinSW cưỡng chế (stoptimeout) < PowerShell chờ Stopped.
+# Hai mốc WinSW và PowerShell trước đây cùng 30 giây nên chạy đua: PowerShell bỏ cuộc
+# đúng lúc WinSW còn đang chờ. Kiểm bởi tests/test_windows_service_stop_order.py.
+$script:ServiceStopTimeoutSec = 30
+$script:ServiceStopWaitSec = 60
+
+function Get-MinhDucServiceStopWait {
+    return New-TimeSpan -Seconds $script:ServiceStopWaitSec
+}
+
 $script:Names = @{
     Service      = 'MinhDuc'
     ServiceAcct  = 'NT SERVICE\MinhDuc'
@@ -408,7 +419,7 @@ function New-ServiceXml {
   <onfailure action="restart" delay="30 sec"/>
   <onfailure action="restart" delay="60 sec"/>
   <resetfailure>1 hour</resetfailure>
-  <stoptimeout>30 sec</stoptimeout>
+  <stoptimeout>$($script:ServiceStopTimeoutSec) sec</stoptimeout>
   <logpath>$(& $esc $logDir)</logpath>
   <log mode="roll-by-size">
     <sizeThreshold>5120</sizeThreshold>
@@ -794,7 +805,7 @@ function Hold-MinhDucFailedMaintenanceWindow {
             $service = Get-Service -Name $Window.Name -ErrorAction Stop
             if ($service.Status -ne 'Stopped') {
                 Stop-Service -InputObject $service -NoWait -ErrorAction Stop
-                $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
+                $service.WaitForStatus('Stopped', (Get-MinhDucServiceStopWait))
             }
         }
     }
@@ -831,7 +842,7 @@ function Stop-MinhDucService {
             if ($service.Status -notin @('Stopped', 'StopPending')) { throw }
         }
     }
-    $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
+    $service.WaitForStatus('Stopped', (Get-MinhDucServiceStopWait))
     Wait-MinhDucVenvPythonExit -Venv $Window.Paths.Venv -ClinicEnv $Window.Paths.ClinicEnv
     $service.Refresh()
     if ($service.Status -ne 'Stopped') { throw 'Dịch vụ đã chạy lại trong lúc chờ Python thoát.' }

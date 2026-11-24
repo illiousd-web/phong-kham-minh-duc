@@ -109,7 +109,7 @@ function Invoke-QuayVe {
                 }
                 $service = Get-Service -Name $Names.Service -ErrorAction Stop
                 if ($service.Status -ne 'Stopped') { Stop-Service -Name $Names.Service -Force -ErrorAction Stop }
-                $service.WaitForStatus('Stopped', (New-TimeSpan -Seconds 30))
+                $service.WaitForStatus('Stopped', (Get-MinhDucServiceStopWait))
                 $service.Refresh()
                 if ($service.Status -ne 'Stopped') { throw 'Dịch vụ chưa dừng; không thay mã hoặc dữ liệu đang chạy.' }
                 if (-not $State.backup_task_snapshot.Count) { throw 'Thiếu snapshot lịch ban đầu; không chụp lại trong quay về.' }

@@ -12,7 +12,7 @@ $pending = $paths.ServiceStartModePending
 if ($Interrupt) {
     Invoke-WithMinhDucServiceStartupDisabled -Name $name -Paths $paths -ScriptName 'GiaHanChungChi.ps1' -Action {
         Stop-Service -Name $name -ErrorAction Stop
-        (Get-Service -Name $name).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+        (Get-Service -Name $name).WaitForStatus('Stopped', (Get-MinhDucServiceStopWait))
         [Diagnostics.Process]::GetCurrentProcess().Kill()
     }
     throw 'Tiến trình kiểm thử chưa bị ngắt.'
