@@ -159,6 +159,7 @@ def migrate_profile_schema(c):
     from app.s2b_migration import migrate_s2b
     from app.s2c_migration import migrate_s2c
     from app.s2d_migration import migrate_s2d
+    from app.s2e_settlement_migration import migrate_settlements
     for _ in range(2):
         migrate_m0(c);migrate_administrative(c);migrate_public_catalog(c)
         migrate_m6(c,postgres=True);migrate_m5(c,postgres=True);migrate_d0(c,postgres=True);migrate_source_catalogs(c,postgres=True)
@@ -168,6 +169,7 @@ def migrate_profile_schema(c):
         migrate_s2b(c,postgres=True)
         migrate_s2c(c,postgres=True)
         migrate_s2d(c,postgres=True)
+        migrate_settlements(c,postgres=True)
 
 
 def database_state(url):
@@ -432,7 +434,7 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 14  # versions 5–17 and 19 (S2d); 18 is reserved
+                expected_state['tables']['schema_migrations'] += 15  # versions 5–17 and 19–20; 18 is reserved
                 expected_state['tables']['clinic_profile'] = 1
                 expected_state['tables']['user_signatures'] = 0
                 expected_state['tables']['document_signatures'] = 0
@@ -448,7 +450,9 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                 expected_state['tables']['tech_catalog_pl01']=19438
                 expected_state['tables']['tech_pl02_links']=8252 # exact fragments in the SHA-256-pinned public PL02
                 expected_state['tables']['patient_catalog'] = 3411
-                expected_state['tables'].update(imaging_templates=28, imaging_reports=0, imaging_images=0)
+                expected_state['tables'].update(imaging_templates=28, imaging_reports=0, imaging_images=0,
+                                                visit_settlements=0, visit_settlement_reopens=0,
+                                                legacy_completed_visits=manifest['counts']['visits']-manifest['active_visits'])
                 assert new_state == expected_state, 'Migration M0 làm đổi dữ liệu C5'
                 report['m0_migration'] = {'seconds': migration_seconds, 'preserved': True,
                     'visits': new_state['tables']['visits'], 'patients': new_state['tables']['patients']}

@@ -3,6 +3,8 @@ import json
 from datetime import date
 from fastapi import HTTPException
 
+from .financial_state import ensure_financial_open
+
 
 def ensure_open(v):
     if v['status'] in ('completed','cancelled'):
@@ -44,6 +46,7 @@ def authorize_order(c,oid,u,audit,now):
     if not (assigned_doctor or assigned_nurse):raise HTTPException(403,'Chỉ bác sĩ hoặc điều dưỡng được phân công lập/duyệt chỉ định')
     old=c.execute('SELECT * FROM order_authorizations WHERE order_id=?',(oid,)).fetchone()
     if old:return {'id':oid,'charge_amount':old['unit_price'],'status':'already_authorized'}
+    ensure_financial_open(c,o['visit_id'])
     ensure_open(v)
     if o['status'] not in ('requested','ordered'):raise HTTPException(409,'Chỉ định không còn chờ duyệt')
     s=c.execute('SELECT * FROM service_catalog WHERE id=?',(o['service_id'],)).fetchone()
@@ -62,6 +65,7 @@ def dispense_rx(c,rid,u,audit,now):
     rx=c.execute('SELECT * FROM prescriptions WHERE id=?',(rid,)).fetchone()
     if not rx:raise HTTPException(404,'Không có đơn')
     v=c.execute('SELECT status FROM visits WHERE id=?',(rx['visit_id'],)).fetchone()
+    ensure_financial_open(c,rx['visit_id'])
     if v['status']=='cancelled':raise HTTPException(409,'Lượt đã hủy')
     if rx['status']!='draft' or c.execute('SELECT 1 FROM dispensations WHERE prescription_id=?',(rid,)).fetchone():raise HTTPException(409,'Không cấp trùng đơn đã xử lý')
     items=[dict(x) for x in c.execute('SELECT i.*,m.name,m.base_unit,m.controlled,m.active,mp.unit_price FROM prescription_items i JOIN medicines m ON m.id=i.medicine_id LEFT JOIN medicine_prices mp ON mp.medicine_id=m.id WHERE i.prescription_id=? ORDER BY i.id',(rid,))]

@@ -70,7 +70,9 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
    ];
    return stats([
     ['Chưa thu – lượt khám trong kỳ',money(data.totals.known_due)],
-    ['Chênh lệch thu – phát sinh trong kỳ',money(data.totals.outstanding)]
+    ['Chênh lệch thu – phát sinh trong kỳ',money(data.totals.outstanding)],
+    ['Miễn thu đã duyệt',money(data.totals.waived_amount)+' · '+data.totals.waived_visits+' lượt'],
+    ['Số lần duyệt miễn thu (kể cả đã mở lại)',data.totals.waiver_approval_count]
    ])+'<h3>Theo ngày</h3>'+this.table('revenue',columns,[...data.rows,{...data.totals,day:'Tổng kỳ'}])+
     '<h3>Lượt khám còn thiếu tiền</h3>'+this.limitedTable('unpaid',unpaid,data.unpaid_visits);
   },

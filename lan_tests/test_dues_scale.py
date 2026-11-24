@@ -17,6 +17,7 @@ def test_dues_query_with_22000_visits_is_fast_and_complete():
     from app.database import PGConnection, record_factory
     from app.migrations import migrate_v050
     from app.manual_price_migration import migrate_manual_prices
+    from app.s2e_settlement_migration import migrate_settlements
     from app.main import dues_rows
     name = 'clinic_scale_' + secrets.token_hex(5)
     with psycopg.connect(SOURCE, autocommit=True) as c:
@@ -30,8 +31,8 @@ def test_dues_query_with_22000_visits_is_fast_and_complete():
             old, today = '2025-01-01T03:00:00+00:00', '2026-11-09T03:00:00+00:00'
             con.execute("INSERT INTO users(id,username,full_name,salt,password_hash) VALUES(1,'gia_lap','Nhân viên giả lập','00','x')")
             con.execute("INSERT INTO patients(full_name,sex,created_at) SELECT 'Người bệnh giả lập '||g,'Nữ',%s FROM generate_series(1,2000) g", (old,))
-            con.execute('''INSERT INTO visits(patient_id,doctor_id,created_by,created_at)
-                           SELECT 1+(g %% 2000),1,1,%s FROM generate_series(1,%s) g''', (old, VISITS))
+            con.execute('''INSERT INTO visits(patient_id,doctor_id,created_by,created_at,status)
+                           SELECT 1+(g %% 2000),1,1,%s,'completed' FROM generate_series(1,%s) g''', (old, VISITS))
             # Mỗi lượt 3 khoản; lượt chia hết cho 1000 có thêm một khoản chưa có giá.
             con.execute('''INSERT INTO charges(visit_id,label,amount,created_at)
                            SELECT v.id,'Khoản giả lập '||k,50000,%s FROM visits v CROSS JOIN generate_series(1,3) k''', (old,))
@@ -41,6 +42,7 @@ def test_dues_query_with_22000_visits_is_fast_and_complete():
                            SELECT id,CASE WHEN id %% 700=0 THEN 160000 ELSE 150000 END,'cash',1,%s,'scale-'||id
                            FROM visits WHERE id %% 500<>0''', (old,))
             con.execute('UPDATE visits SET created_at=%s WHERE id>%s', (today, VISITS - 5))
+            migrate_settlements(PGConnection(con), postgres=True)
             con.execute('ANALYZE')
             c = PGConnection(con)
             dues_rows(c, '2026-11-09T00:00:00+00:00')  # làm nóng bộ nhớ đệm
@@ -54,6 +56,7 @@ def test_dues_query_with_22000_visits_is_fast_and_complete():
         today_ids = set(range(VISITS - 4, VISITS + 1))
         assert ids == owing | overpaid | unpriced | today_ids
         assert min(owing) == 500 and 500 in ids  # lượt cũ hơn 21.000 lượt vẫn hiện
+        assert not any(row['financial_pending'] for row in rows)
         print(f'dues_rows: {elapsed:.3f} giây, {len(rows)} lượt')
         assert elapsed < 2.0, f'Truy vấn hàng chờ thu ngân mất {elapsed:.2f} giây với {VISITS} lượt'
     finally:

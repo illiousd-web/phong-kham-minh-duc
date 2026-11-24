@@ -15,6 +15,7 @@ from .domain import invoice
 
 NOTE = 'Số liệu theo giá hiện hành tại thời điểm xuất báo cáo; khoản sửa giá được tính vào ngày phát sinh khoản phí.'
 UNPRICED_WARNING = 'Còn khoản chưa nhập giá, doanh thu chưa đầy đủ'
+WAIVER_APPROVAL_LABEL = 'Số lần duyệt miễn thu (kể cả đã mở lại)'
 
 
 def day(stamp):
@@ -92,11 +93,21 @@ def revenue_report(c, start, end):
               ('medicine','clinical','procedure','other','gross','discount','revenue',
                'payments','refund','paid','outstanding','unpriced_count')}
 
+    waivers = [row for row in c.execute("""SELECT w.waived_amount,w.created_at,s.id IS NOT NULL AS active
+        FROM visit_settlements w LEFT JOIN active_visit_settlements s ON s.id=w.id
+        WHERE w.kind='mien_thu'""")
+        if in_period(row['created_at'], start, end)]
+    totals['waived_amount'] = sum(row['waived_amount'] for row in waivers if row['active'])
+    totals['waived_visits'] = sum(1 for row in waivers if row['active'])
+    totals['waiver_approval_count'] = len(waivers)
+
     # Daily outstanding is an accounting flow; actual debt comes from a whole-visit invoice.
     unpaid_visits = []
     for visit in c.execute("""SELECT v.id,v.created_at,p.code AS patient_code,
         p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id
-        WHERE v.status <> 'cancelled' ORDER BY v.created_at,v.id"""):
+        WHERE v.status <> 'cancelled' AND NOT EXISTS (
+            SELECT 1 FROM active_visit_settlements s WHERE s.visit_id=v.id AND s.kind='mien_thu')
+        ORDER BY v.created_at,v.id"""):
         if not in_period(visit['created_at'], start, end):
             continue
         item = {'visit_id': visit['id'], 'patient_code': visit['patient_code'],
@@ -330,7 +341,10 @@ def xlsx(kind, data):
         total = dict(data['totals'], day='TỔNG KỲ')
         total_columns = [(key, 'Chênh lệch thu – phát sinh trong kỳ' if key == 'outstanding'
                           else label, fmt) for key, label, fmt in COLS[kind]]
-        total_columns.append(('known_due', 'Chưa thu', 'n'))
+        total_columns.extend([('known_due', 'Chưa thu', 'n'),
+                              ('waived_amount', 'Miễn thu đã duyệt', 'n'),
+                              ('waived_visits', 'Số lượt miễn thu', 'n'),
+                              ('waiver_approval_count', WAIVER_APPROVAL_LABEL, 'n')])
         add_sheet(book.create_sheet('Tổng kỳ'), total_columns, [total])
         add_sheet(book.create_sheet('Lượt khám còn thiếu tiền'), COLS['unpaid_visits'], data['unpaid_visits'])
     if kind == 'visits':
