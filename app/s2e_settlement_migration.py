@@ -20,6 +20,7 @@ def migrate_settlements(c, postgres=False):
         c.execute('ALTER TABLE visit_settlements ADD ' + predecessor)
         c.connection.execute("""CREATE FUNCTION visit_settlement_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN RAISE EXCEPTION 'Không thể sửa hoặc xóa lịch sử kết thúc lượt'; END $$;""")
+        c.execute('REVOKE ALL ON FUNCTION public.visit_settlement_immutable() FROM PUBLIC')
     for table in ('visit_settlements', 'visit_settlement_reopens'):
         if postgres:
             c.execute(f'''CREATE TRIGGER {table}_immutable BEFORE UPDATE OR DELETE ON {table}

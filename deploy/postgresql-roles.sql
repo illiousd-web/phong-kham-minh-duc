@@ -66,3 +66,13 @@ DO $$ BEGIN
   REVOKE ALL ON FUNCTION s2d_report_guard(), s2d_image_guard() FROM PUBLIC;
  END IF;
 END $$;
+
+-- S2e-3a: giữ lịch sử kết thúc lượt và áp lại ACL sau khôi phục.
+DO $$ BEGIN
+ IF to_regclass('public.visit_settlements') IS NOT NULL THEN
+  REVOKE UPDATE, DELETE, TRUNCATE ON visit_settlements, visit_settlement_reopens FROM clinic_app;
+  REVOKE INSERT, UPDATE, DELETE ON active_visit_settlements FROM clinic_app;
+  REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON legacy_completed_visits FROM clinic_app;
+  REVOKE ALL ON FUNCTION visit_settlement_immutable() FROM PUBLIC;
+ END IF;
+END $$;
