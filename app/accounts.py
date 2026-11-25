@@ -1,4 +1,5 @@
 """Admin account lifecycle and self-service password changes (no demo dependency)."""
+import json
 import secrets
 from typing import Literal
 from fastapi import Depends, HTTPException
@@ -76,9 +77,10 @@ def install_accounts(app, db, principal, require, audit, pw_hash, now):
                 raise HTTPException(404, 'Không có tài khoản')
             if data.active is None and data.roles is None and data.full_name is None:
                 raise HTTPException(422, 'Không có thay đổi nào')
+            old_active = bool(row['active'])
             old_roles = {r[0] for r in c.execute('SELECT role FROM user_roles WHERE user_id=?', (uid,))}
             roles = set(data.roles) if data.roles is not None else old_roles
-            active = data.active if data.active is not None else bool(row['active'])
+            active = data.active if data.active is not None else old_active
             if (not active or 'admin' not in roles) and 'admin' in old_roles:
                 others = c.execute("SELECT COUNT(*) FROM users u JOIN user_roles r ON r.user_id=u.id WHERE u.active=1 AND r.role='admin' AND u.id<>?", (uid,)).fetchone()[0]
                 if not others:
@@ -98,7 +100,12 @@ def install_accounts(app, db, principal, require, audit, pw_hash, now):
             # Đổi quyền hoặc khóa: thu hồi mọi phiên của người đó.
             if roles != old_roles or not active:
                 c.execute('DELETE FROM sessions WHERE user_id=?', (uid,))
-            audit(c,u,'account_updated','user',uid,'; '.join(changes) or 'không đổi')
+            details = json.dumps({
+                'summary': '; '.join(changes) or 'không đổi',
+                'old': {'active': old_active, 'roles': sorted(old_roles)},
+                'new': {'active': active, 'roles': sorted(roles)},
+            }, ensure_ascii=False)
+            audit(c, u, 'account_updated', 'user', uid, details, details_limit=len(details))
         return {'ok':True}
 
     @app.post('/api/accounts/{uid}/password')

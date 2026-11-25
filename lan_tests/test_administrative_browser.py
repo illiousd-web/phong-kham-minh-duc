@@ -596,6 +596,10 @@ def test_sole_manager_self_review_requires_reason_at_390px(https_server, clients
         button.click()
         expect(reason).to_be_focused()
         expect(page.get_by_text('Tự duyệt cần ghi lý do (ít nhất 10 ký tự)', exact=True)).to_be_visible()
+        reason.fill('ả' * 501)
+        button.click()
+        expect(reason).to_be_focused()
+        expect(page.get_by_text('Lý do tự duyệt không được quá 500 ký tự', exact=True)).to_be_visible()
         reason.fill(SELF_REASON)
         with page.expect_response(lambda res: res.url.endswith(f'{endpoint}/{request_id}/review')
                                   and res.request.method == 'POST') as response:

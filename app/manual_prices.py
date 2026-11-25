@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from .domain import invoice
 from .financial_state import ensure_financial_open
-from .self_review import FinancialReview, audit_self_review, mark_self_review, self_review_reason
+from .self_review import (FinancialReview, audit_self_review, mark_self_review,
+                          require_current_manager, self_review_reason)
 
 VN = timezone(timedelta(hours=7))
 
@@ -141,8 +142,8 @@ def install_manual_prices(app, db, principal, require, audit, now):
 
     @app.post('/api/manual-price-requests/{rid}/review')
     def review(rid: int, data: FinancialReview, u=Depends(principal)):
-        require(u, 'manager')
         with db(True) as c:
+            require_current_manager(c, u['id'])
             r = c.execute('SELECT * FROM manual_price_requests WHERE id=?', (rid,)).fetchone()
             if not r:
                 raise HTTPException(404, 'Không có đề nghị sửa giá')

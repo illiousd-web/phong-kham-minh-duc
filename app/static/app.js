@@ -756,9 +756,14 @@ function financialReviewBody(element,approve){
  const input=element.closest('.financial-decision')?.querySelector('[data-self-review-reason]');
  if(!input)return {approve};
  const reason=input.value.trim();
- if(Array.from(reason).length<10){
+ const length=Array.from(reason).length;
+ if(length<10){
   input.focus();
   throw new Error('Tự duyệt cần ghi lý do (ít nhất 10 ký tự)');
+ }
+ if(length>500){
+  input.focus();
+  throw new Error('Lý do tự duyệt không được quá 500 ký tự');
  }
  return {approve,reason};
 }
@@ -855,6 +860,10 @@ async function managerScreen(){
 
 // ---------- Quản trị và cài đặt ----------
 function auditDetails(entry){
+ if(entry.event==='account_updated'){
+  try{return JSON.parse(entry.details).summary??entry.details;}
+  catch{return entry.details;}
+ }
  if(entry.event==='stock_legacy_cost_added'){
   try{const data=JSON.parse(entry.details);return 'Giá nhập: '+stockMoney(data.old)+' → '+stockMoney(data.new)+'; căn cứ: '+data.reason;}catch{return 'Bổ sung giá lô chưa có giá';}
  }
