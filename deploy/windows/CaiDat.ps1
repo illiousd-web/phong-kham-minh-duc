@@ -190,7 +190,7 @@ function Step-CauHinhVaCSDL {
         '--super-env', $P.SuperEnv, 'prepare-backup-key', '--key', $P.BackupKey,
         '--directory', $P.Backups, '--state', $P.BackupState)
     if ($r.Code -eq 26) {
-        Stop-CaiDat 'Thiếu tệp khóa sao lưu cũ.' @(
+        Stop-CaiDat 'Thiếu tệp khóa sao lưu cũ hoặc tệp khóa sai định dạng.' @(
             "Khôi phục tệp khóa cũ từ USB vào $($P.BackupKey) rồi chạy lại CAI_DAT.bat."
         ) 26
     }
@@ -200,6 +200,7 @@ function Step-CauHinhVaCSDL {
     if (-not $r.Ok) {
         Stop-CaiDat 'Không đọc được dấu vết cài đặt hoặc dữ liệu sao lưu — báo người hỗ trợ.' @() 26
     }
+    # kept_no_backup trả mã 0 và đã in cảnh báo; tiếp tục với khóa đang có.
     Set-SecureAcl -Path $P.BackupKey
     $ip = $Snap.ip
     $r = Invoke-Python -Paths $P -Base -Quiet -Arguments @((Join-Path $P.Code 'scripts\install_env.py'), 'write', '--clinic-env', $P.ClinicEnv,

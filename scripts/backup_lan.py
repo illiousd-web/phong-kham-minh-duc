@@ -309,6 +309,12 @@ def prepare_install_key(key, directory, state_file, clinic_env, installed_schema
     if history:
         if not _exists_strict(key):
             raise MissingBackupKey('Thiếu khóa sao lưu cũ')
+        if not files:
+            try:
+                key_bytes(key)
+            except (FileNotFoundError, ValueError) as exc:
+                raise MissingBackupKey('Thiếu khóa sao lưu cũ hoặc khóa sai định dạng') from exc
+            return 'kept_no_backup'
         for index, backup_file in enumerate(files, 1):
             print(f'Đang kiểm bản {index}/{len(files)}...', flush=True)
             try:

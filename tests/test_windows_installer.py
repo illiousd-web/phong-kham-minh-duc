@@ -317,7 +317,7 @@ def test_health_compares_latest_backup_with_disk(tmp_path, legacy_state):
 
 
 def test_install_key_requires_old_backup_decryption(tmp_path, capsys):
-    from scripts import backup_lan
+    from scripts import backup_lan, install_db
 
     key = tmp_path / 'backup.key'
     state = tmp_path / 'status.json'
@@ -354,6 +354,8 @@ def test_install_key_requires_old_backup_decryption(tmp_path, capsys):
     key.write_bytes(bytes(x ^ 1 for x in old_key))
     with pytest.raises(ValueError, match='Không giải mã'):
         prepare()
+    assert install_db.main(['--clinic-env', str(clinic_env), 'prepare-backup-key',
+                            '--key', str(key), '--directory', str(backups), '--state', str(state)]) == 27
     key.unlink()
     backups.rename(tmp_path / 'backups-cu')
     with pytest.raises(ValueError, match='Thiếu khóa sao lưu cũ'):
@@ -386,6 +388,37 @@ def test_install_key_does_not_create_key_with_previous_installation(tmp_path, hi
     with pytest.raises(MissingBackupKey):
         prepare_install_key(key, tmp_path / 'backups', state, clinic_env, lambda: history == 'schema')
     assert not key.exists()
+
+
+@pytest.mark.parametrize('valid_key', [True, False], ids=['valid-key', 'invalid-key'])
+def test_install_key_with_clinic_env_and_no_backups(tmp_path, capsys, valid_key):
+    from scripts import backup_lan, install_db
+
+    key = tmp_path / 'backup.key'
+    if valid_key:
+        backup_lan.generate_key(key)
+    else:
+        key.write_bytes(b'sai dinh dang')
+    original = key.read_bytes()
+    clinic_env = tmp_path / 'clinic.env'
+    clinic_env.touch()
+    backups = tmp_path / 'backups'
+    backups.mkdir()
+    state = tmp_path / 'backup-status.json'
+    args = ['--clinic-env', str(clinic_env), 'prepare-backup-key',
+            '--key', str(key), '--directory', str(backups), '--state', str(state)]
+
+    if valid_key:
+        assert backup_lan.prepare_install_key(key, backups, state, clinic_env, lambda: False) == 'kept_no_backup'
+        assert install_db.main(args) == 0
+        assert capsys.readouterr().out.strip() == (
+            '[LƯU Ý] Chưa có bản sao lưu nào để đối chiếu khóa; giữ khóa đang có.')
+    else:
+        with pytest.raises(backup_lan.MissingBackupKey, match='khóa sai định dạng'):
+            backup_lan.prepare_install_key(key, backups, state, clinic_env, lambda: False)
+        assert install_db.main(args) == 26
+        assert capsys.readouterr().out == ''
+    assert key.read_bytes() == original
 
 
 def test_install_key_stops_on_unreadable_backup_directory(tmp_path, monkeypatch):

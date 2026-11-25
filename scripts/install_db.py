@@ -313,6 +313,7 @@ def prepare_backup_key(args):
         'created': 'Đã tạo khóa mã hóa sao lưu.',
         'verified': 'Đã dùng khóa đang có để giải mã và đối chiếu một bản sao lưu cũ.',
         'kept': 'Giữ nguyên khóa sao lưu đang có.',
+        'kept_no_backup': '[LƯU Ý] Chưa có bản sao lưu nào để đối chiếu khóa; giữ khóa đang có.',
     }[outcome])
     return 0
 
