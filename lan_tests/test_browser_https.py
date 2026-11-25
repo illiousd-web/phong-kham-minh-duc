@@ -635,6 +635,12 @@ def test_u1r2_reception_prices_login_password(https_server,clients,width,height)
                 page.locator('[data-form=visit] button[type=submit]').click()
             assert created.value.status==201
             vid=created.value.json()['id'];settle(page)
+            state = page.evaluate("async id => (await fetch('/api/visits/' + id + '/settlement')).json()", vid)
+            assert state['billing'] == {'due': None, 'refund_due': None}
+            assert state['payment_status'] == 'restricted'
+            expect(page.locator('#workspace')).to_be_visible()
+            assert 'Còn phải thu' not in page.locator('#workspace').inner_text()
+            assert not errors, errors
             assert any(v['id']==vid for v in clients['reception'].get('/api/visits').json())
             go(page,'prices');check(page,'prices')
             services=clients['reception'].get('/api/services').json()

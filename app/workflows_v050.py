@@ -60,7 +60,8 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
         with db() as c:
             v=visit_access(c,u,vid,clinical=False)
             if {'doctor','nurse'}.intersection(u['roles']) and not {'manager','admin','cashier','reception','pharmacy'}.intersection(u['roles']):nurse_scope(c,u,vid)
-            if 'nurse' in u['roles'] and not {'doctor','cashier','reception','pharmacy','manager','admin'}.intersection(u['roles']):
+            if (('reception' in u['roles'] and not {'cashier','manager','admin','pharmacy'}.intersection(u['roles']))
+                or ('nurse' in u['roles'] and not {'doctor','cashier','reception','pharmacy','manager','admin'}.intersection(u['roles']))):
                 return {'clinical_status':v['status'],'version':v['version'],'billing':{'due':None,'refund_due':None},'payment_status':'restricted','dispensing_status':'restricted'}
             state=invoice(c,vid)
             rx=c.execute('SELECT id,status FROM prescriptions WHERE visit_id=?',(vid,)).fetchone()
@@ -83,7 +84,10 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
             ensure_financial_open(c,ch['visit_id'])
             if ch['original_amount'] is None:raise HTTPException(409,'Khoản giá nhập tay phải nhập lần đầu hoặc gửi đề nghị sửa giá để quản lý duyệt')
             if c.execute('SELECT 1 FROM charge_voids WHERE charge_id=?',(cid,)).fetchone():raise HTTPException(409,'Khoản đã hủy')
-            if c.execute('SELECT 1 FROM charge_credits WHERE charge_id=?',(cid,)).fetchone():raise HTTPException(409,'Khoản đã có trả thuốc; cần đối soát trước')
+            if c.execute('''SELECT 1 FROM charge_sources s JOIN medication_return_items ri ON ri.dispensation_item_id=s.source_id
+                JOIN medication_returns r ON r.id=ri.return_id WHERE s.charge_id=? AND s.source_type='dispense_item'
+                AND r.status='approved' LIMIT 1''',(cid,)).fetchone() or c.execute('SELECT 1 FROM charge_credits WHERE charge_id=?',(cid,)).fetchone():
+                raise HTTPException(409,'Khoản đã có trả thuốc; cần đối soát trước')
             c.execute('INSERT INTO charge_pricing(charge_id,amount) VALUES(?,?) ON CONFLICT(charge_id) DO UPDATE SET amount=excluded.amount',(cid,data.amount))
             invoice(c,ch['visit_id'])
             c.execute('INSERT INTO charge_price_history(charge_id,previous_amount,new_amount,reason,changed_by,created_at,request_key) VALUES(?,?,?,?,?,?,?)',(cid,ch['amount'],data.amount,data.reason,u['id'],now(),data.request_key))

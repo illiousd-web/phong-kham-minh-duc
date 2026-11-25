@@ -66,3 +66,33 @@ def test_queue_counts_always_count_sql_and_ignore_legacy_known_hint():
     assert c.get('/api/queue-counts').json()=={'reception':1,'lab':1,'cashier':1}
     assert calls==['visits','lab','cashier']
     assert c.get('/api/queue-counts?known=doctor').status_code==422
+
+
+def test_settlement_financial_fields_restricted_for_reception_and_nurse():
+    import secrets
+    from tests.test_workflows import prepare_visit
+    from app.main import db
+    _, visit = prepare_visit()
+    reception = client.get(f'/api/visits/{visit}/settlement', headers=token('letan'))
+    assert reception.status_code == 200
+    data = reception.json()
+    assert set(data) == {'clinical_status', 'version', 'billing', 'payment_status', 'dispensing_status'}
+    assert data['billing'] == {'due': None, 'refund_due': None}
+    assert data['payment_status'] == 'restricted'
+    assert not ({'charged', 'paid', 'gross', 'discount', 'known_due', 'unpriced_count'} & data.keys())
+    name = 'kiem_settlement_' + secrets.token_hex(4)
+    password = secrets.token_urlsafe(16)
+    assert client.post('/api/accounts', headers=token('quantri'), json={'username':name, 'full_name':'Lễ tân thu ngân', 'password':password, 'roles':['reception','cashier']}).status_code == 201
+    login = client.post('/api/login', json={'username':name, 'password':password}).json()
+    both = client.get(f'/api/visits/{visit}/settlement', headers={'Authorization':'Bearer '+login['access_token']})
+    assert both.status_code == 200
+    assert set(both.json()['billing']) == {'gross','discount','charged','paid','unpriced_count','known_due','due','refund_due'}
+    with db(True) as c:
+        nurse = c.execute("SELECT id FROM users WHERE username='dieuduong'").fetchone()
+        assert nurse is not None
+        doctor = c.execute('SELECT doctor_id FROM visits WHERE id=?', (visit,)).fetchone()[0]
+        c.execute('INSERT INTO visit_nurses(visit_id,nurse_id,assigned_by,assigned_at,active) VALUES(?,?,?,?,1)', (visit,nurse['id'],doctor,'2026-11-25T00:00:00+00:00'))
+    result = client.get(f'/api/visits/{visit}/settlement', headers=token('dieuduong'))
+    assert result.status_code == 200
+    assert result.json()['billing'] == {'due': None, 'refund_due': None}
+    assert result.json()['payment_status'] == 'restricted'
