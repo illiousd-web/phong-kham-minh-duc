@@ -18,6 +18,8 @@ import ssl
 import sys
 import urllib.request
 
+from scripts.backup_job import VERIFIED_SUFFIX, _sha256
+
 VN = timezone(timedelta(hours=7))
 CERT_WARNING_DAYS = 60  # cùng ngưỡng với lịch sao lưu (scripts.backup_job)
 GIB = 1024 ** 3
@@ -76,18 +78,34 @@ def collect(env, state_file=None, ca_file=None, timeout=15):
     except (OSError, ValueError):
         facts['ui_settings'] = 'invalid'
     backups = Path(env.get('CLINIC_BACKUP_DIR', str(data / 'backups')))
-    files = sorted(backups.glob('minhduc-*.mdbackup'), key=lambda p: p.stat().st_mtime) if backups.exists() else []
+    files = {p.name: p for p in backups.glob('minhduc-*.mdbackup') if p.is_file()}
     facts['backup_count'] = len(files)
-    if files:
-        facts['backup_newest_utc'] = datetime.fromtimestamp(files[-1].stat().st_mtime, timezone.utc).isoformat()
-    if state_file and Path(state_file).exists():
+    state = {}
+    if state_file:
         try:
             state = json.loads(Path(state_file).read_text(encoding='utf-8'))
-            facts['backup_state'] = {k: state.get(k) for k in (
-                'last_success_utc', 'last_error', 'external_present', 'external_last_copy_utc', 'warnings',
-                'verified_count', 'over_budget', 'corrupt')}
         except (OSError, ValueError):
             pass
+    if isinstance(state, dict):
+        facts['backup_state'] = {k: state.get(k) for k in (
+            'last_success_utc', 'last_error', 'external_present', 'external_last_copy_utc', 'warnings',
+            'verified_count', 'over_budget', 'corrupt')}
+        last_file = state.get('last_file')
+        latest = files.get(last_file) if isinstance(last_file, str) else None
+        if latest is not None:
+            try:
+                expected_hash = state.get('last_sha256')
+                expected_size = state.get('last_size_bytes')
+                if 'last_sha256' not in state:
+                    # Trạng thái từ bản cũ chỉ lưu SHA-256 trong dấu xác minh cạnh tệp.
+                    marker = latest.with_name(latest.name + VERIFIED_SUFFIX)
+                    recorded = json.loads(marker.read_text(encoding='utf-8'))
+                    if recorded['size'] == expected_size:
+                        expected_hash = recorded['sha256']
+                facts['backup_latest_matches'] = bool(expected_hash and
+                    latest.stat().st_size == expected_size and _sha256(latest) == expected_hash)
+            except (OSError, ValueError, KeyError, TypeError):
+                facts['backup_latest_matches'] = False
     return facts
 
 
@@ -134,7 +152,7 @@ def evaluate(facts, now=None):
     add('Lịch sao lưu 20:00 hằng ngày đã đăng ký', task.get('exists') and task.get('enabled', True),
         f"Lần chạy tiếp theo: {task.get('next_run', '?')}; kết quả lần trước: {task.get('last_result', '?')}")
     state = facts.get('backup_state') or {}
-    newest = state.get('last_success_utc') or facts.get('backup_newest_utc')
+    newest = state.get('last_success_utc')
     title = f'Sao lưu: bản mới nhất dưới 36 giờ, có từ {MIN_VERIFIED} bản đã kiểm, không vượt ngân sách'
     if newest:
         hours = _age_hours(newest, now)
@@ -151,6 +169,10 @@ def evaluate(facts, now=None):
                             + (' — máy mới cài: tự đạt sau các đêm sao lưu 20:00 tiếp theo, giữ máy bật lúc 20:00'
                                if not state.get('corrupt') and not state.get('over_budget') else
                                ' — báo người hỗ trợ'))
+        if isinstance(verified, int) and facts.get('backup_count', 0) < verified:
+            problems.append('số tệp sao lưu trên đĩa ít hơn số bản đã kiểm trong trạng thái')
+        if facts.get('backup_latest_matches') is not True:
+            problems.append('thiếu bản sao lưu thành công gần nhất hoặc tên, kích thước, SHA-256 không khớp — báo người hỗ trợ')
         if state.get('corrupt'):
             problems.append(f"{len(state['corrupt'])} bản HỎNG (không khớp SHA-256) — báo người hỗ trợ kiểm tra ổ đĩa")
         if state.get('over_budget'):
@@ -162,7 +184,7 @@ def evaluate(facts, now=None):
             detail += '. KHÔNG ĐẠT vì: ' + '; '.join(problems) + '.'
         add(title, not problems, detail)
     else:
-        add(title, False, 'Chưa có bản sao lưu nào — chạy lại CAI_DAT.bat hoặc báo người hỗ trợ')
+        add(title, False, 'Chưa xác nhận được lần sao lưu thành công gần nhất — chạy sao lưu hoặc báo người hỗ trợ')
     external = facts.get('external_declared')
     if external:
         copied = state.get('external_last_copy_utc')

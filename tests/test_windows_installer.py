@@ -1,5 +1,6 @@
 """Logic of the Windows installer helpers (no PostgreSQL, no Windows needed)."""
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -211,6 +212,7 @@ def _good_facts():
         'firewall': {'exists': True, 'enabled': True, 'scoped': True, 'port': '8443', 'remote': '192.168.1.0/24'},
         'backup_task': {'exists': True, 'enabled': True, 'next_run': 'x', 'last_result': 0},
         'backup_state': {'last_success_utc': (NOW - timedelta(hours=2)).isoformat(), 'verified_count': 3}, 'backup_count': 3,
+        'backup_latest_matches': True,
         'disk_free_gib': 120.5, 'memory': {'total_mib': 7900, 'available_mib': 3000},
         'pagefile': {'auto': True, 'detail': 'Windows tự quản lý'}, 'env_acl_ok': True, 'env_acl_detail': 'ok',
         'ui_settings': 'file',
@@ -250,6 +252,83 @@ def test_health_each_failure_detected(change, title_part):
     facts = {**_good_facts(), **change}
     failed = [r['muc'] for r in install_health.evaluate(facts, NOW) if not r['dat']]
     assert len(failed) == 1 and title_part in failed[0], failed
+
+
+@pytest.mark.parametrize('legacy_state', [False, True], ids=['state-sha256', 'marker-sha256'])
+def test_health_compares_latest_backup_with_disk(tmp_path, legacy_state):
+    backups = tmp_path / 'backups'
+    backups.mkdir()
+    latest = backups / 'minhduc-3.mdbackup'
+    original = b'data'
+    digest = hashlib.sha256(original).hexdigest()
+    state = {'last_success_utc': NOW.isoformat(), 'verified_count': 3,
+             'last_file': latest.name, 'last_size_bytes': len(original)}
+    if not legacy_state:
+        state['last_sha256'] = digest
+    else:
+        latest.with_name(latest.name + '.verified').write_text(
+            json.dumps({'sha256': digest, 'size': len(original)}), encoding='utf-8')
+    state_file = tmp_path / 'status.json'
+    state_file.write_text(json.dumps(state), encoding='utf-8')
+
+    def passes():
+        facts = install_health.collect({'CLINIC_DATA_DIR': str(tmp_path)}, state_file, timeout=1)
+        return next(r['dat'] for r in install_health.evaluate(facts, NOW) if r['muc'].startswith('Sao lưu:'))
+
+    assert passes() is False
+    assert next(r['dat'] for r in install_health.evaluate(
+        {'backup_count': 0, 'backup_state': {'verified_count': 3, 'last_success_utc': NOW.isoformat()}}, NOW
+    ) if r['muc'].startswith('Sao lưu:')) is False
+    latest.write_bytes(original)
+    (backups / 'minhduc-1.mdbackup').write_bytes(b'older')
+    assert passes() is False
+    (backups / 'minhduc-2.mdbackup').write_bytes(b'older')
+    assert passes() is True
+    latest.write_bytes(b'badd')  # Cùng kích thước nhưng sai SHA-256.
+    assert passes() is False
+    latest.write_bytes(b'too-long')
+    assert passes() is False
+    latest.rename(backups / 'minhduc-other.mdbackup')
+    assert passes() is False
+
+
+def test_install_key_requires_old_backup_decryption(tmp_path, monkeypatch):
+    from scripts import backup_lan
+
+    monkeypatch.setattr(backup_lan, 'DATA', tmp_path)
+    key = tmp_path / 'backup.key'
+    state = tmp_path / 'status.json'
+    backups = tmp_path / 'backups'
+    backups.mkdir()
+    assert backup_lan.prepare_install_key(key, backups, state) == 'created'
+    old_key = key.read_bytes()
+    assert len(old_key) == 32
+    assert backup_lan.prepare_install_key(key, backups, state) == 'kept'
+    key.unlink()
+
+    state.write_text(json.dumps({'last_success_utc': NOW.isoformat()}), encoding='utf-8')
+    with pytest.raises(ValueError, match='Thiếu khóa sao lưu cũ'):
+        backup_lan.prepare_install_key(key, backups, state)
+    assert not key.exists()
+    state.unlink()
+    dump = tmp_path / 'database.dump'
+    dump.write_bytes(b'du lieu gia lap')
+    manifest = tmp_path / 'manifest.json'
+    manifest.write_text(json.dumps({'format': 1, 'files': {'database.dump': backup_lan.checksum(dump)}}),
+                        encoding='utf-8')
+    archive = backups / 'minhduc-old.mdbackup'
+    backup_lan.encrypt_archive([(dump, 'database.dump'), (manifest, 'manifest.json')], archive, old_key)
+    original = archive.read_bytes()
+    with pytest.raises(ValueError, match='Thiếu khóa sao lưu cũ'):
+        backup_lan.prepare_install_key(key, backups, state)
+    assert not key.exists()
+
+    key.write_bytes(bytes(x ^ 1 for x in old_key))
+    with pytest.raises(ValueError, match='Không giải mã'):
+        backup_lan.prepare_install_key(key, backups, state)
+    key.write_bytes(old_key)
+    assert backup_lan.prepare_install_key(key, backups, state) == 'verified'
+    assert key.read_bytes() == old_key and archive.read_bytes() == original
 
 
 def test_health_missing_windows_facts_fail_not_pass():
@@ -796,6 +875,8 @@ def test_update_backup_never_deletes_old_backups(tmp_path, monkeypatch, disk_fre
     state = json.loads(state_file.read_text(encoding='utf-8'))
     if expected_code == 0:
         assert state['last_file'] == new_backup.name and state['verified_count'] == 5
+        assert state['last_sha256'] == hashlib.sha256(new_backup.read_bytes()).hexdigest()
+        assert state['last_size_bytes'] == new_backup.stat().st_size
     else:
         assert state['space_error'] and not new_backup.exists()
 

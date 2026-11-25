@@ -456,6 +456,26 @@ jobs:
             [IO.File]::WriteAllText($f, $t.Replace('CLINIC_BACKUP_KEEP=14', 'CLINIC_BACKUP_KEEP=30'), (New-Object Text.UTF8Encoding($false)))
           }
           Write-Output 'Retention set back to the old 30 local backups'
+      - name: CAI_DAT.bat stops when an old backup exists but its key is missing
+        run: |
+          $key = 'C:\ProgramData\MinhDuc\quantri\backup.key'
+          $backupDir = 'C:\ProgramData\MinhDuc\backups'
+          $state = 'C:\ProgramData\MinhDuc\backup-status.json'
+          $before = @(Get-ChildItem -LiteralPath $backupDir -Filter 'minhduc-*.mdbackup' -File | Sort-Object Name | Select-Object -ExpandProperty Name)
+          if (-not $before.Count) { throw 'Missing existing backup for key recovery test' }
+          $stateHash = (Get-FileHash $state).Hash
+          Move-Item -LiteralPath $key -Destination "$key.recovery-test"
+          try {
+            & cmd /c "call C:\MinhDuc\deploy\windows\CAI_DAT.bat -KhongHoi -ChapNhanIPDong -PageFile Giu" | Out-Host
+            if ($LASTEXITCODE -ne 26 -or (Test-Path -LiteralPath $key)) { throw 'Installer did not stop before replacing the key' }
+            $after = @(Get-ChildItem -LiteralPath $backupDir -Filter 'minhduc-*.mdbackup' -File | Sort-Object Name | Select-Object -ExpandProperty Name)
+            if (($before -join ',') -ne ($after -join ',') -or (Get-FileHash $state).Hash -ne $stateHash) {
+              throw 'Installer changed backup files or state with the key missing'
+            }
+          } finally {
+            Move-Item -LiteralPath "$key.recovery-test" -Destination $key
+          }
+          $global:LASTEXITCODE = 0
       - name: CAI_DAT.bat second run keeps data, passwords, keys and certificate
         shell: cmd
         run: call C:\MinhDuc\deploy\windows\CAI_DAT.bat -KhongHoi -ChapNhanIPDong -PageFile Giu

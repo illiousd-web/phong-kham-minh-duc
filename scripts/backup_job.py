@@ -346,7 +346,7 @@ def run(args, now=None):
                   'files': len(manifest['files'])}
         target.with_name(target.name + VERIFIED_SUFFIX).write_text(json.dumps(marker), encoding='utf-8')
         state.update(last_success_utc=now.isoformat(), last_file=target.name,
-                     last_size_bytes=target.stat().st_size, last_verified_files=len(manifest['files']))
+                     last_size_bytes=marker['size'], last_sha256=marker['sha256'], last_verified_files=marker['files'])
         state.pop('last_error', None)
         # 3. Only now: retention (CLINIC_BACKUP_KEEP) and size budget, keeping >= 3 verified.
         keep = int(os.getenv('CLINIC_BACKUP_KEEP', '14'))

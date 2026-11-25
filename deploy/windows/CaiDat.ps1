@@ -370,11 +370,20 @@ function Step-TuongLua {
 
 function Step-SaoLuu {
     Write-Buoc "Bước 11/${Tong}: Lịch sao lưu 20:00 hằng ngày, giữ 14 bản trên máy chủ"
-    if (-not (Test-Path -LiteralPath $P.BackupKey)) {
-        $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_lan', 'keygen', '--key', $P.BackupKey)
-        if (-not $r.Ok) { Stop-CaiDat 'Không tạo được khóa sao lưu.' $r.Output 26 }
-        Write-Dat 'Đã tạo khóa mã hóa sao lưu.'
-    } else { Write-Dat 'Giữ nguyên khóa sao lưu đang có (không tạo lại).' }
+    $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_lan',
+        'prepare-install-key', '--key', $P.BackupKey, '--directory', $P.Backups, '--state', $P.BackupState)
+    if (-not $r.Ok) {
+        Stop-CaiDat 'Chưa xác minh được khóa sao lưu. Dừng trước khi chạy lịch hoặc tạo bản sao lưu mới.' @(
+            "Nếu đã có bản sao lưu, khôi phục tệp khóa cũ từ USB vào $($P.BackupKey) và chạy lại CAI_DAT.bat.",
+            'Nếu không có khóa hoặc bản sao lưu cũ để kiểm, giữ nguyên dữ liệu và báo người hỗ trợ.'
+        ) 26
+    }
+    switch (($r.Output | Select-Object -Last 1)) {
+        'created' { Write-Dat 'Đã tạo khóa mã hóa sao lưu.' }
+        'kept' { Write-Dat 'Giữ nguyên khóa sao lưu đang có.' }
+        'verified' { Write-Dat 'Đã dùng khóa đang có để giải mã và đối chiếu một bản sao lưu cũ.' }
+        default { Stop-CaiDat 'Chưa xác nhận được kết quả kiểm tra khóa sao lưu.' @('Báo người hỗ trợ.') 26 }
+    }
     Set-SecureAcl -Path $P.BackupKey
     # Phòng khám đã chốt KHÔNG dùng ổ ngoài. Tính năng giữ ở dạng tùy chọn ẩn: chỉ bật khi
     # đặt biến môi trường MINHDUC_SAO_LUU_NGOAI=1 trước khi chạy CAI_DAT (mặc định tắt).

@@ -268,12 +268,49 @@ def restore(source, key_path, url, uploads, settings=None):
     return uploads
 
 
+def generate_key(path):
+    with os.fdopen(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), 'wb') as f:
+        f.write(secrets.token_bytes(32))
+    path.chmod(0o600)
+
+
+def prepare_install_key(key, directory, state_file):
+    """Verify an existing key against history before allowing any new backup."""
+    from cryptography.exceptions import InvalidTag
+
+    files = sorted((p for p in directory.glob('minhduc-*.mdbackup') if p.is_file()), reverse=True)
+    try:
+        state = json.loads(state_file.read_text(encoding='utf-8-sig'))
+    except FileNotFoundError:
+        state = {}
+    if not isinstance(state, dict):
+        raise ValueError('Không đọc được trạng thái sao lưu')
+
+    if files or state:
+        if not key.is_file():
+            raise ValueError('Thiếu khóa sao lưu cũ')
+        for backup_file in files:
+            try:
+                with tempfile.TemporaryDirectory(prefix='.verify-', dir=DATA) as tmp:
+                    unpack_verified(backup_file, key, Path(tmp))
+            except (OSError, ValueError, InvalidTag, tarfile.TarError, KeyError, TypeError):
+                continue
+            return 'verified'
+        raise ValueError('Không giải mã và đối chiếu được bản sao lưu cũ')
+    if key.exists():
+        key_bytes(key)
+        return 'kept'
+    generate_key(key)
+    return 'created'
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['keygen','backup','verify','restore'])
+    parser.add_argument('command',choices=['keygen','prepare-install-key','backup','verify','restore'])
     parser.add_argument('--key',type=Path,required=True)
     parser.add_argument('--directory',type=Path)
     parser.add_argument('--file',type=Path)
+    parser.add_argument('--state',type=Path)
     parser.add_argument('--target-url-env', default='CLINIC_RESTORE_DATABASE_URL')
     parser.add_argument('--target-uploads',type=Path)
     parser.add_argument('--target-settings',type=Path,help='mặc định: cạnh --target-uploads, tên ui_settings.json')
@@ -281,10 +318,15 @@ def main():
     if not LAN:
         parser.error('Requires CLINIC_MODE=lan')
     if args.command=='keygen':
-        with os.fdopen(os.open(args.key,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600),'wb') as f:
-            f.write(secrets.token_bytes(32))
-        args.key.chmod(0o600)
+        generate_key(args.key)
         print('Backup key created. Store a separate offline copy.')
+    elif args.command=='prepare-install-key':
+        if args.directory is None or args.state is None:
+            parser.error('--directory and --state are required')
+        try:
+            print(prepare_install_key(args.key, args.directory, args.state))
+        except (OSError, ValueError):
+            parser.exit(1, 'Chưa xác minh được khóa sao lưu. Kiểm tra khóa cũ và thư mục sao lưu.\n')
     elif args.command=='backup':
         if not args.directory:parser.error('--directory is required')
         print(backup(args.directory,args.key))
