@@ -102,7 +102,10 @@ if(typeof SCREENS!=='undefined'&&!SCREENS['s2e-reports']){
    return this.limitedTable('corrections',[
     ['Loại','type','center'],['Mã NB','patient_code'],['Nội dung','content'],['Người','actor'],
     ['Thời gian','occurred_at','date'],['Lý do','reason']
-   ],data.rows);
+   ],data.rows)+'<h3>Tự duyệt</h3>'+this.limitedTable('self-reviews',[
+    ['Loại','type'],['Số tiền','amount','money'],['Người','actor'],
+    ['Thời gian (Việt Nam)','occurred_at','center'],['Lý do','reason'],['Quyết định','decision']
+   ],data.self_reviews);
   },
 
   limitedTable(key,columns,rows){

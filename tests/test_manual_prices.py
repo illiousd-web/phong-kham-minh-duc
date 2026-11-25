@@ -192,14 +192,29 @@ def test_price_is_once_only_idempotent_audited_and_changes_need_review(actors):
     assert json.loads(logs[0]['details']) == {'amount': 120000, 'description': 'Thủ thuật giả lập cụ thể'}
 
 
-def test_manager_enters_but_cannot_approve_own_change_and_can_reject(actors):
+@pytest.mark.parametrize("second_manager", [True, False])
+def test_manager_self_review_depends_on_another_active_manager(actors, second_manager):
     _, vid = prepare_visit(); oid = order(actors, vid, manual_service(actors)); cid = line(actors, vid, oid)['id']
     assert price(actors, cid, who='quanly').status_code == 200
     body = {'amount': 90000, 'description': 'Nội dung sửa', 'reason': 'Lý do sửa giá cần duyệt', 'request_key': secrets.token_hex(12)}
     rid = client.post(f'/api/charges/{cid}/manual-price-requests', headers=actors['quanly'], json=body).json()['id']
-    assert client.post(f'/api/manual-price-requests/{rid}/review', headers=actors['quanly'], json={'approve': True}).status_code == 403
+    path = f'/api/manual-price-requests/{rid}/review'
+    review = {'approve': True, 'reason': 'Đã đối chiếu giá trước khi duyệt'}
+    if second_manager:
+        with db(True) as c:
+            uid = c.execute("SELECT id FROM users WHERE username='thungan'").fetchone()[0]
+            c.execute("INSERT INTO user_roles(user_id,role) VALUES(?,'manager')", (uid,))
+        try:
+            assert client.post(path, headers=actors['quanly'], json=review).status_code == 403
+        finally:
+            with db(True) as c:
+                c.execute("DELETE FROM user_roles WHERE user_id=? AND role='manager'", (uid,))
     body['request_key'] = secrets.token_hex(12)
     assert client.post(f'/api/charges/{cid}/manual-price-requests', headers=actors['thungan'], json=body).status_code == 409
+    if not second_manager:
+        response = client.post(path, headers=actors['quanly'], json=review)
+        assert response.status_code == 200, response.text
+        assert response.json()['status'] == 'approved'
 
 
 def test_assigned_nurse_orders_and_cannot_read_billing(actors):
