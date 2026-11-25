@@ -746,6 +746,22 @@ async function pendingApprovals(){
  const r={manual,manualCount:manualCount.count,adj:adj.filter(x=>x.status==='pending'),allAdj:adj,cancel:cancel.filter(x=>x.status==='pending'),addenda,returns:returns.filter(x=>x.status==='pending'),receipts:receipts.filter(x=>x.status==='pending')};
  r.total=r.manualCount+r.adj.length+r.cancel.length+r.addenda.length+r.returns.length+r.receipts.length;return r}
 const decide=(action,id,yes='Duyệt',no='Từ chối')=>`<div class="multi-actions">${btn(yes,action,`data-id="${id}" data-value="approve"`,'btn smallbtn')}${btn(no,action,`data-id="${id}" data-value="reject"`)}</div>`;
+function financialDecision(action,row,yes='Duyệt'){
+ const reason=row.can_self_review
+  ? '<label class="field">Lý do tự duyệt<textarea data-self-review-reason required minlength="10" rows="2"></textarea></label>'
+  : '';
+ return '<div class="financial-decision">'+reason+decide(action,row.id,yes)+'</div>';
+}
+function financialReviewBody(element,approve){
+ const input=element.closest('.financial-decision')?.querySelector('[data-self-review-reason]');
+ if(!input)return {approve};
+ const reason=input.value.trim();
+ if(Array.from(reason).length<10){
+  input.focus();
+  throw new Error('Tự duyệt cần ghi lý do (ít nhất 10 ký tự)');
+ }
+ return {approve,reason};
+}
 async function catalogSection(){
  const [data,meds]=await Promise.all([api('/catalog'),api('/dispensable-medicines')]);const manager=role()==='manager';
  const cats=[['consultation','Khám bệnh'],['lab','Xét nghiệm'],['ultrasound','Siêu âm'],['xray','X-quang'],['ecg','Điện tim'],['procedure','Thủ thuật']];
@@ -829,10 +845,10 @@ async function managerScreen(){
    card(t(stockList.filter(x=>ui.controlled_drugs||!x.controlled).map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.lot_number)}</td><td>${showDay(x.expiry_date)}</td><td>${esc(x.quantity)} ${esc(x.base_unit)}</td><td>${x.quarantined?'<span class="status error">Cách ly</span>':'<span class="status">Bán được</span>'}</td></tr>`),['Thuốc','Số lô','Hạn dùng','Tồn','Trạng thái']),'Tồn kho')}
  if(sel.mgrTab==='visits')return managerVisitsTab(head);
  if(sel.mgrTab==='financial')return head+(await S2ESettlement.screen()).html;
- let html=head+card(t(p.manual.map(x=>`<tr><td>#${x.id} · lượt #${x.visit_id}</td><td>${esc(x.patient_name)}<div>${esc(x.description)}</div></td><td>${money(x.previous_amount)} → ${money(x.new_amount)}</td><td>${esc(x.reason)}<div>${esc(x.proposed_name)}</div></td><td>${decide('review-manual-price',x.id,'Duyệt sửa giá')}</td></tr>`),['Đề nghị','Dịch vụ','Giá','Lý do / người đề nghị','Quyết định']),`Sửa giá nhập tay (${p.manualCount})`);
- html+=card(t(p.adj.map(x=>`<tr><td>#${x.id} · lượt #${x.visit_id}</td><td>${esc(x.patient_name)}</td><td>${esc(vi(x.kind))} — ${money(x.amount)}</td><td>${esc(x.reason)}<div class="muted">${esc(x.proposed_name||'')}</div></td><td>${decide('review-adjustment',x.id)}</td></tr>`),['Mã','Bệnh nhân','Loại','Lý do','Quyết định']),`Giảm phí / hoàn tiền (${p.adj.length})`);
+ let html=head+card(t(p.manual.map(x=>`<tr><td>#${x.id} · lượt #${x.visit_id}</td><td>${esc(x.patient_name)}<div>${esc(x.description)}</div></td><td>${money(x.previous_amount)} → ${money(x.new_amount)}</td><td>${esc(x.reason)}<div>${esc(x.proposed_name)}</div></td><td>${financialDecision('review-manual-price',x,'Duyệt sửa giá')}</td></tr>`),['Đề nghị','Dịch vụ','Giá','Lý do / người đề nghị','Quyết định']),`Sửa giá nhập tay (${p.manualCount})`);
+ html+=card(t(p.adj.map(x=>`<tr><td>#${x.id} · lượt #${x.visit_id}</td><td>${esc(x.patient_name)}</td><td>${esc(vi(x.kind))} — ${money(x.amount)}</td><td>${esc(x.reason)}<div class="muted">${esc(x.proposed_name||'')}</div></td><td>${financialDecision('review-adjustment',x)}</td></tr>`),['Mã','Bệnh nhân','Loại','Lý do','Quyết định']),`Giảm phí / hoàn tiền (${p.adj.length})`);
  html+=card(t(p.cancel.map(x=>`<tr><td>#${x.order_id} · lượt #${x.visit_id}</td><td>${esc(x.order_name)}</td><td>${esc(x.reason)}</td><td>${decide('review-cancel',x.id,'Duyệt hủy')}</td></tr>`),['Chỉ định','Dịch vụ','Lý do','Quyết định']),`Hủy chỉ định (${p.cancel.length})`);
- html+=card(t(p.returns.map(r=>`<tr><td>#${r.id} · lượt #${r.visit_id}</td><td>${esc(r.reason)}</td><td>${decide('review-return',r.id,'Duyệt trả vào cách ly')}</td></tr>`),['Phiếu trả','Lý do','Quyết định']),`Trả thuốc (${p.returns.length})`);
+ html+=card(t(p.returns.map(r=>`<tr><td>#${r.id} · lượt #${r.visit_id}</td><td>${esc(r.reason)}</td><td>${financialDecision('review-return',r,'Duyệt trả vào cách ly')}</td></tr>`),['Phiếu trả','Lý do','Quyết định']),`Trả thuốc (${p.returns.length})`);
  if(ui.addendum)html+=card(t(p.addenda.map(x=>`<tr><td>#${x.visit_id}</td><td>${esc(x.reason)}</td><td>${esc(x.content)}</td><td>${decide('review-addendum',x.id,'Duyệt phụ lục')}</td></tr>`),['Lượt','Lý do','Nội dung','Quyết định']),`Phụ lục hồ sơ (${p.addenda.length})`);
  if(ui.controlled_drugs&&cap('controlled_reviewer'))html+=card(t(p.receipts.map(r=>`<tr><td>#${r.id}</td><td>${esc(r.lot_number)} / ${r.quantity}</td><td>${esc(r.register_ref)}</td><td>${decide('review-controlled-receipt',r.id)}</td></tr>`),['Phiếu nhập','Lô / số lượng','Sổ','Quyết định']),`Nhập thuốc kiểm soát (${p.receipts.length})`);
  return html}
@@ -1094,11 +1110,11 @@ async function handleClick(element){const action=element.dataset.action,id=Numbe
  if(action==='file'){const r=await fetch('/api/orders/'+id+'/attachment',{headers:authHeader()});if(!r.ok)throw new Error('Không tải được tệp');const url=URL.createObjectURL(await r.blob());let a=document.createElement('a');a.href=url;a.download='ket_qua_mo_phong';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);return}
  if(action==='add-rx-row'){const med=prescribable(await api('/dispensable-medicines'));$('rx-items').insertAdjacentHTML('beforeend',rxItemRow(med));return}
  if(action==='remove-rx-row'){if(document.querySelectorAll('.rx-line').length>1)element.closest('.rx-line').remove();return}
- if(action==='review-manual-price'){await api('/manual-price-requests/'+id+'/review',{method:'POST',body:{approve}});await render();notify('Đã xử lý đề nghị sửa giá nhập tay');return;}
- if(action==='review-adjustment'){await api('/adjustments/'+id+'/review',{method:'POST',body:{approve}});msg='Đã xử lý đề nghị';}
+ if(action==='review-manual-price'){await api('/manual-price-requests/'+id+'/review',{method:'POST',body:financialReviewBody(element,approve)});await render();notify('Đã xử lý đề nghị sửa giá nhập tay');return;}
+ if(action==='review-adjustment'){await api('/adjustments/'+id+'/review',{method:'POST',body:financialReviewBody(element,approve)});msg='Đã xử lý đề nghị';}
  else if(action==='review-cancel'){await api('/orders/cancellation-requests/'+id+'/review',{method:'POST',body:{approve}});msg='Đã xử lý yêu cầu hủy';}
  else if(action==='review-addendum'){await api('/visits/addenda/'+id+'/review',{method:'POST',body:{approve}});msg='Đã xử lý phụ lục hồ sơ';}
- else if(action==='review-return'){await api('/medication-returns/'+id+'/review',{method:'POST',body:{approve}});msg='Đã xử lý phiếu trả thuốc';}
+ else if(action==='review-return'){await api('/medication-returns/'+id+'/review',{method:'POST',body:financialReviewBody(element,approve)});msg='Đã xử lý phiếu trả thuốc';}
  else if(action==='review-controlled-receipt'){await api('/controlled-receipts/'+id+'/review',{method:'POST',body:{approve}});msg='Đã xử lý phiếu nhập kiểm soát';}
  else if(action==='authorize-order'){await api('/orders/'+id+'/authorize',{method:'POST'});msg='Đã duyệt chỉ định và ghi phí';}
  else if(action==='approve'){const r=await api('/orders/'+id+'/approve',{method:'POST'});msg='Đã duyệt kết quả';if(r.warnings?.length)scopeWarnings.set(id,r.warnings.join(' '));}

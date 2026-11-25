@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .domain import invoice
 from .financial_state import ensure_financial_open
+from .self_review import FinancialReview, audit_self_review, mark_self_review, self_review_reason
 
 VN = timezone(timedelta(hours=7))
 
@@ -43,10 +44,6 @@ class ManualPriceChange(ManualPrice):
         if len(value) < 8:
             raise ValueError('Lý do sửa giá cần ít nhất 8 ký tự (không tính khoảng trắng thừa)')
         return value
-
-
-class Review(BaseModel):
-    approve: bool
 
 
 def manual_description(c, cid):
@@ -132,7 +129,8 @@ def install_manual_prices(app, db, principal, require, audit, now):
             sql = '''SELECT r.*,ch.visit_id,ch.label,p.full_name AS patient_name,u.full_name AS proposed_name
                 FROM manual_price_requests r JOIN charges ch ON ch.id=r.charge_id JOIN visits v ON v.id=ch.visit_id
                 JOIN patients p ON p.id=v.patient_id JOIN users u ON u.id=r.proposed_by''' + where
-            return [dict(r) for r in c.execute(sql + ' ORDER BY r.id DESC LIMIT ? OFFSET ?', (*args, limit, offset))]
+            rows = [dict(r) for r in c.execute(sql + ' ORDER BY r.id DESC LIMIT ? OFFSET ?', (*args, limit, offset))]
+            return mark_self_review(c, u, rows, 'proposed_by')
 
     @app.get('/api/manual-price-requests/count')
     def request_count(status: Literal['pending', 'approved', 'rejected'] | None = None, u=Depends(principal)):
@@ -142,7 +140,7 @@ def install_manual_prices(app, db, principal, require, audit, now):
             return {'count': c.execute('SELECT COUNT(*) FROM manual_price_requests r' + where, args).fetchone()[0]}
 
     @app.post('/api/manual-price-requests/{rid}/review')
-    def review(rid: int, data: Review, u=Depends(principal)):
+    def review(rid: int, data: FinancialReview, u=Depends(principal)):
         require(u, 'manager')
         with db(True) as c:
             r = c.execute('SELECT * FROM manual_price_requests WHERE id=?', (rid,)).fetchone()
@@ -150,8 +148,7 @@ def install_manual_prices(app, db, principal, require, audit, now):
                 raise HTTPException(404, 'Không có đề nghị sửa giá')
             if r['status'] != 'pending':
                 raise HTTPException(409, 'Đề nghị đã xử lý')
-            if r['proposed_by'] == u['id']:
-                raise HTTPException(403, 'Không tự duyệt đề nghị sửa giá của mình')
+            reason = self_review_reason(c, u, r['proposed_by'], data, 'Không tự duyệt đề nghị sửa giá của mình')
             ch = manual_charge(c, r['charge_id']) if data.approve else c.execute('SELECT * FROM effective_charges WHERE id=?', (r['charge_id'],)).fetchone()
             if data.approve:
                 if ch['amount'] != r['previous_amount'] or manual_description(c, r['charge_id']) != r['previous_description']:
@@ -165,6 +162,7 @@ def install_manual_prices(app, db, principal, require, audit, now):
             audit(c, u, 'manual_price_change_' + status, 'charge', ch['id'],
                   json.dumps({'request_id': rid, 'old_price': r['previous_amount'], 'new_price': r['new_amount'],
                               'description': r['description']}, ensure_ascii=False))
+            audit_self_review(audit, c, u, 'price', rid, data.approve, reason)
             return {'status': status, 'billing': invoice(c, ch['visit_id'])}
 
     @app.get('/api/reports/manual-prices')

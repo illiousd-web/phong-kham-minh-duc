@@ -5,6 +5,8 @@ from fastapi import Depends,HTTPException
 from pydantic import BaseModel,Field
 from .domain import ensure_open,authorize_order,invoice,revision
 from .financial_state import ensure_financial_open
+from .self_review import (CONTROLLED_RETURN_ITEMS, FinancialReview, audit_self_review,
+                          mark_self_review, self_review_reason)
 from .s2e_settlements import financial_status, is_legacy_completed
 
 class Reason(BaseModel):
@@ -165,17 +167,26 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
     @app.get('/api/medication-returns')
     def returns(u=Depends(principal),history:bool=False):
         require(u,'pharmacy','manager','cashier')
-        with db() as c:return [dict(x) for x in c.execute('SELECT r.*,d.visit_id FROM medication_returns r JOIN dispensations d ON d.id=r.dispensation_id WHERE '+approval_predicate('r',history)+' ORDER BY r.id DESC'+history_limit(history))]
+        controlled = CONTROLLED_RETURN_ITEMS.format(return_id='r.id')
+        with db() as c:
+            rows = [dict(x) for x in c.execute(f'''SELECT r.*,d.visit_id,
+                EXISTS ({controlled}) AS has_controlled_items
+                FROM medication_returns r JOIN dispensations d ON d.id=r.dispensation_id
+                WHERE {approval_predicate('r',history)} ORDER BY r.id DESC''' + history_limit(history))]
+            return mark_self_review(c, u, rows, 'requested_by')
 
     @app.post('/api/medication-returns/{rid}/review')
-    def review_return(rid:int,data:Review,u=Depends(principal)):
+    def review_return(rid:int,data:FinancialReview,u=Depends(principal)):
         require(u,'manager')
         with db(True) as c:
             r=c.execute('SELECT r.*,d.visit_id,d.prescription_id FROM medication_returns r JOIN dispensations d ON d.id=r.dispensation_id WHERE r.id=?',(rid,)).fetchone()
             if not r:raise HTTPException(404,'Không có yêu cầu trả')
             if r['status']!='pending':raise HTTPException(409,'Đã xử lý yêu cầu')
-            if r['requested_by']==u['id']:raise HTTPException(403,'Không tự duyệt trả thuốc')
-            if c.execute('SELECT 1 FROM medication_return_items ri JOIN dispensation_items di ON di.id=ri.dispensation_item_id JOIN medicines m ON m.id=di.medicine_id WHERE ri.return_id=? AND m.controlled=1',(rid,)).fetchone() and 'controlled_reviewer' not in u['roles']:raise HTTPException(403,'Thiếu quyền duyệt thuốc kiểm soát')
+            controlled = bool(c.execute(CONTROLLED_RETURN_ITEMS.format(return_id='?'), (rid,)).fetchone())
+            reason = self_review_reason(c, u, r['requested_by'], data, 'Không tự duyệt trả thuốc',
+                                        controlled=controlled)
+            if controlled and 'controlled_reviewer' not in u['roles']:
+                raise HTTPException(403,'Thiếu quyền duyệt thuốc kiểm soát')
             if data.approve:
                 ensure_financial_open(c,r['visit_id'])
                 for it in c.execute('SELECT ri.*,di.quantity AS dispensed,di.medicine_id,di.stock_lot_id,di.unit_price,m.controlled,l.expiry_date FROM medication_return_items ri JOIN dispensation_items di ON di.id=ri.dispensation_item_id JOIN medicines m ON m.id=di.medicine_id JOIN stock_lots l ON l.id=di.stock_lot_id WHERE ri.return_id=? ORDER BY ri.id',(rid,)).fetchall():
@@ -197,6 +208,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
                 remain=c.execute("SELECT 1 FROM dispensation_items di WHERE di.dispensation_id=? AND di.quantity>COALESCE((SELECT SUM(ri.quantity) FROM medication_return_items ri JOIN medication_returns r ON r.id=ri.return_id WHERE ri.dispensation_item_id=di.id AND r.status='approved'),0)",(r['dispensation_id'],)).fetchone()
                 if not remain:c.execute("UPDATE prescriptions SET status='returned' WHERE id=?",(r['prescription_id'],))
             audit(c,u,'medication_return_'+state,'dispensation',r['dispensation_id'],r['reason'])
+            audit_self_review(audit, c, u, 'return', rid, data.approve, reason)
             return {'status':state,'billing':invoice(c,r['visit_id']),'stock_destination':'quarantine'}
 
     @app.post('/api/prescriptions/{rid}/controlled-approval')

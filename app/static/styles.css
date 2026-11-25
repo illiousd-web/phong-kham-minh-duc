@@ -695,3 +695,7 @@ table.table.s2b-table td[data-label]::before{display:none!important}
 [data-s2d-drop] { padding:12px; border:2px dashed #6F8F7E; }
 [data-s2d-images] { display:flex; flex-wrap:wrap; gap:10px; }
 [data-s2d-images] img { max-width:240px; max-height:180px; object-fit:contain; }
+
+.financial-decision .field { margin-bottom: 8px; }
+.financial-decision textarea { width: 100%; min-height: 44px; border-color: #6F8F7E; }
+.financial-decision button { min-width: 88px; min-height: 44px; }

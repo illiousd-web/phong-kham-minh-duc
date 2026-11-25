@@ -15,6 +15,7 @@ from .conftest import IDS, PASSWORDS, SERVICE, db
 from .test_tls_chrome_compat import https_server as https_server  # pytest discovers this imported fixture.
 from .browser_helpers import settle, pick, go, no_horizontal_scroll
 from app.labels import VN_TZ
+from tests.test_self_review import manager_setup as manager_setup
 
 
 def test_administrative_practitioner_and_refund_ui(https_server, clients, request):
@@ -558,4 +559,47 @@ def test_cashier_financial_settlement_over_https(https_server, clients, visit):
         settle(page)
         no_horizontal_scroll(page)
         assert not errors, errors
+        browser.close()
+
+
+def test_sole_manager_self_review_requires_reason_at_390px(https_server, clients, visit, manager_setup):
+    from tests.test_self_review import SELF_REASON, submit_request
+
+    endpoint, request_id, _ = submit_request(clients, visit, 'discount')
+    cashier, _, configure = manager_setup
+    configure(cashier, second=False)
+    origin, certdir = https_server
+    cert = x509.load_pem_x509_certificate((certdir/'server.crt').read_bytes())
+    public_key = cert.public_key().public_bytes(serialization.Encoding.DER,
+                                                serialization.PublicFormat.SubjectPublicKeyInfo)
+    pin = base64.b64encode(hashlib.sha256(public_key).digest()).decode()
+    with sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'),
+                                   headless=True, args=['--no-sandbox', '--disable-dev-shm-usage',
+                                                        '--ignore-certificate-errors-spki-list='+pin])
+        page = browser.new_page(viewport={'width': 390, 'height': 900})
+        page.goto(origin)
+        page.locator('[name=username]').fill('test_cashier')
+        page.locator('[name=password]').fill(PASSWORDS['cashier'])
+        page.locator('[data-form=login] button').click()
+        page.locator('.account-trigger').wait_for()
+        settle(page)
+        page.locator('#role_switch').select_option('manager')
+        go(page, 'manager')
+        button = page.locator(f'[data-action=review-adjustment][data-id="{request_id}"][data-value=approve]')
+        reason = button.locator('xpath=ancestor::div[contains(@class,"financial-decision")]').locator('textarea')
+        expect(reason).to_be_visible()
+        assert reason.get_attribute('required') is not None
+        assert button.bounding_box()['height'] >= 44
+        assert button.bounding_box()['width'] >= 88
+        no_horizontal_scroll(page)
+        button.click()
+        expect(reason).to_be_focused()
+        expect(page.get_by_text('Tự duyệt cần ghi lý do (ít nhất 10 ký tự)', exact=True)).to_be_visible()
+        reason.fill(SELF_REASON)
+        with page.expect_response(lambda res: res.url.endswith(f'{endpoint}/{request_id}/review')
+                                  and res.request.method == 'POST') as response:
+            button.click()
+        assert response.value.status == 200
+        assert response.value.json()['status'] == 'approved'
         browser.close()

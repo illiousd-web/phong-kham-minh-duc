@@ -1,5 +1,6 @@
 """Read-only management reports; local-day grouping matches the stock ledger (UTC+7)."""
-from datetime import datetime
+from datetime import date, datetime, timedelta
+import json
 from io import BytesIO
 
 from fastapi import Depends, HTTPException
@@ -93,10 +94,15 @@ def revenue_report(c, start, end):
               ('medicine','clinical','procedure','other','gross','discount','revenue',
                'payments','refund','paid','outstanding','unpriced_count')}
 
-    waivers = [row for row in c.execute("""SELECT w.waived_amount,w.created_at,s.id IS NOT NULL AS active
+    # Vietnamese midnight starts at 17:00 UTC on the preceding day.
+    # Compare the raw UTC ISO timestamp so the partial index remains usable.
+    first = date.fromisoformat(start)
+    begin = (first - timedelta(days=1)).isoformat() + 'T17:00' if first > date.min else start
+    finish = end + 'T17:00'
+    waivers = c.execute("""SELECT w.waived_amount,s.id IS NOT NULL AS active
         FROM visit_settlements w LEFT JOIN active_visit_settlements s ON s.id=w.id
-        WHERE w.kind='mien_thu'""")
-        if in_period(row['created_at'], start, end)]
+        WHERE w.kind='mien_thu' AND w.created_at>=? AND w.created_at<?
+        AND (LENGTH(w.created_at)>10 OR w.created_at>=?)""", (begin, finish, start)).fetchall()
     totals['waived_amount'] = sum(row['waived_amount'] for row in waivers if row['active'])
     totals['waived_visits'] = sum(1 for row in waivers if row['active'])
     totals['waiver_approval_count'] = len(waivers)
@@ -201,6 +207,44 @@ def cashier_report(c, start, end):
             'by_method': sorted(by_method.values(), key=lambda r: r['method']), 'note': NOTE}
 
 
+SELF_REVIEW_COLUMNS = [
+    ('type', 'Loại', ''), ('amount', 'Số tiền', 'n'), ('actor', 'Người', ''),
+    ('occurred_at', 'Thời gian (Việt Nam)', ''), ('reason', 'Lý do', ''),
+    ('decision', 'Quyết định', ''),
+]
+
+
+def self_reviews_report(c, start, end):
+    labels = {'discount': 'Giảm phí', 'refund': 'Hoàn tiền', 'price': 'Sửa giá', 'return': 'Trả thuốc'}
+    rows = []
+    for row in c.execute("""WITH reviews AS (
+        SELECT id,kind,amount,reviewed_by,reviewed_at FROM adjustments WHERE reviewed_by=proposed_by
+        UNION ALL
+        SELECT id,'price',new_amount,reviewed_by,reviewed_at FROM manual_price_requests WHERE reviewed_by=proposed_by
+        UNION ALL
+        SELECT r.id,'return',COALESCE((SELECT SUM(ri.quantity*di.unit_price)
+            FROM medication_return_items ri JOIN dispensation_items di ON di.id=ri.dispensation_item_id
+            WHERE ri.return_id=r.id),0),r.reviewed_by,r.reviewed_at
+        FROM medication_returns r WHERE r.reviewed_by=r.requested_by
+    )
+    SELECT r.kind,r.amount,r.reviewed_at,u.full_name AS actor,a.details
+    FROM reviews r JOIN users u ON u.id=r.reviewed_by
+    LEFT JOIN audit_log a ON a.event='self_review' AND a.object_type=r.kind AND a.object_id=r.id
+        AND a.user_id=r.reviewed_by
+    ORDER BY r.reviewed_at,r.kind,r.id"""):
+        if not in_period(row['reviewed_at'], start, end):
+            continue
+        details = json.loads(row['details']) if row['details'] else {}
+        stamp = datetime.fromisoformat(row['reviewed_at'].replace('Z', '+00:00'))
+        if stamp.tzinfo:
+            stamp = stamp.astimezone(VN_TZ)
+        rows.append(dict(type=labels[row['kind']], amount=row['amount'], actor=row['actor'],
+                         occurred_at=stamp.strftime('%d/%m/%Y %H:%M:%S'),
+                         reason=details.get('reason', ''),
+                         decision={'approve': 'Duyệt', 'reject': 'Từ chối'}.get(details.get('decision'), '')))
+    return rows
+
+
 def corrections_report(c, start, end):
     rows = []
 
@@ -276,7 +320,8 @@ def corrections_report(c, start, end):
             JOIN patients p ON p.id=v.patient_id JOIN users u ON u.id=a.reviewed_by
             WHERE a.status='approved' AND a.kind=?""".replace('a.kind=?', "a.kind='" + kind + "'"), label)
     rows.sort(key=lambda r: (r['occurred_at'],r['type'],r['patient_code']))
-    return {'date_from': start, 'date_to': end, 'rows': rows, 'total': len(rows), 'note': NOTE}
+    return {'date_from': start, 'date_to': end, 'rows': rows, 'total': len(rows),
+            'self_reviews': self_reviews_report(c, start, end), 'note': NOTE}
 
 
 COLS = {
@@ -347,6 +392,8 @@ def xlsx(kind, data):
                               ('waiver_approval_count', WAIVER_APPROVAL_LABEL, 'n')])
         add_sheet(book.create_sheet('Tổng kỳ'), total_columns, [total])
         add_sheet(book.create_sheet('Lượt khám còn thiếu tiền'), COLS['unpaid_visits'], data['unpaid_visits'])
+    if kind == 'corrections':
+        add_sheet(book.create_sheet('Tự duyệt'), SELF_REVIEW_COLUMNS, data['self_reviews'])
     if kind == 'visits':
         add_sheet(book.create_sheet('Theo ngày'), [('day','Ngày',''),('visits','Lượt khám','n'),('cancelled','Lượt hủy','n')], data['by_day'])
         add_sheet(book.create_sheet('Theo bác sĩ'), [('doctor_name','Bác sĩ',''),('visits','Lượt khám','n'),('cancelled','Lượt hủy','n')], data['by_doctor'])

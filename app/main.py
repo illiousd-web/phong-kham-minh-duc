@@ -9,6 +9,7 @@ import uuid
 from .domain import authorize_order, revision, status_refresh, invoice
 from .charge_queries import FINANCIAL_DUES_SQL,orders_sql
 from .financial_state import ensure_financial_open
+from .self_review import FinancialReview, audit_self_review, mark_self_review, self_review_reason
 from .work_queues import visit_predicate, ACTIVE_ORDERS, approval_predicate, history_limit
 from contextlib import asynccontextmanager
 from starlette.concurrency import run_in_threadpool
@@ -889,7 +890,7 @@ def propose_adjustment(data:AdjustmentInput,u=Depends(principal)):
 def adjustments_list(u=Depends(principal),history:bool=False):
     require(u,'cashier','manager')
     with db() as c:
-        sql='''SELECT a.id,a.visit_id,a.payment_id,a.kind,a.amount,a.reason,a.status,a.proposed_at,a.reviewed_at,
+        sql='''SELECT a.id,a.visit_id,a.payment_id,a.kind,a.amount,a.reason,a.status,a.proposed_at,a.reviewed_at,a.proposed_by,
           p.full_name AS patient_name,users.full_name AS proposed_name FROM adjustments a
           JOIN visits v ON v.id=a.visit_id JOIN patients p ON p.id=v.patient_id JOIN users ON users.id=a.proposed_by'''
         args=()
@@ -897,19 +898,17 @@ def adjustments_list(u=Depends(principal),history:bool=False):
             sql+=' WHERE a.proposed_by=? AND ';args=(u['id'],)
         else:sql+=' WHERE '
         sql+=approval_predicate('a',history)
-        return [dict(x) for x in c.execute(sql+' ORDER BY a.id DESC'+history_limit(history),args)]
-
-class AdjustmentReview(BaseModel):
-    approve:bool
+        rows = [dict(x) for x in c.execute(sql+' ORDER BY a.id DESC'+history_limit(history),args)]
+        return mark_self_review(c, u, rows, 'proposed_by')
 
 @app.post('/api/adjustments/{adj_id}/review')
-def review_adjustment(adj_id:int,data:AdjustmentReview,u=Depends(principal)):
+def review_adjustment(adj_id:int,data:FinancialReview,u=Depends(principal)):
     require(u,'manager')
     with db(True) as c:
         a=c.execute('SELECT * FROM effective_adjustments WHERE id=?',(adj_id,)).fetchone()
         if not a:raise HTTPException(404,'Không có đề nghị')
         if a['status']!='pending':raise HTTPException(409,'Đã giải quyết đề nghị này')
-        if a['proposed_by']==u['id']:raise HTTPException(403,'Không được tự duyệt đề nghị của mình')
+        reason = self_review_reason(c, u, a['proposed_by'], data, 'Không được tự duyệt đề nghị của mình')
         if data.approve:ensure_financial_open(c,a['visit_id'])
         st=_invoice_state(c,a['visit_id'])
         if data.approve:
@@ -927,6 +926,7 @@ def review_adjustment(adj_id:int,data:AdjustmentReview,u=Depends(principal)):
         new='approved' if data.approve else 'rejected'
         c.execute('UPDATE adjustments SET status=?,reviewed_by=?,reviewed_at=? WHERE id=?',(new,u['id'],NOW(),adj_id))
         audit(c,u,'adjustment_'+new,'adjustment',adj_id)
+        audit_self_review(audit, c, u, a['kind'], adj_id, data.approve, reason)
         return {'id':adj_id,'status':new}
 
 @app.get('/api/print/{kind}/{item_id}')
