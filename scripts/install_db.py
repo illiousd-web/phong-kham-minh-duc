@@ -276,6 +276,47 @@ def load(args):
     return urls
 
 
+def installed_schema(super_env):
+    from scripts.install_env import DB_NAME, read_env
+
+    values = read_env(super_env)
+    password = values.get('MINHDUC_PG_SUPER_PASSWORD')
+    if not password:
+        raise ValueError('Thiếu mật khẩu siêu quản trị PostgreSQL')
+    connection = {
+        'host': '127.0.0.1', 'port': 5432, 'connect_timeout': 5,
+        'user': values.get('MINHDUC_PG_SUPER_USER', 'postgres'), 'password': password,
+    }
+    with psycopg.connect(dbname='postgres', **connection) as c:
+        if not c.execute('SELECT 1 FROM pg_database WHERE datname=%s', (DB_NAME,)).fetchone():
+            return False
+    with psycopg.connect(dbname=DB_NAME, **connection) as c:
+        return c.execute("""
+            SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                          WHERE n.nspname='public' AND c.relname='schema_migrations' AND c.relkind IN ('r','p'))
+        """).fetchone()[0]
+
+
+def prepare_backup_key(args):
+    from scripts.backup_lan import MissingBackupKey, UnverifiedBackupKey, prepare_install_key
+
+    try:
+        outcome = prepare_install_key(args.key, args.directory, args.state, Path(args.clinic_env),
+                                      lambda: installed_schema(args.super_env))
+    except MissingBackupKey:
+        return 26
+    except UnverifiedBackupKey:
+        return 27
+    except (ValueError, OSError, psycopg.Error):
+        return 2
+    print({
+        'created': 'Đã tạo khóa mã hóa sao lưu.',
+        'verified': 'Đã dùng khóa đang có để giải mã và đối chiếu một bản sao lưu cũ.',
+        'kept': 'Giữ nguyên khóa sao lưu đang có.',
+    }[outcome])
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--clinic-env', required=True)
@@ -283,12 +324,18 @@ def main(argv=None):
     parser.add_argument('--super-env')
     sub = parser.add_subparsers(dest='command', required=True)
     e = sub.add_parser('ensure'); e.add_argument('--allow-password-reset', action='store_true')
+    key = sub.add_parser('prepare-backup-key')
+    key.add_argument('--key', type=Path, required=True)
+    key.add_argument('--directory', type=Path, required=True)
+    key.add_argument('--state', type=Path, required=True)
     sub.add_parser('grant')
     sub.add_parser('fingerprint')
     sub.add_parser('admin-count')
     r = sub.add_parser('rollback')
     r.add_argument('--file', required=True); r.add_argument('--key', required=True)
     args = parser.parse_args(argv)
+    if args.command == 'prepare-backup-key':
+        return prepare_backup_key(args)
     try:
         urls = load(args)
         _, app, _, db_name = parts(urls['app'])

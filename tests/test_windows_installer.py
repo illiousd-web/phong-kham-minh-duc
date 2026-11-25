@@ -211,7 +211,7 @@ def _good_facts():
         'cert_not_after': (NOW + timedelta(days=300)).isoformat(),
         'firewall': {'exists': True, 'enabled': True, 'scoped': True, 'port': '8443', 'remote': '192.168.1.0/24'},
         'backup_task': {'exists': True, 'enabled': True, 'next_run': 'x', 'last_result': 0},
-        'backup_state': {'last_success_utc': (NOW - timedelta(hours=2)).isoformat(), 'verified_count': 3}, 'backup_count': 3,
+        'backup_state': {'last_success_utc': (NOW - timedelta(hours=2)).isoformat(), 'verified_count': 3}, 'backup_verified_count': 3,
         'backup_latest_matches': True,
         'disk_free_gib': 120.5, 'memory': {'total_mib': 7900, 'available_mib': 3000},
         'pagefile': {'auto': True, 'detail': 'Windows tự quản lý'}, 'env_acl_ok': True, 'env_acl_detail': 'ok',
@@ -236,7 +236,8 @@ def test_health_all_pass():
     ({'backup_task': {}}, 'Lịch sao lưu'),
     ({'backup_state': {'last_success_utc': (NOW - timedelta(hours=50)).isoformat(), 'verified_count': 3}}, 'Sao lưu:'),
     ({'backup_state': {}, 'backup_newest_utc': None}, 'Sao lưu:'),
-    ({'backup_state': {'last_success_utc': NOW.isoformat(), 'verified_count': 2}}, 'Sao lưu:'),
+    ({'backup_state': {'last_success_utc': NOW.isoformat(), 'verified_count': 2},
+      'backup_verified_count': 2}, 'Sao lưu:'),
     ({'backup_state': {'last_success_utc': NOW.isoformat(), 'verified_count': 5, 'over_budget': True}}, 'Sao lưu:'),
     ({'backup_state': {'last_success_utc': NOW.isoformat(), 'verified_count': 4, 'corrupt': ['x']}}, 'Sao lưu:'),
     ({'disk_free_gib': 12}, 'Ổ dữ liệu'),
@@ -265,9 +266,13 @@ def test_health_compares_latest_backup_with_disk(tmp_path, legacy_state):
              'last_file': latest.name, 'last_size_bytes': len(original)}
     if not legacy_state:
         state['last_sha256'] = digest
-    else:
-        latest.with_name(latest.name + '.verified').write_text(
-            json.dumps({'sha256': digest, 'size': len(original)}), encoding='utf-8')
+
+    def write_marker(path, content):
+        path.with_name(path.name + '.verified').write_text(
+            json.dumps({'sha256': hashlib.sha256(content).hexdigest(), 'size': len(content)}),
+            encoding='utf-8')
+
+    write_marker(latest, original)
     state_file = tmp_path / 'status.json'
     state_file.write_text(json.dumps(state), encoding='utf-8')
 
@@ -280,10 +285,29 @@ def test_health_compares_latest_backup_with_disk(tmp_path, legacy_state):
         {'backup_count': 0, 'backup_state': {'verified_count': 3, 'last_success_utc': NOW.isoformat()}}, NOW
     ) if r['muc'].startswith('Sao lưu:')) is False
     latest.write_bytes(original)
-    (backups / 'minhduc-1.mdbackup').write_bytes(b'older')
+    old = backups / 'minhduc-1.mdbackup'
+    other = backups / 'minhduc-2.mdbackup'
+    old.write_bytes(b'older')
     assert passes() is False
-    (backups / 'minhduc-2.mdbackup').write_bytes(b'older')
+    other.write_bytes(b'older')
+    assert passes() is False  # Đủ tên tệp nhưng hai bản cũ chưa có dấu xác minh.
+    write_marker(old, b'older')
+    assert passes() is False
+    write_marker(other, b'older')
     assert passes() is True
+    state['verified_count'] = 0  # Số bản thật đã kiểm trên đĩa mới quyết định.
+    state_file.write_text(json.dumps(state), encoding='utf-8')
+    assert passes() is True
+    old.write_bytes(b'wrong')
+    assert passes() is False
+    old.unlink()
+    old.write_bytes(b'fake!')
+    assert passes() is False
+    old.write_bytes(b'older')
+    assert passes() is True
+    latest.with_name(latest.name + '.verified').unlink()
+    assert passes() is False
+    write_marker(latest, original)
     latest.write_bytes(b'badd')  # Cùng kích thước nhưng sai SHA-256.
     assert passes() is False
     latest.write_bytes(b'too-long')
@@ -292,23 +316,27 @@ def test_health_compares_latest_backup_with_disk(tmp_path, legacy_state):
     assert passes() is False
 
 
-def test_install_key_requires_old_backup_decryption(tmp_path, monkeypatch):
+def test_install_key_requires_old_backup_decryption(tmp_path, capsys):
     from scripts import backup_lan
 
-    monkeypatch.setattr(backup_lan, 'DATA', tmp_path)
     key = tmp_path / 'backup.key'
     state = tmp_path / 'status.json'
     backups = tmp_path / 'backups'
     backups.mkdir()
-    assert backup_lan.prepare_install_key(key, backups, state) == 'created'
+    clinic_env = tmp_path / 'clinic.env'
+
+    def prepare():
+        return backup_lan.prepare_install_key(key, backups, state, clinic_env, lambda: False)
+
+    assert prepare() == 'created'
     old_key = key.read_bytes()
     assert len(old_key) == 32
-    assert backup_lan.prepare_install_key(key, backups, state) == 'kept'
+    assert prepare() == 'kept'
     key.unlink()
 
     state.write_text(json.dumps({'last_success_utc': NOW.isoformat()}), encoding='utf-8')
     with pytest.raises(ValueError, match='Thiếu khóa sao lưu cũ'):
-        backup_lan.prepare_install_key(key, backups, state)
+        prepare()
     assert not key.exists()
     state.unlink()
     dump = tmp_path / 'database.dump'
@@ -320,15 +348,63 @@ def test_install_key_requires_old_backup_decryption(tmp_path, monkeypatch):
     backup_lan.encrypt_archive([(dump, 'database.dump'), (manifest, 'manifest.json')], archive, old_key)
     original = archive.read_bytes()
     with pytest.raises(ValueError, match='Thiếu khóa sao lưu cũ'):
-        backup_lan.prepare_install_key(key, backups, state)
+        prepare()
     assert not key.exists()
 
     key.write_bytes(bytes(x ^ 1 for x in old_key))
     with pytest.raises(ValueError, match='Không giải mã'):
-        backup_lan.prepare_install_key(key, backups, state)
+        prepare()
+    key.unlink()
+    backups.rename(tmp_path / 'backups-cu')
+    with pytest.raises(ValueError, match='Thiếu khóa sao lưu cũ'):
+        prepare()
+    assert not key.exists()
+    assert 'Đang kiểm bản 1/1...' in capsys.readouterr().out
     key.write_bytes(old_key)
-    assert backup_lan.prepare_install_key(key, backups, state) == 'verified'
+    archive = tmp_path / 'backups-cu' / archive.name
+    archive.with_name('minhduc-z.mdbackup').write_bytes(b'ban hong')
+    assert prepare() == 'verified'
     assert key.read_bytes() == old_key and archive.read_bytes() == original
+    assert capsys.readouterr().out.splitlines() == ['Đang kiểm bản 1/2...', 'Đang kiểm bản 2/2...']
+
+
+@pytest.mark.parametrize('history', ['empty-state', 'bad-json', 'clinic-env', 'schema', 'empty-renamed-dir'])
+def test_install_key_does_not_create_key_with_previous_installation(tmp_path, history):
+    from scripts.backup_lan import MissingBackupKey, prepare_install_key
+
+    key = tmp_path / 'backup.key'
+    state = tmp_path / 'backup-status.json'
+    clinic_env = tmp_path / 'clinic.env'
+    if history == 'empty-state':
+        state.write_text('{}', encoding='utf-8')
+    elif history == 'bad-json':
+        state.write_text('{', encoding='utf-8')
+    elif history == 'clinic-env':
+        clinic_env.touch()
+    elif history == 'empty-renamed-dir':
+        (tmp_path / 'backups-cu').mkdir()
+    with pytest.raises(MissingBackupKey):
+        prepare_install_key(key, tmp_path / 'backups', state, clinic_env, lambda: history == 'schema')
+    assert not key.exists()
+
+
+def test_install_key_stops_on_unreadable_backup_directory(tmp_path, monkeypatch):
+    from scripts.backup_lan import prepare_install_key
+
+    backups = tmp_path / 'backups'
+    backups.mkdir()
+    iterdir = Path.iterdir
+
+    def unreadable(path):
+        if path == backups:
+            raise PermissionError('Không đọc được thư mục sao lưu')
+        return iterdir(path)
+
+    monkeypatch.setattr(Path, 'iterdir', unreadable)
+    key = tmp_path / 'backup.key'
+    with pytest.raises(PermissionError):
+        prepare_install_key(key, backups, tmp_path / 'backup-status.json', tmp_path / 'clinic.env', lambda: False)
+    assert not key.exists()
 
 
 def test_health_missing_windows_facts_fail_not_pass():
@@ -893,7 +969,8 @@ def test_warnings_corrupt_and_space_freed():
 
 def test_health_backup_row_explains_reason_and_action():
     def row(state):
-        facts = {**_good_facts(), 'backup_state': {'last_success_utc': NOW.isoformat(), **state}}
+        facts = {**_good_facts(), 'backup_state': {'last_success_utc': NOW.isoformat(), **state},
+                 'backup_verified_count': state['verified_count']}
         return [r for r in install_health.evaluate(facts, NOW) if r['muc'].startswith('Sao lưu:')][0]
     fresh = row({'verified_count': 1})
     assert not fresh['dat'] and 'mới có 1 bản đã kiểm, cần ít nhất 3' in fresh['chi_tiet'] and '20:00' in fresh['chi_tiet']

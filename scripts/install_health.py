@@ -18,12 +18,11 @@ import ssl
 import sys
 import urllib.request
 
-from scripts.backup_job import VERIFIED_SUFFIX, _sha256
+from scripts.backup_job import MIN_VERIFIED, list_backups
 
 VN = timezone(timedelta(hours=7))
 CERT_WARNING_DAYS = 60  # cùng ngưỡng với lịch sao lưu (scripts.backup_job)
 GIB = 1024 ** 3
-MIN_VERIFIED = 3  # cùng ngưỡng với scripts.backup_job.MIN_VERIFIED
 
 
 def collect(env, state_file=None, ca_file=None, timeout=15):
@@ -78,34 +77,27 @@ def collect(env, state_file=None, ca_file=None, timeout=15):
     except (OSError, ValueError):
         facts['ui_settings'] = 'invalid'
     backups = Path(env.get('CLINIC_BACKUP_DIR', str(data / 'backups')))
-    files = {p.name: p for p in backups.glob('minhduc-*.mdbackup') if p.is_file()}
-    facts['backup_count'] = len(files)
-    state = {}
+    try:
+        backups_on_disk = list_backups(backups)
+    except OSError:
+        backups_on_disk = []
+        facts['backup_scan_failed'] = True
+    facts['backup_verified_count'] = sum(item['verified'] for item in backups_on_disk)
+    facts['backup_corrupt'] = [item['name'] for item in backups_on_disk if item['corrupt']]
     if state_file:
         try:
             state = json.loads(Path(state_file).read_text(encoding='utf-8'))
         except (OSError, ValueError):
-            pass
-    if isinstance(state, dict):
-        facts['backup_state'] = {k: state.get(k) for k in (
-            'last_success_utc', 'last_error', 'external_present', 'external_last_copy_utc', 'warnings',
-            'verified_count', 'over_budget', 'corrupt')}
-        last_file = state.get('last_file')
-        latest = files.get(last_file) if isinstance(last_file, str) else None
-        if latest is not None:
-            try:
-                expected_hash = state.get('last_sha256')
-                expected_size = state.get('last_size_bytes')
-                if 'last_sha256' not in state:
-                    # Trạng thái từ bản cũ chỉ lưu SHA-256 trong dấu xác minh cạnh tệp.
-                    marker = latest.with_name(latest.name + VERIFIED_SUFFIX)
-                    recorded = json.loads(marker.read_text(encoding='utf-8'))
-                    if recorded['size'] == expected_size:
-                        expected_hash = recorded['sha256']
-                facts['backup_latest_matches'] = bool(expected_hash and
-                    latest.stat().st_size == expected_size and _sha256(latest) == expected_hash)
-            except (OSError, ValueError, KeyError, TypeError):
-                facts['backup_latest_matches'] = False
+            state = {}
+        if isinstance(state, dict):
+            facts['backup_state'] = {k: state.get(k) for k in (
+                'last_success_utc', 'last_error', 'external_present', 'external_last_copy_utc', 'warnings',
+                'over_budget', 'corrupt')}
+            last_success = next((item for item in backups_on_disk if item['name'] == state.get('last_file')), None)
+            facts['backup_latest_matches'] = bool(last_success and last_success['verified'] and
+                last_success['size'] == state.get('last_size_bytes') and
+                ('last_sha256' not in state or last_success['sha256'] == state['last_sha256']) and
+                backups_on_disk[0]['verified'])
     return facts
 
 
@@ -156,30 +148,28 @@ def evaluate(facts, now=None):
     title = f'Sao lưu: bản mới nhất dưới 36 giờ, có từ {MIN_VERIFIED} bản đã kiểm, không vượt ngân sách'
     if newest:
         hours = _age_hours(newest, now)
-        verified = state.get('verified_count')
+        verified = facts.get('backup_verified_count', 0)
+        corrupt = set(facts.get('backup_corrupt', ())) | set(state.get('corrupt') or ())
         problems = []
         if hours > 36:
             problems.append(f'bản mới nhất đã {hours:.0f} giờ — kiểm tra lịch sao lưu 20:00, máy có bật lúc 20:00 không')
         if state.get('last_error'):
             problems.append(f"lần sao lưu cuối LỖI: {state['last_error']}")
-        if verified is None:
-            problems.append('chưa có thông tin số bản đã kiểm — để lịch sao lưu 20:00 chạy rồi kiểm tra lại')
-        elif verified < MIN_VERIFIED:
+        if facts.get('backup_scan_failed'):
+            problems.append('không đọc được thư mục sao lưu — báo người hỗ trợ')
+        if verified < MIN_VERIFIED:
             problems.append(f'mới có {verified} bản đã kiểm, cần ít nhất {MIN_VERIFIED}'
                             + (' — máy mới cài: tự đạt sau các đêm sao lưu 20:00 tiếp theo, giữ máy bật lúc 20:00'
-                               if not state.get('corrupt') and not state.get('over_budget') else
+                               if not corrupt and not state.get('over_budget') else
                                ' — báo người hỗ trợ'))
-        if isinstance(verified, int) and facts.get('backup_count', 0) < verified:
-            problems.append('số tệp sao lưu trên đĩa ít hơn số bản đã kiểm trong trạng thái')
         if facts.get('backup_latest_matches') is not True:
-            problems.append('thiếu bản sao lưu thành công gần nhất hoặc tên, kích thước, SHA-256 không khớp — báo người hỗ trợ')
-        if state.get('corrupt'):
-            problems.append(f"{len(state['corrupt'])} bản HỎNG (không khớp SHA-256) — báo người hỗ trợ kiểm tra ổ đĩa")
+            problems.append('bản gần nhất hoặc bản thành công gần nhất không xác minh được — báo người hỗ trợ')
+        if corrupt:
+            problems.append(f'{len(corrupt)} bản HỎNG (không khớp kích thước hoặc SHA-256) — báo người hỗ trợ kiểm tra ổ đĩa')
         if state.get('over_budget'):
             problems.append('vượt ngân sách dung lượng, không xóa thêm được vì phải giữ bản đã kiểm — '
                             'báo người hỗ trợ dọn ổ đĩa hoặc tăng CLINIC_BACKUP_TOTAL_MB')
-        detail = (f'Cách đây {hours:.0f} giờ; số bản trên máy: {facts.get("backup_count", 0)}'
-                  + (f' (đã kiểm: {verified})' if verified is not None else ''))
+        detail = f'Cách đây {hours:.0f} giờ. Số bản đã kiểm trên đĩa: {verified}'
         if problems:
             detail += '. KHÔNG ĐẠT vì: ' + '; '.join(problems) + '.'
         add(title, not problems, detail)

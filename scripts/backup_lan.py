@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import stat
 import shutil
 import subprocess
 import sys
@@ -274,30 +275,50 @@ def generate_key(path):
     path.chmod(0o600)
 
 
-def prepare_install_key(key, directory, state_file):
-    """Verify an existing key against history before allowing any new backup."""
+class MissingBackupKey(ValueError):
+    pass
+
+
+class UnverifiedBackupKey(ValueError):
+    pass
+
+
+def _exists_strict(path):
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def prepare_install_key(key, directory, state_file, clinic_env, installed_schema):
+    """Check all evidence before key creation. Filesystem errors propagate."""
     from cryptography.exceptions import InvalidTag
 
-    files = sorted((p for p in directory.glob('minhduc-*.mdbackup') if p.is_file()), reverse=True)
-    try:
-        state = json.loads(state_file.read_text(encoding='utf-8-sig'))
-    except FileNotFoundError:
-        state = {}
-    if not isinstance(state, dict):
-        raise ValueError('Không đọc được trạng thái sao lưu')
-
-    if files or state:
-        if not key.is_file():
-            raise ValueError('Thiếu khóa sao lưu cũ')
-        for backup_file in files:
+    data = directory.parent
+    backup_dirs = [path for path in data.iterdir()
+                   if path.name.casefold().startswith('backups') and stat.S_ISDIR(path.stat().st_mode)]
+    if directory not in backup_dirs and _exists_strict(directory):
+        # A misconfigured primary path must fail the scan too.
+        backup_dirs.append(directory)
+    files = sorted((path for folder in backup_dirs for path in folder.iterdir()
+                    if path.match('minhduc-*.mdbackup') and stat.S_ISREG(path.stat().st_mode)),
+                   key=lambda path: path.name, reverse=True)
+    history = (bool(files) or any(folder != directory for folder in backup_dirs)
+               or _exists_strict(state_file) or _exists_strict(clinic_env) or installed_schema())
+    if history:
+        if not _exists_strict(key):
+            raise MissingBackupKey('Thiếu khóa sao lưu cũ')
+        for index, backup_file in enumerate(files, 1):
+            print(f'Đang kiểm bản {index}/{len(files)}...', flush=True)
             try:
-                with tempfile.TemporaryDirectory(prefix='.verify-', dir=DATA) as tmp:
+                with tempfile.TemporaryDirectory(prefix='.verify-', dir=data) as tmp:
                     unpack_verified(backup_file, key, Path(tmp))
             except (OSError, ValueError, InvalidTag, tarfile.TarError, KeyError, TypeError):
                 continue
             return 'verified'
-        raise ValueError('Không giải mã và đối chiếu được bản sao lưu cũ')
-    if key.exists():
+        raise UnverifiedBackupKey('Không giải mã và đối chiếu được bản sao lưu cũ')
+    if _exists_strict(key):
         key_bytes(key)
         return 'kept'
     generate_key(key)
@@ -306,11 +327,10 @@ def prepare_install_key(key, directory, state_file):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['keygen','prepare-install-key','backup','verify','restore'])
+    parser.add_argument('command',choices=['keygen','backup','verify','restore'])
     parser.add_argument('--key',type=Path,required=True)
     parser.add_argument('--directory',type=Path)
     parser.add_argument('--file',type=Path)
-    parser.add_argument('--state',type=Path)
     parser.add_argument('--target-url-env', default='CLINIC_RESTORE_DATABASE_URL')
     parser.add_argument('--target-uploads',type=Path)
     parser.add_argument('--target-settings',type=Path,help='mặc định: cạnh --target-uploads, tên ui_settings.json')
@@ -320,13 +340,6 @@ def main():
     if args.command=='keygen':
         generate_key(args.key)
         print('Backup key created. Store a separate offline copy.')
-    elif args.command=='prepare-install-key':
-        if args.directory is None or args.state is None:
-            parser.error('--directory and --state are required')
-        try:
-            print(prepare_install_key(args.key, args.directory, args.state))
-        except (OSError, ValueError):
-            parser.exit(1, 'Chưa xác minh được khóa sao lưu. Kiểm tra khóa cũ và thư mục sao lưu.\n')
     elif args.command=='backup':
         if not args.directory:parser.error('--directory is required')
         print(backup(args.directory,args.key))
