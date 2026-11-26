@@ -70,3 +70,12 @@ def test_reprice_denied_after_approved_return_with_zero_credit(quantities):
             ret = checked(pharmacy.post(f'/api/dispensations/{disp["dispensation_id"]}/returns', json={'reason':'Trả thuốc giả lập','request_key':secrets.token_hex(16),'items':[{'dispensation_item_id':item,'quantity':quantity}]}), 201)
             checked(manager.post(f'/api/medication-returns/{ret["id"]}/review', json={'approve':True}))
         assert reprice(4000).status_code == 409
+
+
+def test_t2_stock_revenue_uses_effective_price_across_periods():
+    from tests.s2b_cases import check_reprice_revenue_periods
+    clients = actors()
+    clients['cashier'] = RoleClient('thungan')
+    _, visit = prepare_visit()
+    with owner_sessions(clients)() as owner:
+        check_reprice_revenue_periods(clients, visit, db, owner)
