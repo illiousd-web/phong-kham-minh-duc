@@ -175,9 +175,7 @@ def stock_report(c, start, end):
         if not start <= local_day(change['created_at']) <= end:
             continue
         row = rows[change['medicine_id']]
-        if change['previous_amount'] is None or change['new_amount'] is None:
-            row['revenue'] = None
-        elif row['revenue'] is not None:
+        if row['revenue'] is not None:
             row['revenue'] += change['new_amount'] - change['previous_amount']
     # dispense_rx inserts one movement and one item per consumed lot, in the same
     # transaction after locking/updating that lot. Their per-lot order is identical,

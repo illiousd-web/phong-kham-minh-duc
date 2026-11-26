@@ -79,3 +79,11 @@ def test_t2_stock_revenue_uses_effective_price_across_periods():
     _, visit = prepare_visit()
     with owner_sessions(clients)() as owner:
         check_reprice_revenue_periods(clients, visit, db, owner)
+
+
+def test_t2_two_reprices_multiple_returns_and_full_return():
+    from tests.s2b_cases import check_reprice_twice_and_return_all
+    clients = actors()
+    _, visit = prepare_visit()
+    with owner_sessions(clients)() as owner:
+        check_reprice_twice_and_return_all(clients, visit, db, owner)
