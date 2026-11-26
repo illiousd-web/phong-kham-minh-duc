@@ -353,3 +353,41 @@ def check_lot_quantity_ceiling(clients, db, owner):
         'medicine_id': mid, 'quantity': 5, 'lot_number': lot, 'expiry_date': '2029-01-01',
         'supplier': 'Nhà cung cấp giả lập', 'invoice_no': 'HĐ-GIẢ-LẬP', 'invoice_date': '2026-11-15',
         'unit_cost': 1300, 'vat_rate': 5}), 201)
+
+
+def check_reprice_after_approved_return(clients, visit, db, owner, quantities):
+    medicine = med(clients)
+    receive(owner, medicine, 4, 1000)
+    doctor, pharmacy, manager = clients['doctor'], clients['pharmacy'], clients['manager']
+    row = checked(doctor.get(f'/api/visits/{visit}'))
+    checked(doctor.put(f'/api/visits/{visit}/clinical', json={'version':row['version'],'diagnosis':'Giả lập'}))
+    rx = checked(doctor.post('/api/prescriptions', json={'visit_id':visit,'items':[{'medicine_id':medicine,'quantity':4,'directions':'Giả lập'}]}), 201)
+    disp = checked(pharmacy.post(f'/api/prescriptions/{rx["id"]}/dispense'), 201)
+    item = disp['lots'][0]['id']
+    with db() as c:
+        charge = c.execute("SELECT charge_id FROM charge_sources WHERE source_type='dispense_item' AND source_id=?", (item,)).fetchone()[0]
+    def reprice(value):
+        return manager.post(f'/api/charges/{charge}/reprice', json={'amount':value,'reason':'Giá giả lập','request_key':secrets.token_hex(16)})
+    assert reprice(1).status_code == 200
+    with db() as c:
+        prices_before = [dict(row) for row in c.execute(
+            'SELECT * FROM charge_price_history WHERE charge_id=? ORDER BY id', (charge,))]
+    assert [row['new_amount'] for row in prices_before] == [1]
+    for quantity in quantities:
+        ret = checked(pharmacy.post(f'/api/dispensations/{disp["dispensation_id"]}/returns', json={'reason':'Trả thuốc giả lập','request_key':secrets.token_hex(16),'items':[{'dispensation_item_id':item,'quantity':quantity}]}), 201)
+        checked(manager.post(f'/api/medication-returns/{ret["id"]}/review', json={'approve':True}))
+    expected_credit = 1 if sum(quantities) == 4 else 0
+    with db() as c:
+        credits_before = [dict(row) for row in c.execute(
+            'SELECT * FROM charge_credits WHERE charge_id=? ORDER BY id', (charge,))]
+        assert [row['amount'] for row in credits_before] == ([1] if expected_credit else [])
+        amount_before = c.execute('SELECT amount FROM effective_charges WHERE id=?', (charge,)).fetchone()[0]
+        assert amount_before == 1 - expected_credit
+    assert reprice(4000).status_code == 409
+    with db() as c:
+        assert c.execute('SELECT amount FROM charge_pricing WHERE charge_id=?', (charge,)).fetchone()[0] == 1
+        assert c.execute('SELECT amount FROM effective_charges WHERE id=?', (charge,)).fetchone()[0] == amount_before
+        assert [dict(row) for row in c.execute(
+            'SELECT * FROM charge_price_history WHERE charge_id=? ORDER BY id', (charge,))] == prices_before
+        assert [dict(row) for row in c.execute(
+            'SELECT * FROM charge_credits WHERE charge_id=? ORDER BY id', (charge,))] == credits_before

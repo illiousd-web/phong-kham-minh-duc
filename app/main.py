@@ -398,6 +398,8 @@ def list_visits(u=Depends(principal),history:bool=False):
     roles=set(u['roles'])
     if roles & {'manager','admin'}:
         fields='v.id,v.status,v.created_at'
+        if 'reception' in roles:
+            fields+=',v.patient_id,p.code AS patient_code,p.full_name AS patient_name'
     elif 'doctor' in roles or ('reception' in roles and 'technician' not in roles):
         fields='v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name'
         if 'doctor' in roles:
