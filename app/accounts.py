@@ -65,6 +65,7 @@ def install_accounts(app, db, principal, require, audit, pw_hash, now):
         require(u, 'admin')
         prepared = password_digest(data.password, pw_hash)
         with db(True) as c:
+            require_current_roles(c, u, 'admin')
             uid = create_account(c, data, pw_hash, prepared)
             audit(c,u,'account_created','user',uid)
         return {'id':uid}
@@ -115,6 +116,7 @@ def install_accounts(app, db, principal, require, audit, pw_hash, now):
         require(u, 'admin')
         salt, hashed = password_digest(data.password, pw_hash)
         with db(True) as c:
+            require_current_roles(c, u, 'admin')
             if not c.execute('SELECT 1 FROM users WHERE id=?', (uid,)).fetchone():
                 raise HTTPException(404, 'Không có tài khoản')
             c.execute('UPDATE users SET salt=?,password_hash=? WHERE id=?', (salt,hashed,uid))

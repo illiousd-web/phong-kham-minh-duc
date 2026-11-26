@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 COOKIE = '__Host-clinic'
 CSRF_COOKIE = '__Host-clinic-csrf'
 IDLE_MINUTES = 20
+INVALID_SESSION = 'Hết hạn phiên hoặc không hợp lệ'
 
 
 def pw_hash(password, salt):
@@ -105,7 +106,7 @@ def install_auth(app, db, lan, now):
         with db() as c:
             u = c.execute('SELECT users.*,sessions.expires_at' + (',sessions.last_seen' if lan else '') + ' FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires_at>? AND active=1', (digest,now())).fetchone()
             if not u:
-                raise HTTPException(401, 'Hết hạn phiên hoặc không hợp lệ')
+                raise HTTPException(401, INVALID_SESSION)
             if lan:
                 if not u['last_seen'] or datetime.fromisoformat(u['last_seen']) < datetime.now(timezone.utc)-timedelta(minutes=IDLE_MINUTES):
                     raise HTTPException(401, 'Phiên hết hạn do không hoạt động')

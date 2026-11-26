@@ -6,7 +6,8 @@ from pydantic import BaseModel,Field
 from .domain import ensure_open,authorize_order,invoice,revision
 from .financial_state import ensure_financial_open
 from .self_review import (CONTROLLED_RETURN_ITEMS, FinancialReview, audit_self_review,
-                          mark_self_review, require_current_manager, self_review_reason)
+                          mark_self_review, require_current_manager, require_current_roles,
+                          self_review_reason)
 from .s2e_settlements import financial_status, is_legacy_completed
 
 class Reason(BaseModel):
@@ -75,6 +76,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
     def reprice(cid:int,data:Reprice,u=Depends(principal)):
         require(u,'manager')
         with db(True) as c:
+            require_current_roles(c, u, 'manager')
             prior=c.execute('SELECT * FROM charge_price_history WHERE request_key=?',(data.request_key,)).fetchone()
             if prior:
                 if prior['charge_id']!=cid or prior['new_amount']!=data.amount or prior['reason']!=data.reason or prior['changed_by']!=u['id']:raise HTTPException(409,'Khóa đã dùng với nội dung khác')
@@ -99,6 +101,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
     def reverse_discount(aid:int,data:Reason,u=Depends(principal)):
         require(u,'manager')
         with db(True) as c:
+            require_current_roles(c, u, 'manager')
             a=c.execute('SELECT * FROM adjustments WHERE id=?',(aid,)).fetchone()
             if not a or a['kind']!='discount' or a['status']!='approved':raise HTTPException(409,'Chỉ hoàn tác giảm phí đã duyệt')
             ensure_financial_open(c,a['visit_id'])
@@ -341,13 +344,16 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
     def cancel_visit(vid:int,data:Reason,u=Depends(principal)):
         require(u,'manager')
         with db(True) as c:
+            current = require_current_roles(c, u, 'manager')
             v=c.execute('SELECT * FROM visits WHERE id=?',(vid,)).fetchone()
             if not v:raise HTTPException(404,'Không có lượt')
             ensure_financial_open(c,vid)
             ensure_open(v)
             if c.execute("SELECT 1 FROM orders WHERE visit_id=? AND status<>'cancelled'",(vid,)).fetchone():raise HTTPException(409,'Phải xử lý/hủy các chỉ định trước')
             rx=c.execute('SELECT * FROM prescriptions WHERE visit_id=?',(vid,)).fetchone()
-            if rx and c.execute('SELECT 1 FROM prescription_items i JOIN medicines m ON m.id=i.medicine_id WHERE i.prescription_id=? AND m.controlled=1',(rx['id'],)).fetchone() and 'controlled_reviewer' not in u['roles']:raise HTTPException(403,'Thiếu quyền đối soát lượt có thuốc kiểm soát')
+            if (rx and 'controlled_reviewer' not in current.intersection(u['roles'])
+                    and c.execute('SELECT 1 FROM prescription_items i JOIN medicines m ON m.id=i.medicine_id WHERE i.prescription_id=? AND m.controlled=1',(rx['id'],)).fetchone()):
+                raise HTTPException(403,'Thiếu quyền đối soát lượt có thuốc kiểm soát')
             if rx and rx['status']=='dispensed':raise HTTPException(409,'Phải trả/đối soát thuốc đã cấp trước')
             if rx and rx['status']=='draft':
                 c.execute("UPDATE prescriptions SET status='cancelled' WHERE id=?",(rx['id'],))

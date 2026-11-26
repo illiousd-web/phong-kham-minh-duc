@@ -5,6 +5,9 @@ import json
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from .auth import INVALID_SESSION
+from .database import PGConnection
+
 
 class FinancialReview(BaseModel):
     approve: bool
@@ -26,14 +29,16 @@ def active_account_roles(c, user_id):
 
 
 def require_current_roles(c, user, *roles):
-    """Kiểm lại trên kết nối ghi: tài khoản còn hoạt động và còn ít nhất một vai được phép.
-
-    Vai trong phiên được đọc trước khi lấy khóa ghi; khóa tài khoản hoặc bỏ vai đã cam kết
-    trước giao dịch ghi phải làm giao dịch bị từ chối trước khi ghi bất kỳ dòng nào.
-    """
+    """Kiểm lại tài khoản, vai và đúng phiên đăng nhập trước khi ghi nghiệp vụ."""
     current = active_account_roles(c, user['id'])
     if not current.intersection(roles):
         raise HTTPException(403, MANAGER_REQUIRED)
+    session = 'SELECT 1 FROM sessions WHERE token_hash=? AND user_id=?'
+    if isinstance(c, PGConnection):
+        # Đăng xuất dùng db('access'), nên giữ dòng phiên đến cuối giao dịch ghi.
+        session += ' FOR KEY SHARE'
+    if not c.execute(session, (user.get('token_hash'), user['id'])).fetchone():
+        raise HTTPException(401, INVALID_SESSION)
     return current
 
 
