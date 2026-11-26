@@ -4,7 +4,7 @@ from tests.test_m0 import RoleClient
 from tests.test_workflows import prepare_visit
 import pytest
 
-from tests.s2b_cases import (check_issue_profit, check_return_profit, check_cost_and_report, check_concurrent_receipts, check_permissions,
+from tests.s2b_cases import (check_lot_quantity_ceiling, check_issue_profit, check_return_profit, check_cost_and_report, check_concurrent_receipts, check_permissions,
                              check_legacy_cost, check_report_period_boundaries, owner_sessions)
 
 
@@ -70,3 +70,9 @@ def test_reprice_denied_after_approved_return_with_zero_credit(quantities):
             ret = checked(pharmacy.post(f'/api/dispensations/{disp["dispensation_id"]}/returns', json={'reason':'Trả thuốc giả lập','request_key':secrets.token_hex(16),'items':[{'dispensation_item_id':item,'quantity':quantity}]}), 201)
             checked(manager.post(f'/api/medication-returns/{ret["id"]}/review', json={'approve':True}))
         assert reprice(4000).status_code == 409
+
+
+def test_s2b_lot_quantity_ceiling():
+    clients = actors()
+    with owner_sessions(clients)() as owner:
+        check_lot_quantity_ceiling(clients, db, owner)

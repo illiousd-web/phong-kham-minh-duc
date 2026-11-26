@@ -328,3 +328,28 @@ def check_return_profit(clients, visit, db, owner, half, approval_next_day=False
         assert (next_day['returns_revenue'], next_day['revenue'], next_day['cogs_sold'], next_day['gross_profit']) == (credit, -credit, -cost, cost-credit)
     else:
         check_report_exports(owner, row)
+
+
+def check_lot_quantity_ceiling(clients, db, owner):
+    """Rà soát 25/11/2026, T5: nhập thêm vào lô không được làm tồn vượt trần INTEGER."""
+    mid = med(clients)
+    lot = 'S2B-TRAN-' + secrets.token_hex(4)
+    receipt = receive(owner, mid, qty=10, lot=lot)
+    near_max = 2_147_483_647 - 5
+    with db(True) as c:
+        c.execute('UPDATE stock_lots SET quantity=? WHERE id=?', (near_max, receipt['stock_lot_id']))
+        before_docs = c.execute('SELECT COUNT(*) FROM stock_receipts').fetchone()[0]
+    response = owner.post('/api/stock/receipts', json={
+        'medicine_id': mid, 'quantity': 10, 'lot_number': lot, 'expiry_date': '2029-01-01',
+        'supplier': 'Nhà cung cấp giả lập', 'invoice_no': 'HĐ-GIẢ-LẬP', 'invoice_date': '2026-11-15',
+        'unit_cost': 1300, 'vat_rate': 5})
+    assert response.status_code == 409, response.text
+    assert 'vượt giới hạn' in response.json()['detail']
+    with db() as c:
+        assert c.execute('SELECT quantity FROM stock_lots WHERE id=?', (receipt['stock_lot_id'],)).fetchone()[0] == near_max
+        assert c.execute('SELECT COUNT(*) FROM stock_receipts').fetchone()[0] == before_docs
+    # Đúng trần vẫn nhập được.
+    checked(owner.post('/api/stock/receipts', json={
+        'medicine_id': mid, 'quantity': 5, 'lot_number': lot, 'expiry_date': '2029-01-01',
+        'supplier': 'Nhà cung cấp giả lập', 'invoice_no': 'HĐ-GIẢ-LẬP', 'invoice_date': '2026-11-15',
+        'unit_cost': 1300, 'vat_rate': 5}), 201)

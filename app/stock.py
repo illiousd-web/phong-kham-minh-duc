@@ -46,6 +46,9 @@ def number(c, kind, stamp):
     return f'{kind}-{year}-{value:04d}'
 
 
+MAX_LOT_QUANTITY = 2_147_483_647  # trần INTEGER PostgreSQL
+
+
 def amount(quantity, unit_cost, vat_rate=0):
     if unit_cost is None:
         return None
@@ -268,6 +271,9 @@ def install_stock(app, db, principal, require, audit, now):
             if old and (old['expiry_date'] != data.expiry_date.isoformat() or old['quarantined'] or
                         old['unit_cost'] != data.unit_cost or Decimal(str(old['vat_rate'] or 0)) != (data.vat_rate or 0)):
                 raise HTTPException(409, 'Lô đã có hạn dùng, giá khác hoặc đang cách ly; nhập số lô riêng')
+            # Tồn lô cộng dồn không được vượt trần INTEGER của PostgreSQL (rà soát 25/11/2026, T5).
+            if old and old['quantity'] + data.quantity > MAX_LOT_QUANTITY:
+                raise HTTPException(409, f'Tồn lô sau khi nhập vượt giới hạn {MAX_LOT_QUANTITY:,} đơn vị; nhập số lô riêng'.replace(',', '.'))
             stamp = now()
             docno = number(c, 'PN', stamp)
             c.execute('INSERT INTO stock_receipts(document_no,supplier,invoice_no,invoice_date,created_by,created_at) VALUES(?,?,?,?,?,?)',

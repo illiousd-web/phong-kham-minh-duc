@@ -2,7 +2,7 @@
 from .conftest import db, IDS
 import pytest
 
-from tests.s2b_cases import (check_issue_profit, check_return_profit, check_cost_and_report, check_concurrent_receipts, check_permissions,
+from tests.s2b_cases import (check_lot_quantity_ceiling, check_issue_profit, check_return_profit, check_cost_and_report, check_concurrent_receipts, check_permissions,
                              check_legacy_cost, check_report_period_boundaries, owner_sessions)
 
 
@@ -30,3 +30,8 @@ def test_s2b_issue_cost_does_not_reduce_sales_profit(clients, reason):
 def test_s2b_approved_return_reverses_original_cost_and_credit(clients, visit, half, approval_next_day):
     with owner_sessions(clients)() as owner:
         check_return_profit(clients, visit, db, owner, half, approval_next_day)
+
+
+def test_s2b_lot_quantity_ceiling(clients):
+    with owner_sessions(clients)() as owner:
+        check_lot_quantity_ceiling(clients, db, owner)
