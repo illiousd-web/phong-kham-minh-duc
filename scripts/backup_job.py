@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import stat
 import string
 import subprocess
 import sys
@@ -177,20 +178,28 @@ def list_backups(directory):
     A marker whose size or hash no longer matches means the file changed after it was
     checked: 'corrupt' (never counted as verified, deleted before any good backup)."""
     items = []
-    for path in Path(directory).glob('minhduc-*.mdbackup'):
-        stat = path.stat()
+    try:
+        paths = tuple(Path(directory).iterdir())
+    except FileNotFoundError:
+        return []
+    for path in paths:
+        if not path.match('minhduc-*.mdbackup'):
+            continue
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            continue
         marker = path.with_name(path.name + VERIFIED_SUFFIX)
         verified = corrupt = False
-        if marker.exists():
-            try:
-                recorded = json.loads(marker.read_text(encoding='utf-8'))
-            except (OSError, ValueError):
-                recorded = {}
-            if recorded.get('sha256'):
-                verified = recorded.get('size') == stat.st_size and _sha256(path) == recorded['sha256']
-                corrupt = not verified
-        items.append({'path': path, 'name': path.name, 'size': stat.st_size, 'mtime': stat.st_mtime,
-                      'verified': verified, 'corrupt': corrupt})
+        try:
+            recorded = json.loads(marker.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            recorded = {}
+        digest = recorded.get('sha256') if isinstance(recorded, dict) else None
+        if digest:
+            verified = recorded.get('size') == info.st_size and _sha256(path) == digest
+            corrupt = not verified
+        items.append({'path': path, 'name': path.name, 'size': info.st_size, 'mtime': info.st_mtime,
+                      'sha256': digest if verified else None, 'verified': verified, 'corrupt': corrupt})
     return sorted(items, key=lambda i: (i['mtime'], i['name']), reverse=True)
 
 
@@ -346,7 +355,7 @@ def run(args, now=None):
                   'files': len(manifest['files'])}
         target.with_name(target.name + VERIFIED_SUFFIX).write_text(json.dumps(marker), encoding='utf-8')
         state.update(last_success_utc=now.isoformat(), last_file=target.name,
-                     last_size_bytes=target.stat().st_size, last_verified_files=len(manifest['files']))
+                     last_size_bytes=marker['size'], last_sha256=marker['sha256'], last_verified_files=marker['files'])
         state.pop('last_error', None)
         # 3. Only now: retention (CLINIC_BACKUP_KEEP) and size budget, keeping >= 3 verified.
         keep = int(os.getenv('CLINIC_BACKUP_KEEP', '14'))

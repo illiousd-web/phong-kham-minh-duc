@@ -227,3 +227,38 @@ def test_postgres_016_backup_restore_keeps_schema_acl_sequences_and_stock(tmp_pa
         drop_db(target_name)
         with psycopg.connect(SOURCE, autocommit=True) as raw:
             raw.execute(sql.SQL('DROP ROLE {}').format(sql.Identifier(runtime)))
+
+
+def test_postgres_021_request_keys_up_down_and_unique():
+    from app.stock_request_key_migration import migrate_stock_request_keys
+    name = 's2b_t4_' + secrets.token_hex(5)
+    url = create_db(name)
+    try:
+        with psycopg.connect(url, row_factory=record_factory) as raw:
+            raw.execute((ROOT/'schema.postgresql.sql').read_text())
+            c = PGConnection(raw)
+            legacy(c)
+            migrate_s2b(c, postgres=True)
+            before = schema_snapshot(raw)
+            migrate_stock_request_keys(c, postgres=True)
+            migrate_stock_request_keys(c, postgres=True)
+            for table in ('stock_receipts', 'stock_issues'):
+                assert raw.execute(f"SELECT indexdef FROM pg_indexes WHERE indexname='idx_{table}_request_key'").fetchone()['indexdef'].startswith('CREATE UNIQUE INDEX')
+            with pytest.raises(ValueError, match='quay lui migration 021'):
+                migrate_s2b(c, postgres=True, down=True)
+            migrate_stock_request_keys(c, postgres=True, down=True)
+            migrate_stock_request_keys(c, postgres=True, down=True)
+            assert schema_snapshot(raw) == before
+            migrate_stock_request_keys(c, postgres=True)
+            insert = "INSERT INTO stock_receipts(document_no,created_by,created_at,request_key) VALUES(%s,1,'2026-11-26',%s)"
+            raw.execute(insert, ('PN-2026-0001', None))
+            raw.execute(insert, ('PN-2026-0002', None))
+            raw.execute(insert, ('PN-2026-0003', 'khoa-t4-giả-lập'))
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                with raw.transaction():
+                    raw.execute(insert, ('PN-2026-0004', 'khoa-t4-giả-lập'))
+            with pytest.raises(ValueError, match='Chưa quay lui migration 021'):
+                migrate_stock_request_keys(c, postgres=True, down=True)
+            assert raw.execute('SELECT 1 FROM schema_migrations WHERE version=21').fetchone()
+    finally:
+        drop_db(name)

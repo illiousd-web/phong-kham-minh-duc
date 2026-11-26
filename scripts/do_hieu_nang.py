@@ -160,6 +160,7 @@ def migrate_profile_schema(c):
     from app.s2c_migration import migrate_s2c
     from app.s2d_migration import migrate_s2d
     from app.s2e_settlement_migration import migrate_settlements
+    from app.stock_request_key_migration import migrate_stock_request_keys
     for _ in range(2):
         migrate_m0(c);migrate_administrative(c);migrate_public_catalog(c)
         migrate_m6(c,postgres=True);migrate_m5(c,postgres=True);migrate_d0(c,postgres=True);migrate_source_catalogs(c,postgres=True)
@@ -170,6 +171,7 @@ def migrate_profile_schema(c):
         migrate_s2c(c,postgres=True)
         migrate_s2d(c,postgres=True)
         migrate_settlements(c,postgres=True)
+        migrate_stock_request_keys(c,postgres=True)
 
 
 def database_state(url):
@@ -434,7 +436,7 @@ def benchmark(args,source_url,pg_pid,temporary,limits):
                     assert con.execute('SELECT COUNT(*) FROM patients WHERE allergies IS NOT NULL').fetchone()[0] == 0
                 new_state = database_state(url)
                 expected_state = {**old_state, 'tables': dict(old_state['tables'])}
-                expected_state['tables']['schema_migrations'] += 15  # versions 5–17 and 19–20; 18 is reserved
+                expected_state['tables']['schema_migrations'] += 16  # versions 5–17 and 19–21; 18 is reserved
                 expected_state['tables']['clinic_profile'] = 1
                 expected_state['tables']['user_signatures'] = 0
                 expected_state['tables']['document_signatures'] = 0

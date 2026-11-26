@@ -190,7 +190,7 @@ class Day:
                 expiry = (self.today + timedelta(days=days)).isoformat()
                 result = self.call('pharmacy', 'POST', '/api/stock/receipts',
                                    {'medicine_id': mid, 'lot_number': f'{self.tag}-{n}-{days}',
-                                    'expiry_date': expiry, 'quantity': qty}, 201)
+                                    'expiry_date': expiry, 'quantity': qty, 'request_key': secrets.token_hex(8)}, 201)
                 lid = result['stock_lot_id']
                 self.lots[lid] = {'medicine_id': mid, 'expiry': expiry, 'initial': qty, 'remaining': qty}
                 self.audit('stock_received_demo', 'stock_lot', lid, 'pharmacy')

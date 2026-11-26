@@ -305,7 +305,7 @@ def propose_medication_return(doctor, pharmacy, manager, visit):
     med = checked(manager.post('/api/catalog/medicines', json={'name': 'Thuốc giả lập '+key(), 'base_unit': 'viên'}), 201)['id']
     checked(manager.put(f'/api/medicines/{med}/price', json={'unit_price': 1000}))
     checked(pharmacy.post('/api/stock/receipts', json={'medicine_id': med, 'lot_number': key(),
-                    'expiry_date': '2099-12-31', 'quantity': 3}), 201)
+                    'expiry_date': '2099-12-31', 'quantity': 3, 'request_key': key()}), 201)
     version = record_clinical(doctor, visit)
     rx = checked(doctor.post('/api/prescriptions', json={'visit_id': visit,
                  'items': [{'medicine_id': med, 'quantity': 2}]}), 201)['id']
@@ -431,14 +431,18 @@ def test_closed_visit_blocks_all_financial_writes(clients, visit):
 
 
 def test_sqlite_upgrade_19_to_20_preserves_existing_data(monkeypatch, tmp_path):
-    from app import main, s2e_settlement_migration
+    from app import main, s2e_settlement_migration, stock_request_key_migration
     migrate = s2e_settlement_migration.migrate_settlements
+    stock_keys = stock_request_key_migration.migrate_stock_request_keys
     path = tmp_path/'v19.sqlite3'
     monkeypatch.setattr(main, 'DB', path)
     monkeypatch.setattr(database, 'DB', path)
     monkeypatch.setattr(s2e_settlement_migration, 'migrate_settlements', lambda c: None)
+    # Bản v19 thật chưa có migration 021 (mã thao tác phiếu kho, T4).
+    monkeypatch.setattr(stock_request_key_migration, 'migrate_stock_request_keys', lambda c: None)
     main.init_db()
     monkeypatch.setattr(s2e_settlement_migration, 'migrate_settlements', migrate)
+    monkeypatch.setattr(stock_request_key_migration, 'migrate_stock_request_keys', stock_keys)
     with database.db(True) as c:
         assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 19
         c.execute("INSERT INTO patients(code,full_name,sex,created_at) VALUES('VA19','Bệnh nhân giả lập','Nam','2026-01-01')")
@@ -454,7 +458,8 @@ def test_sqlite_upgrade_19_to_20_preserves_existing_data(monkeypatch, tmp_path):
     main.init_db()
     with database.db(True) as c:
         assert snapshot(c) == before
-        assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 20
+        assert c.execute('SELECT 1 FROM schema_migrations WHERE version=20').fetchone()
+        assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 21
         assert not c.execute('SELECT * FROM visit_settlements').fetchall()
         c.execute("""INSERT INTO visit_settlements(visit_id,actor_id,created_at,charged,paid,due,refund_due,kind,waived_amount,reason,approved_by)
                      VALUES(1,1,'2026-01-02',1000,700,300,0,'mien_thu',300,?,1)""", (REASON,))
@@ -538,3 +543,26 @@ def visit(clients):
                       'sex': 'Nữ', 'date_of_birth': '1990-01-01', 'phone': '0900000011'}), 201)
     return checked(reception.post('/api/visits', json={'patient_id': patient['id'],
                    'service_id': 1, 'doctor_id': doctor_id}), 201)['id']
+
+
+def test_overview_does_not_offset_one_visit_debt_with_another_visit_overpayment(clients, visit):
+    """Rà soát 25/11/2026, T3: tiền thừa của lượt B không được làm giảm nợ của lượt A."""
+    cashier, manager, reception = clients['cashier'], clients['manager'], clients['reception']
+    staff = checked(reception.get('/api/staff'))
+    doctor_id = next(user['id'] for user in staff if user['username'] == 'bs_noi')
+    patient = checked(reception.post('/api/patients', json={'full_name': 'Bệnh nhân giả lập ứng trước '+key(),
+                      'sex': 'Nam', 'date_of_birth': '1991-01-01', 'phone': '0900000012'}), 201)
+    other = checked(reception.post('/api/visits', json={'patient_id': patient['id'],
+                    'service_id': 1, 'doctor_id': doctor_id}), 201)['id']
+    with database.db() as c:
+        assert invoice(c, visit)['known_due'] > 0
+        fee = invoice(c, other)['charged']
+    before = checked(manager.get('/api/overview'))
+    checked(cashier.post('/api/payments', json=payment(other, fee * 2, prepayment=True)), 201)
+    after = checked(manager.get('/api/overview'))
+    with database.db() as c:
+        assert invoice(c, other)['refund_due'] == fee
+    # Lượt B hết nợ (giảm fee) nhưng phần thừa fee không được trừ thêm vào nợ lượt A.
+    assert after['known_outstanding'] == before['known_outstanding'] - fee
+    expected_refund = None if after['unpriced_count'] else (before['refund_due'] or 0) + fee
+    assert after['refund_due'] == expected_refund

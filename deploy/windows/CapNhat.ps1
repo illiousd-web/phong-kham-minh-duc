@@ -385,19 +385,24 @@ try {
         $resultDetail += '. Chưa kết thúc bảo trì. ' + $_.Exception.Message
         Add-UpdateWarning $resultDetail
     }
+    if ($exitCode -eq 0) {
+        try {
+            $report = Join-Path $P.Journal ('kiem-tra-sau-cap-nhat-' + $Stamp + '.txt')
+            if (-not (Invoke-HealthReport -Paths $P -Output $report -Title 'KẾT QUẢ KIỂM TRA SAU CẬP NHẬT')) {
+                throw ('Báo cáo sức khỏe có mục chưa đạt hoặc chưa tạo được. Kiểm tra tại ' + $report)
+            }
+        } catch {
+            $exitCode = 8
+            $resultStatus = 'thanh_cong_can_kiem_tra'
+            $resultDetail += '. Kiểm tra sức khỏe chưa đạt. ' + $_.Exception.Message
+            Add-UpdateWarning $resultDetail
+        }
+    }
     $resultWritten = $false
     try {
         Write-Result $resultStatus $resultDetail
         $resultWritten = $true
     } catch { Add-UpdateWarning ('Chưa ghi được kết quả cập nhật: ' + $_.Exception.Message) }
-    if ($exitCode -eq 0) {
-        try {
-            $report = Join-Path $P.Journal ('kiem-tra-sau-cap-nhat-' + $Stamp + '.txt')
-            if (-not (Invoke-HealthReport -Paths $P -Output $report -Title 'KẾT QUẢ KIỂM TRA SAU CẬP NHẬT')) {
-                Add-UpdateWarning ('Báo cáo sức khỏe có mục chưa đạt hoặc chưa tạo được. Kiểm tra tại ' + $report)
-            }
-        } catch { Add-UpdateWarning ('Lỗi báo cáo sức khỏe: ' + $_.Exception.Message) }
-    }
     try {
         if ($exitCode -eq 0 -and $resultWritten -and (Test-Path -LiteralPath $OldVenv)) { Remove-Item -LiteralPath $OldVenv -Recurse -Force -ErrorAction Stop }
     } catch { Add-UpdateWarning ('Chưa dọn được môi trường Python cũ: ' + $_.Exception.Message) }
@@ -411,8 +416,9 @@ try {
     }
     Write-Host ''
     if ($exitCode -eq 8) {
-        Write-Luu 'CẬP NHẬT ĐÃ CHỐT VÀ HTTPS ĐÃ ĐẠT, NHƯNG CHƯA KẾT THÚC BẢO TRÌ (mã 8).'
-        Write-Luu 'Máy trạm có thể chưa vào được hoặc chưa có sao lưu tự động. Chạy KIEM_TRA.bat để trả cấu hình còn thiếu.'
+        Write-Luu 'CẬP NHẬT ĐÃ CHỐT VÀ HTTPS ĐÃ ĐẠT. CÒN MỤC CẦN KIỂM TRA (mã 8).'
+        Write-Luu $resultDetail
+        Write-Luu 'Chạy KIEM_TRA.bat để kiểm lại và gửi báo cáo cho người hỗ trợ nếu còn lỗi.'
         if (-not $resultWritten) { Write-Luu 'Chưa ghi được tệp kết quả cập nhật. Báo người hỗ trợ.' }
     } elseif ($resultWritten) {
         Write-Host ('CẬP NHẬT THÀNH CÔNG. Bản mã cũ được giữ tại ' + $OldCode) -ForegroundColor Green

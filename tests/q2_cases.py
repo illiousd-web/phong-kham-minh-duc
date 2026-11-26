@@ -306,10 +306,11 @@ def check_stock_write_after_role_removed(admin, anon, db, operation):
         body = {'unit_cost': 5000, 'reason': REASON}
     elif operation == 'issue':
         method, path = anon.post, '/api/stock/issues'
-        body = {'medicine_id': mid, 'quantity': 1}
+        body = {'medicine_id': mid, 'quantity': 1, 'request_key': secrets.token_hex(12)}
     else:
         method, path = anon.post, '/api/stock/receipts'
-        body = {'medicine_id': mid, 'quantity': 1, 'lot_number': 'PN-' + tag, 'expiry_date': expiry}
+        body = {'medicine_id': mid, 'quantity': 1, 'lot_number': 'PN-' + tag, 'expiry_date': expiry,
+                'request_key': secrets.token_hex(12)}
         if operation == 'receipt-cost':
             body['unit_cost'] = 5000
             role, extra_roles = 'stock_owner', ['pharmacy']

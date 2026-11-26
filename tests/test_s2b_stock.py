@@ -4,8 +4,9 @@ from tests.test_m0 import RoleClient
 from tests.test_workflows import prepare_visit
 import pytest
 
-from tests.s2b_cases import (check_issue_profit, check_return_profit, check_cost_and_report, check_concurrent_receipts, check_permissions,
-                             check_legacy_cost, check_report_period_boundaries, owner_sessions)
+from tests.s2b_cases import (check_lot_quantity_ceiling, check_issue_profit, check_return_profit, check_cost_and_report, check_concurrent_receipts, check_permissions,
+                             check_legacy_cost, check_report_period_boundaries,
+                             check_reprice_after_approved_return, owner_sessions)
 
 
 def actors():
@@ -48,25 +49,22 @@ def test_s2b_approved_return_reverses_original_cost_and_credit(half, approval_ne
 
 @pytest.mark.parametrize('quantities', [[1], [1, 1], [4]])
 def test_reprice_denied_after_approved_return_with_zero_credit(quantities):
-    import secrets
-    from tests.s2b_cases import med, receive, checked
     clients = actors()
     _, visit = prepare_visit()
     with owner_sessions(clients)() as owner:
-        medicine = med(clients)
-        receive(owner, medicine, 4, 1000)
-        doctor, pharmacy, manager = clients['doctor'], clients['pharmacy'], clients['manager']
-        row = checked(doctor.get(f'/api/visits/{visit}'))
-        checked(doctor.put(f'/api/visits/{visit}/clinical', json={'version':row['version'],'diagnosis':'Giả lập'}))
-        rx = checked(doctor.post('/api/prescriptions', json={'visit_id':visit,'items':[{'medicine_id':medicine,'quantity':4,'directions':'Giả lập'}]}), 201)
-        disp = checked(pharmacy.post(f'/api/prescriptions/{rx["id"]}/dispense'), 201)
-        item = disp['lots'][0]['id']
-        with db() as c:
-            charge = c.execute("SELECT charge_id FROM charge_sources WHERE source_type='dispense_item' AND source_id=?", (item,)).fetchone()[0]
-        def reprice(value):
-            return manager.post(f'/api/charges/{charge}/reprice', json={'amount':value,'reason':'Giá giả lập','request_key':secrets.token_hex(16)})
-        assert reprice(1).status_code == 200
-        for quantity in quantities:
-            ret = checked(pharmacy.post(f'/api/dispensations/{disp["dispensation_id"]}/returns', json={'reason':'Trả thuốc giả lập','request_key':secrets.token_hex(16),'items':[{'dispensation_item_id':item,'quantity':quantity}]}), 201)
-            checked(manager.post(f'/api/medication-returns/{ret["id"]}/review', json={'approve':True}))
-        assert reprice(4000).status_code == 409
+        check_reprice_after_approved_return(clients, visit, db, owner, quantities)
+
+
+def test_s2b_lot_quantity_ceiling():
+    clients = actors()
+    with owner_sessions(clients)() as owner:
+        check_lot_quantity_ceiling(clients, db, owner)
+
+
+def test_t4_resent_stock_documents_are_not_duplicated():
+    from tests.s2b_cases import check_resent_documents_are_not_duplicated, check_missing_request_key_rejected
+    clients = actors()
+    factory = owner_sessions(clients)
+    check_resent_documents_are_not_duplicated(clients, db, factory)
+    with factory() as owner:
+        check_missing_request_key_rejected(clients, owner)

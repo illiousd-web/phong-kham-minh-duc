@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 import json
 from io import BytesIO
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 from fastapi.responses import Response
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -11,7 +11,6 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from .labels import local_day, VN_TZ, vi, METHOD
 from .resources import export_slot
 from .stock import period
-from .domain import invoice
 
 
 NOTE = 'Số liệu theo giá hiện hành tại thời điểm xuất báo cáo; khoản sửa giá được tính vào ngày phát sinh khoản phí.'
@@ -34,6 +33,46 @@ def in_period(stamp, start, end):
     return bool(stamp) and start <= day(stamp) <= end
 
 
+def text_window(column, start, end):
+    """Điều kiện SQL lọc sơ bộ theo chuỗi thời gian, rộng hơn kỳ một ngày mỗi bên.
+
+    Thời điểm UTC của một ngày Việt Nam D bắt đầu bằng ngày D-1 hoặc D; chuỗi chỉ có ngày hoặc
+    không có múi giờ bắt đầu bằng D. Mọi dòng thuộc kỳ đều qua điều kiện này; in_period vẫn
+    quyết định chính xác ở Python nên kết quả không đổi, chỉ bớt các dòng ngoài kỳ phải đọc.
+    """
+    first, last = date.fromisoformat(start), date.fromisoformat(end)
+    clauses, args = [], []
+    if first > date.min:
+        clauses.append(f'{column}>=?')
+        args.append((first - timedelta(days=1)).isoformat())
+    if last < date.max - timedelta(days=1):
+        clauses.append(f'{column}<?')
+        args.append((last + timedelta(days=2)).isoformat())
+    return ' AND '.join(clauses) or '1=1', args
+
+
+# Hóa đơn của mọi lượt đã chọn trong một câu: cùng công thức với domain.invoice.
+VISIT_BILLS_SQL = """WITH sel AS (
+    SELECT v.id,v.created_at,p.code AS patient_code,p.full_name AS patient_name
+    FROM visits v JOIN patients p ON p.id=v.patient_id
+    WHERE {window} AND v.status <> 'cancelled' AND NOT EXISTS (
+        SELECT 1 FROM active_visit_settlements s WHERE s.visit_id=v.id AND s.kind='mien_thu')),
+ch AS (SELECT visit_id,COALESCE(SUM(amount),0) AS gross,
+    SUM(CASE WHEN amount IS NULL THEN 1 ELSE 0 END) AS unpriced
+    FROM effective_charges WHERE visit_id IN (SELECT id FROM sel) GROUP BY visit_id),
+adj AS (SELECT visit_id,SUM(CASE WHEN kind='discount' THEN amount ELSE 0 END) AS discount,
+    SUM(CASE WHEN kind='refund' THEN amount ELSE 0 END) AS refunds
+    FROM effective_adjustments WHERE status='approved' AND kind IN ('discount','refund')
+    AND visit_id IN (SELECT id FROM sel) GROUP BY visit_id),
+pay AS (SELECT visit_id,SUM(amount) AS incoming FROM payments
+    WHERE visit_id IN (SELECT id FROM sel) GROUP BY visit_id)
+SELECT sel.id,sel.created_at,sel.patient_code,sel.patient_name,
+    COALESCE(ch.gross,0) AS gross,COALESCE(ch.unpriced,0) AS unpriced,
+    COALESCE(adj.discount,0) AS discount,COALESCE(adj.refunds,0) AS refunds,COALESCE(pay.incoming,0) AS incoming
+FROM sel LEFT JOIN ch ON ch.visit_id=sel.id LEFT JOIN adj ON adj.visit_id=sel.id LEFT JOIN pay ON pay.visit_id=sel.id
+ORDER BY sel.created_at,sel.id"""
+
+
 def revenue_report(c, start, end):
     """Current effective prices, classified by *actual* charge_sources codes.
 
@@ -47,12 +86,13 @@ def revenue_report(c, start, end):
                                          gross=0, discount=0, revenue=0, payments=0,
                                          refund=0, paid=0, outstanding=0, unpriced_count=0))
 
-    for ch in c.execute("""SELECT ch.amount,ch.created_at,cs.source_type,o.category
+    window, args = text_window('ch.created_at', start, end)
+    for ch in c.execute(f"""SELECT ch.amount,ch.created_at,cs.source_type,o.category
         FROM effective_charges ch
         LEFT JOIN charge_sources cs ON cs.charge_id=ch.id
         LEFT JOIN orders o ON cs.source_type='order' AND o.id=cs.source_id
-        WHERE NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id)
-        ORDER BY ch.created_at,ch.id"""):
+        WHERE {window} AND NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=ch.id)
+        ORDER BY ch.created_at,ch.id""", args):
         if not in_period(ch['created_at'], start, end):
             continue
         row = bucket(day(ch['created_at']))
@@ -71,16 +111,18 @@ def revenue_report(c, start, end):
         row[group] += value
         row['gross'] += value
 
-    for payment in c.execute('SELECT amount,created_at FROM payments ORDER BY created_at,id'):
+    window, args = text_window('created_at', start, end)
+    for payment in c.execute(f'SELECT amount,created_at FROM payments WHERE {window} ORDER BY created_at,id', args):
         if in_period(payment['created_at'], start, end):
             row = bucket(day(payment['created_at']))
             row['payments'] += payment['amount']
 
     # The effective_adjustments view automatically excludes reversed discounts.
     # Reviewed-at is the accounting event day for discounts and paid refunds.
-    for adjustment in c.execute("""SELECT kind,amount,reviewed_at
-        FROM effective_adjustments WHERE status='approved' AND kind IN ('discount','refund')
-        ORDER BY reviewed_at,id"""):
+    window, args = text_window('reviewed_at', start, end)
+    for adjustment in c.execute(f"""SELECT kind,amount,reviewed_at
+        FROM effective_adjustments WHERE status='approved' AND kind IN ('discount','refund') AND {window}
+        ORDER BY reviewed_at,id""", args):
         if in_period(adjustment['reviewed_at'], start, end):
             row = bucket(day(adjustment['reviewed_at']))
             row['discount' if adjustment['kind'] == 'discount' else 'refund'] += adjustment['amount']
@@ -108,31 +150,26 @@ def revenue_report(c, start, end):
     totals['waiver_approval_count'] = len(waivers)
 
     # Daily outstanding is an accounting flow; actual debt comes from a whole-visit invoice.
+    # Nợ hiện hành: tính cả giao dịch ngoài kỳ của những lượt đã chọn, một câu SQL cho mọi lượt.
     unpaid_visits = []
-    for visit in c.execute("""SELECT v.id,v.created_at,p.code AS patient_code,
-        p.full_name AS patient_name FROM visits v JOIN patients p ON p.id=v.patient_id
-        WHERE v.status <> 'cancelled' AND NOT EXISTS (
-            SELECT 1 FROM active_visit_settlements s WHERE s.visit_id=v.id AND s.kind='mien_thu')
-        ORDER BY v.created_at,v.id"""):
+    window, args = text_window('v.created_at', start, end)
+    for visit in c.execute(VISIT_BILLS_SQL.format(window=window), args):
         if not in_period(visit['created_at'], start, end):
             continue
         item = {'visit_id': visit['id'], 'patient_code': visit['patient_code'],
                 'patient_name': visit['patient_name'], 'visit_date': day(visit['created_at']),
                 'note': ''}
-        try:
-            bill = invoice(c, visit['id'])
-        except HTTPException as exc:
-            if exc.status_code != 409:
-                raise
-            item.update(charged=None, paid=None, known_due=None,
-                        unpriced_count=c.execute("""SELECT COUNT(*) FROM effective_charges
-                            WHERE visit_id=? AND amount IS NULL""", (visit['id'],)).fetchone()[0],
+        if visit['gross'] < visit['discount']:
+            # Cùng điều kiện 409 của domain.invoice: giữ cảnh báo giảm quá phí.
+            item.update(charged=None, paid=None, known_due=None, unpriced_count=visit['unpriced'],
                         note='Giảm phí vượt phí, cần kiểm tra')
             unpaid_visits.append(item)
             continue
-        item.update(charged=bill['charged'], paid=bill['paid'],
-                    known_due=bill['known_due'], unpriced_count=bill['unpriced_count'])
-        if bill['known_due'] > 0 or bill['unpriced_count'] > 0:
+        charged = visit['gross'] - visit['discount']
+        paid = visit['incoming'] - visit['refunds']
+        known_due = max(0, charged - paid)
+        item.update(charged=charged, paid=paid, known_due=known_due, unpriced_count=visit['unpriced'])
+        if known_due > 0 or visit['unpriced'] > 0:
             unpaid_visits.append(item)
     totals['known_due'] = sum(item['known_due'] or 0 for item in unpaid_visits)
     result = {'date_from': start, 'date_to': end, 'rows': rows,
@@ -153,10 +190,11 @@ def visits_report(c, start, end):
     rows = []
     by_day, by_doctor, by_status = {}, {}, {}
     active = cancelled = 0
-    for v in c.execute("""SELECT v.id,v.created_at,v.status,p.code AS patient_code,
+    window, args = text_window('v.created_at', start, end)
+    for v in c.execute(f"""SELECT v.id,v.created_at,v.status,p.code AS patient_code,
         p.full_name AS patient_name,u.full_name AS doctor_name,u.id AS doctor_id
         FROM visits v JOIN patients p ON p.id=v.patient_id
-        JOIN users u ON u.id=v.doctor_id ORDER BY v.created_at,v.id"""):
+        JOIN users u ON u.id=v.doctor_id WHERE {window} ORDER BY v.created_at,v.id""", args):
         if not in_period(v['created_at'], start, end):
             continue
         item = dict(v)
@@ -183,11 +221,12 @@ def visits_report(c, start, end):
 def cashier_report(c, start, end):
     rows = []
     by_cashier, by_method = {}, {}
-    for payment in c.execute("""SELECT m.id,m.created_at,m.amount,m.method,m.created_by AS cashier_id,
+    window, args = text_window('m.created_at', start, end)
+    for payment in c.execute(f"""SELECT m.id,m.created_at,m.amount,m.method,m.created_by AS cashier_id,
         u.full_name AS cashier_name,p.code AS patient_code,p.full_name AS patient_name
         FROM payments m JOIN users u ON u.id=m.created_by
         JOIN visits v ON v.id=m.visit_id JOIN patients p ON p.id=v.patient_id
-        ORDER BY m.created_at,m.id"""):
+        WHERE {window} ORDER BY m.created_at,m.id""", args):
         if not in_period(payment['created_at'], start, end):
             continue
         item = dict(payment)

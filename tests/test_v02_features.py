@@ -101,20 +101,20 @@ def test_fefo_stock_issue_is_atomic_and_blocks_controlled():
     assert created.status_code==201,created.text
     med={'id':created.json()['id'],'name':'Thuốc FEFO giả lập '+tag}
     med_id=med['id']
-    receipt=client.post('/api/stock/receipts',headers=pharmacy,json={'medicine_id':med_id,'lot_number':'FEFO-'+tag,'expiry_date':'2099-12-31','quantity':200})
+    receipt=client.post('/api/stock/receipts',headers=pharmacy,json={'medicine_id':med_id,'lot_number':'FEFO-'+tag,'expiry_date':'2099-12-31','quantity':200,'request_key':secrets.token_hex(8)})
     assert receipt.status_code==201,receipt.text
     pre=client.get('/api/stock',headers=pharmacy).json()
-    resp=client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':med_id,'quantity':130,'purpose':'Sử dụng mô phỏng không điều trị'})
+    resp=client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':med_id,'quantity':130,'purpose':'Sử dụng mô phỏng không điều trị','request_key':secrets.token_hex(8)})
     assert resp.status_code==201,resp.text
     used=resp.json()['lots'];assert sum(x['quantity'] for x in used)==130
     after=client.get('/api/stock',headers=pharmacy).json()
     assert sum(x['quantity'] for x in pre if x['name']==med['name'])-sum(x['quantity'] for x in after if x['name']==med['name'])==130
     before_failed=sum(x['quantity'] for x in after if x['name']==med['name'])
-    assert client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':med_id,'quantity':100000,'purpose':'Quá nhiều số lượng mô phỏng'}).status_code==409
+    assert client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':med_id,'quantity':100000,'purpose':'Quá nhiều số lượng mô phỏng','request_key':secrets.token_hex(8)}).status_code==409
     assert before_failed==sum(x['quantity'] for x in client.get('/api/stock',headers=pharmacy).json() if x['name']==med['name'])
     controlled=next(x for x in client.get('/api/medicines',headers=pharmacy).json() if x['controlled'])
-    assert client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':controlled['id'],'quantity':1,'purpose':'Dùng mô phỏng'}).status_code==403
-    assert client.post('/api/stock/issues',headers=token('thungan'),json={'medicine_id':med_id,'quantity':1,'purpose':'Sai quyền'}).status_code==403
+    assert client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':controlled['id'],'quantity':1,'purpose':'Dùng mô phỏng','request_key':secrets.token_hex(8)}).status_code==403
+    assert client.post('/api/stock/issues',headers=token('thungan'),json={'medicine_id':med_id,'quantity':1,'purpose':'Sai quyền','request_key':secrets.token_hex(8)}).status_code==403
 
 
 def test_discount_approval_and_refund_overpayment_path():
@@ -157,13 +157,13 @@ def test_fefo_uses_earliest_unexpired_lots_first():
     assert r.status_code == 201, r.text
     med_id=r.json()['id']
     for label, expiry, quantity in [('far','2099-12-31',40), ('near','2097-12-31',10), ('middle','2098-12-31',20)]:
-        r=client.post('/api/stock/receipts', headers=pharmacy, json={'medicine_id':med_id, 'lot_number':label+tag, 'expiry_date':expiry, 'quantity':quantity})
+        r=client.post('/api/stock/receipts', headers=pharmacy, json={'medicine_id':med_id, 'lot_number':label+tag, 'expiry_date':expiry, 'quantity':quantity, 'request_key':secrets.token_hex(8)})
         assert r.status_code == 201, r.text
     with db(True) as c:
         c.execute('INSERT INTO stock_lots(medicine_id,lot_number,expiry_date,quantity,quarantined) VALUES(?,?,?,?,0)', (med_id, 'expired'+tag, '2000-01-01', 50))
     before=client.get('/api/stock', headers=pharmacy).json()
     lots={x['lot_number']:x for x in before if x['medicine_id']==med_id}
-    r=client.post('/api/stock/issues', headers=pharmacy, json={'medicine_id':med_id, 'quantity':35, 'purpose':'Xuất thử giả lập'})
+    r=client.post('/api/stock/issues', headers=pharmacy, json={'medicine_id':med_id, 'quantity':35, 'purpose':'Xuất thử giả lập', 'request_key':secrets.token_hex(8)})
     assert r.status_code == 201, r.text
     assert r.json()['lots'] == [{'lot_id':lots['near'+tag]['id'], 'quantity':10}, {'lot_id':lots['middle'+tag]['id'], 'quantity':20}, {'lot_id':lots['far'+tag]['id'], 'quantity':5}]
     after={x['lot_number']:x for x in client.get('/api/stock',headers=pharmacy).json() if x['medicine_id']==med_id}
@@ -171,4 +171,4 @@ def test_fefo_uses_earliest_unexpired_lots_first():
     assert after['middle'+tag]['quantity']==0
     assert after['far'+tag]['quantity']==35
     assert after['expired'+tag]['quantity']==50
-    assert client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':med_id,'quantity':36,'purpose':'Xuất thử giả lập'}).status_code==409
+    assert client.post('/api/stock/issues',headers=pharmacy,json={'medicine_id':med_id,'quantity':36,'purpose':'Xuất thử giả lập','request_key':secrets.token_hex(8)}).status_code==409

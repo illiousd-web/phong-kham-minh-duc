@@ -36,7 +36,7 @@ def test_stock_and_cashier_dispense_exact_once(clients,visit):
     assert med.status_code==201
     mid=med.json()['id']
     assert manager.put(f'/api/medicines/{mid}/price',json={'unit_price':7500}).status_code==200
-    assert pharmacy.post('/api/stock/receipts',json={'medicine_id':mid,'lot_number':'TEST-LOT-A','expiry_date':'2029-12-31','quantity':6}).status_code==201
+    assert pharmacy.post('/api/stock/receipts',json={'medicine_id':mid,'lot_number':'TEST-LOT-A','expiry_date':'2029-12-31','quantity':6,'request_key':secrets.token_hex(8)}).status_code==201
     rx=doc.post('/api/prescriptions',json={'visit_id':visit,'items':[{'medicine_id':mid,'quantity':3,'directions':'Chỉ mô phỏng'}]})
     assert rx.status_code==201,rx.text
     before=next(x for x in cashier.get('/api/dues').json() if x['visit_id']==visit)['charged']

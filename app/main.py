@@ -58,7 +58,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=20").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=21").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -99,6 +99,8 @@ def init_db():
         migrate_s2d(c)
         from .s2e_settlement_migration import migrate_settlements
         migrate_settlements(c)
+        from .stock_request_key_migration import migrate_stock_request_keys
+        migrate_stock_request_keys(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:
@@ -398,6 +400,8 @@ def list_visits(u=Depends(principal),history:bool=False):
     roles=set(u['roles'])
     if roles & {'manager','admin'}:
         fields='v.id,v.status,v.created_at'
+        if 'reception' in roles:
+            fields+=',v.patient_id,p.code AS patient_code,p.full_name AS patient_name'
     elif 'doctor' in roles or ('reception' in roles and 'technician' not in roles):
         fields='v.id,v.patient_id,v.status,v.created_at,p.code AS patient_code,p.full_name AS patient_name'
         if 'doctor' in roles:
@@ -817,10 +821,36 @@ def overview(u=Depends(principal)):
                 (SELECT COUNT(*) FROM effective_charges WHERE amount IS NULL) AS unpriced,
                 (SELECT COALESCE(SUM(waived_amount),0) FROM active_visit_settlements
                     WHERE kind='mien_thu') AS waived""").fetchone()
-            outstanding=summary['charged']-summary['paid']-summary['waived']
+            # Còn phải thu/phải hoàn tính theo từng lượt rồi mới cộng: tiền thừa của lượt này
+            # không được bù vào nợ của lượt khác (rà soát 25/11/2026, T3).
+            per_visit=c.execute("""WITH ch AS (
+                    SELECT visit_id,SUM(amount) AS amount FROM effective_charges e
+                    WHERE NOT EXISTS (SELECT 1 FROM charge_voids cv WHERE cv.charge_id=e.id)
+                    GROUP BY visit_id),
+                ad AS (
+                    SELECT visit_id,
+                        SUM(CASE WHEN kind='discount' THEN amount ELSE 0 END) AS discount,
+                        SUM(CASE WHEN kind='refund' THEN amount ELSE 0 END) AS refund
+                    FROM effective_adjustments WHERE status='approved' GROUP BY visit_id),
+                pa AS (SELECT visit_id,SUM(amount) AS amount FROM payments GROUP BY visit_id),
+                wv AS (
+                    SELECT visit_id,SUM(waived_amount) AS amount FROM active_visit_settlements
+                    WHERE kind='mien_thu' GROUP BY visit_id),
+                net AS (
+                    SELECT COALESCE(ch.amount,0)-COALESCE(ad.discount,0)
+                        -(COALESCE(pa.amount,0)-COALESCE(ad.refund,0))-COALESCE(wv.amount,0) AS amount
+                    FROM visits v
+                    LEFT JOIN ch ON ch.visit_id=v.id LEFT JOIN ad ON ad.visit_id=v.id
+                    LEFT JOIN pa ON pa.visit_id=v.id LEFT JOIN wv ON wv.visit_id=v.id)
+                SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0) AS due,
+                       COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) AS refund_due
+                FROM net""").fetchone()
+            outstanding=per_visit['due']
             out.update(charged=summary['charged'],paid=summary['paid'],
                        outstanding=None if summary['unpriced'] else outstanding,
-                       known_outstanding=outstanding,unpriced_count=summary['unpriced'],
+                       known_outstanding=outstanding,
+                       refund_due=None if summary['unpriced'] else per_visit['refund_due'],
+                       unpriced_count=summary['unpriced'],
                        stock_warning=c.execute("SELECT COUNT(*) FROM stock_lots WHERE quarantined=1 OR expiry_date<=date('now','+90 days')").fetchone()[0])
         return out
 
