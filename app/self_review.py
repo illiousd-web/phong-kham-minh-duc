@@ -25,6 +25,18 @@ def active_account_roles(c, user_id):
         JOIN user_roles ur ON ur.user_id=u.id WHERE u.id=? AND u.active=1''', (user_id,))}
 
 
+def require_current_roles(c, user, *roles):
+    """Kiểm lại trên kết nối ghi: tài khoản còn hoạt động và còn ít nhất một vai được phép.
+
+    Vai trong phiên được đọc trước khi lấy khóa ghi; khóa tài khoản hoặc bỏ vai đã cam kết
+    trước giao dịch ghi phải làm giao dịch bị từ chối trước khi ghi bất kỳ dòng nào.
+    """
+    current = active_account_roles(c, user['id'])
+    if not current.intersection(roles):
+        raise HTTPException(403, MANAGER_REQUIRED)
+    return current
+
+
 def require_current_manager(c, user_id):
     roles = active_account_roles(c, user_id)
     if 'manager' not in roles:

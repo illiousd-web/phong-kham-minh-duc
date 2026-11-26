@@ -5,6 +5,7 @@ from typing import Literal
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 from .auth import verify
+from .self_review import require_current_roles
 
 Role = Literal['admin','manager','reception','doctor','technician','nurse','pharmacy','cashier','controlled_prescriber','controlled_pharmacy','controlled_reviewer','stock_owner']
 
@@ -72,6 +73,7 @@ def install_accounts(app, db, principal, require, audit, pw_hash, now):
     def update_account(uid: int, data: AccountUpdate, u=Depends(principal)):
         require(u, 'admin')
         with db(True) as c:
+            require_current_roles(c, u, 'admin')
             row = c.execute('SELECT active FROM users WHERE id=?', (uid,)).fetchone()
             if not row:
                 raise HTTPException(404, 'Không có tài khoản')
