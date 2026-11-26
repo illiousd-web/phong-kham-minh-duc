@@ -59,3 +59,8 @@ def test_fold_name():
     assert fold_name('ĐẠT') == fold_name('đạt') == fold_name('dat') == 'dat'
     import unicodedata
     assert fold_name(unicodedata.normalize('NFD', 'Hằng')) == fold_name('HANG') == 'hang'
+
+
+def test_h3_name_search_reads_only_patients_with_visits_in_period(post):
+    from app.main import db
+    cases.name_search_reads_period_patients_only(post, db)
