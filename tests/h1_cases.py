@@ -281,6 +281,51 @@ def check_reports_filter_in_sql_with_same_results(db):
             assert reports(c, start, end) == references(c, start, end), (start, end)
 
 
+def check_refunds_and_waiver_match_reference(db):
+    """Bán trong kỳ, hoàn khác kỳ; giá 0, miễn thu và mốc có múi giờ."""
+    tag = secrets.token_hex(4)
+    sale_at = '2031-03-10T23:59:59.125+07:00'
+    refund_at = '2031-03-11T00:00:00.250+07:00'
+    with db(True) as c:
+        user = c.execute('SELECT MIN(id) FROM users').fetchone()[0]
+        c.execute('INSERT INTO patients(code,full_name,sex,created_at) VALUES(?,?,?,?)',
+                  ('H1R' + tag, 'Người bệnh hoàn tiền giả lập', 'Nữ', sale_at))
+        patient = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        for amount, refunded in ((100000, 100000), (100000, 40000)):
+            c.execute('INSERT INTO visits(patient_id,doctor_id,created_by,created_at) VALUES(?,?,?,?)',
+                      (patient, user, user, sale_at))
+            visit = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+            c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',
+                      (visit, 'Bán giả lập', amount, sale_at))
+            c.execute("""INSERT INTO payments(visit_id,amount,method,created_by,created_at,idempotency_key)
+                         VALUES(?,?,'cash',?,?,?)""", (visit, amount, user, sale_at, secrets.token_hex(16)))
+            payment = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+            c.execute("""INSERT INTO adjustments(visit_id,payment_id,kind,amount,reason,status,
+                         proposed_by,reviewed_by,proposed_at,reviewed_at)
+                         VALUES(?,?,'refund',?,'Hoàn giả lập','approved',?,?,?,?)""",
+                      (visit, payment, refunded, user, user, refund_at, refund_at))
+        c.execute('INSERT INTO visits(patient_id,doctor_id,created_by,created_at) VALUES(?,?,?,?)',
+                  (patient, user, user, sale_at))
+        visit = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',
+                  (visit, 'Giá 0', 0, sale_at))
+        c.execute('INSERT INTO charges(visit_id,label,amount,created_at) VALUES(?,?,?,?)',
+                  (visit, 'Miễn thu', 30000, sale_at))
+        c.execute("""INSERT INTO visit_settlements(visit_id,actor_id,created_at,charged,paid,due,
+                     refund_due,kind,waived_amount,reason,approved_by)
+                     VALUES(?,?,?,30000,0,30000,0,'mien_thu',30000,'Miễn thu giả lập',?)""",
+                  (visit, user, '2031-03-10T16:59:59.125+00:00', user))
+    with db() as c:
+        for start, end in ((PERIOD, PERIOD), ('2031-03-11', '2031-03-11'),
+                           (PERIOD, '2031-03-11')):
+            assert reports(c, start, end) == references(c, start, end), (start, end)
+        from app.s2e_reports import revenue_report
+        sale = revenue_report(c, PERIOD, PERIOD)['totals']
+        later = revenue_report(c, '2031-03-11', '2031-03-11')['totals']
+        assert sale['waived_amount'] == 30000 and sale['waived_visits'] == 1
+        assert later['refund'] == 140000
+
+
 def check_unpaid_matches_invoice(db):
     """Nợ hiện hành của từng lượt trong báo cáo bằng đúng domain.invoice của lượt đó."""
     from app.s2e_reports import revenue_report
