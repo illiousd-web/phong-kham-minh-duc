@@ -58,7 +58,7 @@ def row(x):return dict(x) if x is not None else None
 def init_db():
     if LAN:
         with db() as c:
-            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=20").fetchone():
+            if not c.execute("SELECT 1 FROM schema_migrations WHERE version=21").fetchone():
                 raise RuntimeError("Run python -m scripts.manage migrate first")
         return
     DB.parent.mkdir(parents=True,exist_ok=True)
@@ -99,6 +99,8 @@ def init_db():
         migrate_s2d(c)
         from .s2e_settlement_migration import migrate_settlements
         migrate_settlements(c)
+        from .stock_request_key_migration import migrate_stock_request_keys
+        migrate_stock_request_keys(c)
     with db(True) as c:
         if c.execute('SELECT COUNT(*) FROM users').fetchone()[0]:return
         for user,full,roles in DEMO_USERS:

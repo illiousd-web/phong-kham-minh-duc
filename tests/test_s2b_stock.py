@@ -59,3 +59,12 @@ def test_s2b_lot_quantity_ceiling():
     clients = actors()
     with owner_sessions(clients)() as owner:
         check_lot_quantity_ceiling(clients, db, owner)
+
+
+def test_t4_resent_stock_documents_are_not_duplicated():
+    from tests.s2b_cases import check_resent_documents_are_not_duplicated, check_missing_request_key_rejected
+    clients = actors()
+    factory = owner_sessions(clients)
+    check_resent_documents_are_not_duplicated(clients, db, factory)
+    with factory() as owner:
+        check_missing_request_key_rejected(clients, owner)

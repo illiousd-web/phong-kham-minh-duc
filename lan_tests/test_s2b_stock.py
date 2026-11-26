@@ -33,6 +33,12 @@ def test_s2b_approved_return_reverses_original_cost_and_credit(clients, visit, h
         check_return_profit(clients, visit, db, owner, half, approval_next_day)
 
 
+def test_t4_resent_stock_documents_are_not_duplicated(clients):
+    from tests.s2b_cases import check_resent_documents_are_not_duplicated, check_missing_request_key_rejected
+    factory = owner_sessions(clients)
+    check_resent_documents_are_not_duplicated(clients, db, factory)
+    with factory() as owner:
+        check_missing_request_key_rejected(clients, owner)
 def test_s2b_lot_quantity_ceiling(clients):
     with owner_sessions(clients)() as owner:
         check_lot_quantity_ceiling(clients, db, owner)

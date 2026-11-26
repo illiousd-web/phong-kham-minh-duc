@@ -305,7 +305,7 @@ def propose_medication_return(doctor, pharmacy, manager, visit):
     med = checked(manager.post('/api/catalog/medicines', json={'name': 'Thuốc giả lập '+key(), 'base_unit': 'viên'}), 201)['id']
     checked(manager.put(f'/api/medicines/{med}/price', json={'unit_price': 1000}))
     checked(pharmacy.post('/api/stock/receipts', json={'medicine_id': med, 'lot_number': key(),
-                    'expiry_date': '2099-12-31', 'quantity': 3}), 201)
+                    'expiry_date': '2099-12-31', 'quantity': 3, 'request_key': key()}), 201)
     version = record_clinical(doctor, visit)
     rx = checked(doctor.post('/api/prescriptions', json={'visit_id': visit,
                  'items': [{'medicine_id': med, 'quantity': 2}]}), 201)['id']
@@ -431,14 +431,18 @@ def test_closed_visit_blocks_all_financial_writes(clients, visit):
 
 
 def test_sqlite_upgrade_19_to_20_preserves_existing_data(monkeypatch, tmp_path):
-    from app import main, s2e_settlement_migration
+    from app import main, s2e_settlement_migration, stock_request_key_migration
     migrate = s2e_settlement_migration.migrate_settlements
+    stock_keys = stock_request_key_migration.migrate_stock_request_keys
     path = tmp_path/'v19.sqlite3'
     monkeypatch.setattr(main, 'DB', path)
     monkeypatch.setattr(database, 'DB', path)
     monkeypatch.setattr(s2e_settlement_migration, 'migrate_settlements', lambda c: None)
+    # Bản v19 thật chưa có migration 021 (mã thao tác phiếu kho, T4).
+    monkeypatch.setattr(stock_request_key_migration, 'migrate_stock_request_keys', lambda c: None)
     main.init_db()
     monkeypatch.setattr(s2e_settlement_migration, 'migrate_settlements', migrate)
+    monkeypatch.setattr(stock_request_key_migration, 'migrate_stock_request_keys', stock_keys)
     with database.db(True) as c:
         assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 19
         c.execute("INSERT INTO patients(code,full_name,sex,created_at) VALUES('VA19','Bệnh nhân giả lập','Nam','2026-01-01')")
@@ -454,7 +458,8 @@ def test_sqlite_upgrade_19_to_20_preserves_existing_data(monkeypatch, tmp_path):
     main.init_db()
     with database.db(True) as c:
         assert snapshot(c) == before
-        assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 20
+        assert c.execute('SELECT 1 FROM schema_migrations WHERE version=20').fetchone()
+        assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 21
         assert not c.execute('SELECT * FROM visit_settlements').fetchall()
         c.execute("""INSERT INTO visit_settlements(visit_id,actor_id,created_at,charged,paid,due,refund_due,kind,waived_amount,reason,approved_by)
                      VALUES(1,1,'2026-01-02',1000,700,300,0,'mien_thu',300,?,1)""", (REASON,))

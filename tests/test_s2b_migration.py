@@ -99,3 +99,36 @@ def test_sqlite_016_documents_and_snapshots_immutable(tmp_path):
             for statement in (f'UPDATE {table} SET id=id', f'DELETE FROM {table}'):
                 with pytest.raises(sqlite3.IntegrityError):
                     c.execute(statement)
+
+
+def test_sqlite_021_request_keys_up_down_and_unique(tmp_path):
+    from app.stock_request_key_migration import migrate_stock_request_keys
+    with sqlite3.connect(tmp_path/'t4.db') as c:
+        c.executescript((ROOT/'schema.sql').read_text())
+        c.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)')
+        legacy(c)
+        migrate_s2b(c)
+        before_schema = sqlite_schema(c)
+        before = old_snapshot(c)
+        migrate_stock_request_keys(c)
+        migrate_stock_request_keys(c)
+        for table in ('stock_receipts', 'stock_issues'):
+            assert 'request_key' in [row[1] for row in c.execute(f'PRAGMA table_info({table})')]
+            assert [row[2] for row in c.execute(f'PRAGMA index_list({table})') if row[1] == f'idx_{table}_request_key'] == [1]
+        with pytest.raises(ValueError, match='quay lui migration 021'):
+            migrate_s2b(c, down=True)
+        migrate_stock_request_keys(c, down=True)
+        migrate_stock_request_keys(c, down=True)
+        assert sqlite_schema(c) == before_schema and old_snapshot(c) == before
+        assert not c.execute('SELECT 1 FROM schema_migrations WHERE version=21').fetchone()
+        migrate_stock_request_keys(c)
+        insert = "INSERT INTO stock_receipts(document_no,created_by,created_at,request_key) VALUES(?,1,'2026-11-26',?)"
+        c.execute(insert, ('PN-2026-0001', None))
+        c.execute(insert, ('PN-2026-0002', None))
+        c.execute(insert, ('PN-2026-0003', 'khoa-t4-giả-lập'))
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute(insert, ('PN-2026-0004', 'khoa-t4-giả-lập'))
+        c.execute("INSERT INTO stock_issues(document_no,reason,purpose,created_by,created_at,request_key) VALUES('PX-2026-0001','internal','Giả lập',1,'2026-11-26','khoa-t4-giả-lập')")
+        with pytest.raises(ValueError, match='Chưa quay lui migration 021'):
+            migrate_stock_request_keys(c, down=True)
+        assert c.execute('SELECT 1 FROM schema_migrations WHERE version=21').fetchone()

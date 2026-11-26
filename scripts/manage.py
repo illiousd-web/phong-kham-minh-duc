@@ -18,6 +18,7 @@ def main():
     sub.add_parser('rollback-s2a', help='Quay lui S2a khi chưa có thông tin phòng khám hoặc chữ ký')
     sub.add_parser('rollback-s2c', help='Quay lui migration 017 khi chưa có bản ký')
     sub.add_parser('rollback-s2b', help='Quay lui S2b khi chưa có dữ liệu kho mới')
+    sub.add_parser('rollback-stock-request-keys', help='Quay lui migration 021 khi chưa có phiếu kho mang mã thao tác')
     user = sub.add_parser('create-admin')
     user.add_argument('--username', required=True)
     user.add_argument('--name', required=True)
@@ -47,6 +48,12 @@ def main():
         with db(True) as c:
             migrate_s2c(c, postgres=True, down=True)
         print('Đã quay lui migration 017.')
+        return
+    if args.command == 'rollback-stock-request-keys':
+        from app.stock_request_key_migration import migrate_stock_request_keys
+        with db(True) as c:
+            migrate_stock_request_keys(c, postgres=True, down=True)
+        print('Đã quay lui migration 021; phiếu kho cũ giữ nguyên.')
         return
     if args.command == 'rollback-s2b':
         from app.s2b_migration import migrate_s2b
