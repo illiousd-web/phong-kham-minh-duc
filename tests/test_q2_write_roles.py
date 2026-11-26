@@ -11,6 +11,7 @@ from tests.q2_cases import (
     check_catalog_write_after_role_removed,
     check_stock_write_after_role_removed,
     check_visit_write_after_role_removed,
+    check_manager_review_after_session_invalid,
     check_write_after_session_revoked,
     check_write_rechecks_current_roles,
 )
@@ -63,3 +64,9 @@ def test_q2_catalog_write_after_role_removed(q2_context, operation):
 def test_q2_stock_write_after_role_removed(q2_context, operation):
     clients, anon, _, _ = q2_context
     check_stock_write_after_role_removed(clients['admin'], anon, db, operation)
+
+
+@pytest.mark.parametrize('revocation', ['deleted', 'expired'])
+def test_q2_manager_review_after_session_invalid(q2_context, revocation):
+    clients, anon, doctor_id, service_id = q2_context
+    check_manager_review_after_session_invalid(clients, anon, db, doctor_id, service_id, revocation)

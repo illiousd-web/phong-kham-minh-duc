@@ -6,7 +6,7 @@ from pydantic import BaseModel,Field
 from .domain import ensure_open,authorize_order,invoice,revision
 from .financial_state import ensure_financial_open
 from .self_review import (CONTROLLED_RETURN_ITEMS, FinancialReview, audit_self_review,
-                          mark_self_review, require_current_manager, require_current_roles,
+                          mark_self_review, require_current_roles,
                           self_review_reason)
 from .s2e_settlements import financial_status, is_legacy_completed
 
@@ -185,7 +185,7 @@ def install_v050(app,db,principal,require,audit,visit_access,now):
     @app.post('/api/medication-returns/{rid}/review')
     def review_return(rid:int,data:FinancialReview,u=Depends(principal)):
         with db(True) as c:
-            roles = require_current_manager(c, u['id'])
+            roles = require_current_roles(c, u, 'manager')
             r=c.execute('SELECT r.*,d.visit_id,d.prescription_id FROM medication_returns r JOIN dispensations d ON d.id=r.dispensation_id WHERE r.id=?',(rid,)).fetchone()
             if not r:raise HTTPException(404,'Không có yêu cầu trả')
             if r['status']!='pending':raise HTTPException(409,'Đã xử lý yêu cầu')

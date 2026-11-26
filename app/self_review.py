@@ -1,6 +1,7 @@
 """Eligibility and audit for self-review of financial requests."""
 from datetime import datetime, timedelta, timezone
 import json
+import datetime as clock
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -28,16 +29,21 @@ def active_account_roles(c, user_id):
         JOIN user_roles ur ON ur.user_id=u.id WHERE u.id=? AND u.active=1''', (user_id,))}
 
 
+def session_now():
+    # Đồng hồ hạn phiên tách khỏi đồng hồ thời gian chờ tự duyệt 7 ngày (bị giả lập riêng trong ca thử).
+    return clock.datetime.now(clock.timezone.utc).isoformat(timespec='seconds')
+
+
 def require_current_roles(c, user, *roles):
     """Kiểm lại tài khoản, vai và đúng phiên đăng nhập trước khi ghi nghiệp vụ."""
     current = active_account_roles(c, user['id'])
     if not current.intersection(roles):
         raise HTTPException(403, MANAGER_REQUIRED)
-    session = 'SELECT 1 FROM sessions WHERE token_hash=? AND user_id=?'
+    session = 'SELECT 1 FROM sessions WHERE token_hash=? AND user_id=? AND expires_at>?'
     if isinstance(c, PGConnection):
         # Đăng xuất dùng db('access'), nên giữ dòng phiên đến cuối giao dịch ghi.
         session += ' FOR KEY SHARE'
-    if not c.execute(session, (user.get('token_hash'), user['id'])).fetchone():
+    if not c.execute(session, (user.get('token_hash'), user['id'], session_now())).fetchone():
         raise HTTPException(401, INVALID_SESSION)
     return current
 

@@ -323,3 +323,19 @@ def check_stock_write_after_role_removed(admin, anon, db, operation):
         ('SELECT COUNT(*) FROM stock_issues WHERE created_by=?', actor['id']),
         ('SELECT * FROM stock_document_sequences ORDER BY kind,year',),
     ], detail=detail)
+
+
+def check_manager_review_after_session_invalid(clients, anon, db, doctor_id, service_id, revocation):
+    """Rà lại #66: cửa duyệt giảm phí của quản lý cũng phải kiểm phiên lúc ghi (bị xóa hoặc đã hết hạn)."""
+    manager = open_test_session(db, new_account(clients['admin'], ['manager']))
+    vid = owing_visit(clients, db, doctor_id, service_id)
+    adj = checked(clients['cashier'].post('/api/adjustments', json={
+        'visit_id': vid, 'kind': 'discount', 'amount': 1000, 'reason': REASON}), 201)['id']
+    with db(True) as c:
+        if revocation == 'deleted':
+            c.execute('DELETE FROM sessions WHERE token_hash=?', (manager['token_hash'],))
+        else:
+            past = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+            c.execute('UPDATE sessions SET expires_at=? WHERE token_hash=?', (past, manager['token_hash']))
+    check_denied_write(db, manager, lambda: anon.post(f'/api/adjustments/{adj}/review', json={'approve': True}),
+                       [('SELECT status,reviewed_by FROM adjustments WHERE id=?', adj)], 401, INVALID_SESSION)
