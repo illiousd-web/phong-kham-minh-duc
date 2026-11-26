@@ -6,7 +6,7 @@ import psycopg
 import pytest
 from psycopg import sql
 
-from app import database, s2e_settlement_migration
+from app import database, s2e_settlement_migration, stock_request_key_migration
 from tests.test_s2e_settlements import (
     REASON, REOPEN, snapshot,
     test_fully_paid_waiver_rejected_and_not_reported as test_fully_paid_waiver_rejected_and_not_reported,
@@ -30,11 +30,15 @@ from .test_ui_settings_backup import _new_db, _drop
 def test_postgres_upgrade_19_to_20_preserves_existing_data(monkeypatch):
     name, url = _new_db()
     migrate = s2e_settlement_migration.migrate_settlements
+    stock_keys = stock_request_key_migration.migrate_stock_request_keys
     try:
         monkeypatch.setattr(database, 'DATABASE_URL', url)
         monkeypatch.setattr(s2e_settlement_migration, 'migrate_settlements', lambda c, postgres: None)
+        # Bản v19 thật chưa có migration 021 (mã thao tác phiếu kho, T4).
+        monkeypatch.setattr(stock_request_key_migration, 'migrate_stock_request_keys', lambda c, postgres: None)
         database.migrate()
         monkeypatch.setattr(s2e_settlement_migration, 'migrate_settlements', migrate)
+        monkeypatch.setattr(stock_request_key_migration, 'migrate_stock_request_keys', stock_keys)
         with psycopg.connect(url, row_factory=database.record_factory) as c:
             assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 19
             c.execute("INSERT INTO users(id,username,full_name,salt,password_hash) VALUES(1,'gia_lap','Nhân viên giả lập','00','x')")
@@ -48,7 +52,8 @@ def test_postgres_upgrade_19_to_20_preserves_existing_data(monkeypatch):
         database.migrate()
         database.migrate()
         with psycopg.connect(url, row_factory=database.record_factory) as c:
-            assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 20
+            assert c.execute('SELECT 1 FROM schema_migrations WHERE version=20').fetchone()
+            assert c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 21
             assert snapshot(c) == before
             assert not c.execute('SELECT * FROM visit_settlements').fetchall()
             assert [row[0] for row in c.execute('SELECT visit_id FROM legacy_completed_visits')] == [1]

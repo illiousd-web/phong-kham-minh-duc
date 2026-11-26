@@ -23,6 +23,8 @@ def migrate_s2b(c, postgres=False, *, down=False):
     if applied == (not down):
         return
     if down:
+        if c.execute('SELECT 1 FROM schema_migrations WHERE version=21').fetchone():
+            raise ValueError('Chưa quay lui S2b: quay lui migration 021 (mã thao tác phiếu kho) trước.')
         # Do not silently discard financial evidence or new configuration.
         checks = [f'SELECT 1 FROM {table} WHERE ' + ' OR '.join(f'{col} IS NOT NULL' for col in cols) + ' LIMIT 1'
                   for table, cols in ADDED.items()]

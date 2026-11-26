@@ -167,8 +167,8 @@ def test_parallel_stock_fefo_no_negative(clients):
     pharm=clients['pharmacy']
     mid=pharm.post('/api/catalog/medicines',json={'name':'Vật tư giả lập','base_unit':'cái'}).json()['id']
     for lot,qty,expiry in [('FIRST',10,'2028-01-01'),('SECOND',10,'2029-01-01')]:
-        assert pharm.post('/api/stock/receipts',json={'medicine_id':mid,'lot_number':lot,'quantity':qty,'expiry_date':expiry}).status_code==201
-    def issue(_):return pharm.post('/api/stock/issues',json={'medicine_id':mid,'quantity':15,'purpose':'Xuất thử đồng thời'}).status_code
+        assert pharm.post('/api/stock/receipts',json={'medicine_id':mid,'lot_number':lot,'quantity':qty,'expiry_date':expiry,'request_key':secrets.token_hex(8)}).status_code==201
+    def issue(_):return pharm.post('/api/stock/issues',json={'medicine_id':mid,'quantity':15,'purpose':'Xuất thử đồng thời','request_key':secrets.token_hex(8)}).status_code
     with ThreadPoolExecutor(max_workers=2) as executor:statuses=list(executor.map(issue,range(2)))
     assert sorted(statuses)==[201,409]
     with db() as con:

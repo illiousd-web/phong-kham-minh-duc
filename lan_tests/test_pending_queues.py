@@ -86,7 +86,7 @@ def test_r5_pharmacy_and_nurse_layouts(https_server, clients, visit):
     assert clients['pharmacy'].post('/api/stock/receipts', json={
         'medicine_id': mid, 'lot_number': 'R5-LOT',
         'expiry_date': (datetime.now(timezone(timedelta(hours=7))).date() + timedelta(days=30)).isoformat(),
-        'quantity': 20}).status_code == 201
+        'quantity': 20, 'request_key': secrets.token_hex(8)}).status_code == 201
     assert clients['doctor'].put(f'/api/visits/{visit}/clinical', json={
         'version': 0, 'diagnosis': 'Chẩn đoán giả lập R5'}).status_code == 200
     rx = clients['doctor'].post('/api/prescriptions', json={

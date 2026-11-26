@@ -229,3 +229,9 @@ def test_c3c_browser_detail_closes_on_page_filter_and_search(https_server, api, 
         assert not errors
         context.close()
         browser.close()
+
+
+def test_h3_name_search_reads_only_patients_with_visits_in_period(api):
+    from .conftest import db
+    _, post = api
+    cases.name_search_reads_period_patients_only(post, db)

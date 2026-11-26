@@ -185,6 +185,23 @@ function Step-ChepMa {
 function Step-CauHinhVaCSDL {
     param($Snap)
     Write-Buoc "Bước 5/${Tong}: Tạo cơ sở dữ liệu và tệp cấu hình bảo mật"
+    # Kiểm dấu vết cài cũ trước khi chính lần chạy này tạo clinic.env và migration.
+    $r = Invoke-Python -Paths $P -Arguments @('-m', 'scripts.install_db', '--clinic-env', $P.ClinicEnv,
+        '--super-env', $P.SuperEnv, 'prepare-backup-key', '--key', $P.BackupKey,
+        '--directory', $P.Backups, '--state', $P.BackupState)
+    if ($r.Code -eq 26) {
+        Stop-CaiDat 'Thiếu tệp khóa sao lưu cũ hoặc tệp khóa sai định dạng.' @(
+            "Khôi phục tệp khóa cũ từ USB vào $($P.BackupKey) rồi chạy lại CAI_DAT.bat."
+        ) 26
+    }
+    if ($r.Code -eq 27) {
+        Stop-CaiDat 'Khóa không khớp hoặc các bản sao lưu đã hỏng — báo người hỗ trợ.' @() 26
+    }
+    if (-not $r.Ok) {
+        Stop-CaiDat 'Không đọc được dấu vết cài đặt hoặc dữ liệu sao lưu — báo người hỗ trợ.' @() 26
+    }
+    # kept_no_backup trả mã 0 và đã in cảnh báo; tiếp tục với khóa đang có.
+    Set-SecureAcl -Path $P.BackupKey
     $ip = $Snap.ip
     $r = Invoke-Python -Paths $P -Base -Quiet -Arguments @((Join-Path $P.Code 'scripts\install_env.py'), 'write', '--clinic-env', $P.ClinicEnv,
         '--owner-env', $P.OwnerEnv, '--ip', $ip.address, '--prefix', [string]$ip.prefix, '--data-dir', $P.Data, '--pg-bin', $P.PgBin)
@@ -370,12 +387,6 @@ function Step-TuongLua {
 
 function Step-SaoLuu {
     Write-Buoc "Bước 11/${Tong}: Lịch sao lưu 20:00 hằng ngày, giữ 14 bản trên máy chủ"
-    if (-not (Test-Path -LiteralPath $P.BackupKey)) {
-        $r = Invoke-Python -Paths $P -Quiet -Arguments @('-m', 'scripts.with_env', $P.ClinicEnv, 'scripts.backup_lan', 'keygen', '--key', $P.BackupKey)
-        if (-not $r.Ok) { Stop-CaiDat 'Không tạo được khóa sao lưu.' $r.Output 26 }
-        Write-Dat 'Đã tạo khóa mã hóa sao lưu.'
-    } else { Write-Dat 'Giữ nguyên khóa sao lưu đang có (không tạo lại).' }
-    Set-SecureAcl -Path $P.BackupKey
     # Phòng khám đã chốt KHÔNG dùng ổ ngoài. Tính năng giữ ở dạng tùy chọn ẩn: chỉ bật khi
     # đặt biến môi trường MINHDUC_SAO_LUU_NGOAI=1 trước khi chạy CAI_DAT (mặc định tắt).
     if ($env:MINHDUC_SAO_LUU_NGOAI -eq '1') {

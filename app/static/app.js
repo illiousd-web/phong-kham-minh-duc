@@ -845,7 +845,7 @@ async function managerScreen(){
  if(sel.mgrTab==='import')return head+priceImportSection();
  if(sel.mgrTab==='catalog')return head+await catalogSection();
  if(sel.mgrTab==='report'){const [o,stockList,dues,manual]=await Promise.all([api('/overview'),api('/stock'),api('/dues'),api('/reports/manual-prices'+(manualReportDay?'?day='+encodeURIComponent(manualReportDay):''))]);
-  return head+manualReport(manual)+(o.unpriced_count?card(`<p>Còn ${o.unpriced_count} khoản CHƯA CÓ GIÁ. Tổng phải thu hiện chỉ gồm phần đã biết, chưa phải tổng cuối.</p>`):'')+stats([['Lượt khám',o.visits],[o.unpriced_count?'Phải thu đã biết':'Phải thu',money(o.charged)],['Đã thu',money(o.paid)],['Còn phải thu',money(o.outstanding)],['Lô thuốc cần chú ý',o.stock_warning]])+
+  return head+manualReport(manual)+(o.unpriced_count?card(`<p>Còn ${o.unpriced_count} khoản CHƯA CÓ GIÁ. Tổng phải thu hiện chỉ gồm phần đã biết, chưa phải tổng cuối.</p>`):'')+stats([['Lượt khám',o.visits],[o.unpriced_count?'Phải thu đã biết':'Phải thu',money(o.charged)],['Đã thu',money(o.paid)],['Còn phải thu',money(o.outstanding)],['Phải hoàn',money(o.refund_due)],['Lô thuốc cần chú ý',o.stock_warning]])+
    card('<p class="hint">Số liệu phục vụ kiểm thử, chưa dùng cho kế toán hoặc khai thuế.</p>'+t(dues.filter(d=>d.charged-d.paid!==0||d.unpriced_count>0).map(d=>`<tr><td>#${d.visit_id}</td><td>${esc(d.patient_name)}</td><td>${money(d.charged)}</td><td>${money(d.paid)}</td><td>${d.unpriced_count?'CHƯA CÓ GIÁ':money(d.charged-d.paid)}</td></tr>`),['Lượt','Bệnh nhân','Phải thu','Đã thu','Chênh lệch (âm là trả thừa)']),'Công nợ theo lượt')+
    card(t(stockList.filter(x=>ui.controlled_drugs||!x.controlled).map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.lot_number)}</td><td>${showDay(x.expiry_date)}</td><td>${esc(x.quantity)} ${esc(x.base_unit)}</td><td>${x.quarantined?'<span class="status error">Cách ly</span>':'<span class="status">Bán được</span>'}</td></tr>`),['Thuốc','Số lô','Hạn dùng','Tồn','Trạng thái']),'Tồn kho')}
  if(sel.mgrTab==='visits')return managerVisitsTab(head);
@@ -938,8 +938,19 @@ function setVitals(text){const vt=parseVitals(text);for(const [k] of VITALS){con
 function setClinicalForm(data){for(const name of ['chief_complaint','history','diagnosis','treatment']){const el=document.querySelector(`[data-form="clinical"] [name="${name}"]`);if(el)el.value=data[name]||'';}
  const fu=document.querySelector('[data-form="clinical"] [name="follow_up"]');if(fu)fu.value=data.follow_up?showDay(data.follow_up):'';setVitals(data.vitals)}
 const actionKeys=new Map();
-async function keyed(kind,path,body,keyName='request_key'){const fingerprint=kind+JSON.stringify(body);if(!actionKeys.has(fingerprint))actionKeys.set(fingerprint,requestId());
- const result=await api(path,{method:'POST',body:{...body,[keyName]:actionKeys.get(fingerprint)}});actionKeys.delete(fingerprint);return result}
+async function keyed(kind,path,body,keyName='request_key'){
+ const fingerprint=kind+JSON.stringify(body), storageKey='md_stock_key_'+kind;
+ const persist=kind==='stock-receipt'||kind==='stock-issue';
+ if(persist){
+  try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||'null');if(saved&&saved.fingerprint===fingerprint)actionKeys.set(fingerprint,saved.key)}catch(e){/* Bộ nhớ phiên có thể bị chặn. */}
+ }
+ if(!actionKeys.has(fingerprint))actionKeys.set(fingerprint,requestId());
+ if(persist){try{sessionStorage.setItem(storageKey,JSON.stringify({fingerprint,key:actionKeys.get(fingerprint)}))}catch(e){/* Giữ mã trong bộ nhớ trang. */}}
+ const result=await api(path,{method:'POST',body:{...body,[keyName]:actionKeys.get(fingerprint)}});
+ actionKeys.delete(fingerprint);
+ if(persist){try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||'null');if(saved&&saved.fingerprint===fingerprint)sessionStorage.removeItem(storageKey)}catch(e){/* Không ảnh hưởng kết quả lưu. */}}
+ return result;
+}
 // Mỗi thao tác trả về câu thông báo; màn hình được tải lại xong mới hiện thông báo.
 async function handleForm(form){const kind=form.dataset.form;const f=new FormData(form);const value=k=>String(f.get(k)||'').trim();const num=k=>Number(value(k));let msg='';
  if(kind==='login'){
@@ -1012,10 +1023,10 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  else if(kind==='stock-receipt'){
   const body={medicine_id:num('medicine_id'),lot_number:value('lot_number'),expiry_date:parseDay(value('expiry_date'),'Hạn sử dụng'),quantity:num('quantity'),supplier:value('supplier'),invoice_no:value('invoice_no'),invoice_date:parseDay(value('invoice_date'))};
   if(stockMoneyAllowed()){body.unit_cost=value('unit_cost')===''?null:num('unit_cost');body.vat_rate=value('vat_rate')===''?null:num('vat_rate');}
-  const result=await api('/stock/receipts',{method:'POST',body});stockState.receipt=result.id;sel.rxSection='r5-receipt';msg='Đã lưu phiếu nhập '+result.document_no;
+  const result=await keyed(kind,'/stock/receipts',body);stockState.receipt=result.id;sel.rxSection='r5-receipt';msg='Đã lưu phiếu nhập '+result.document_no;
  }
  else if(kind==='stock-issue'){
-  const result=await api('/stock/issues',{method:'POST',body:{medicine_id:num('medicine_id'),quantity:num('quantity'),purpose:value('purpose'),reason:value('reason'),recipient:value('recipient'),lot_id:value('lot_id')?num('lot_id'):null}});
+  const result=await keyed(kind,'/stock/issues',{medicine_id:num('medicine_id'),quantity:num('quantity'),purpose:value('purpose'),reason:value('reason'),recipient:value('recipient'),lot_id:value('lot_id')?num('lot_id'):null});
   stockState.issue=result.id;sel.rxSection='r5-issue';msg='Đã lưu phiếu xuất '+result.document_no;
  }
  else if(kind==='s2b-legacy-cost'){

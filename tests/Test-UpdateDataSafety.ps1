@@ -137,13 +137,13 @@ function Invoke-HealthReport {
     param($Paths, $Output, $Title)
     $result = Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json
     if (-not $committed -or $scenario.Firewall) { throw 'Báo cáo chạy trước khi chốt hoặc trước khi mở lại máy trạm.' }
-    if ($case -notin @('WriteAfterHttps', 'WriteAfterHttpsTwice') -and $result.status -ne 'thanh_cong') { throw 'Chưa ghi thành công trước báo cáo.' }
+    if ($result.status -ne 'dang_cap_nhat') { throw 'Đã ghi kết quả cuối trước khi kiểm sức khỏe.' }
     if (-not (Test-Path -LiteralPath $OldVenv)) { throw 'Dọn venv cũ trước khi lập báo cáo.' }
     $scenario.HealthChecked = $true
     # Mô phỏng dữ liệu máy trạm vừa nhập sau khi HTTPS bản mới trả lời.
     $scenario.Row = 'máy trạm vừa ghi'
     if ($case -eq 'HealthError') { throw 'Lỗi báo cáo sức khỏe giả lập' }
-    return $true
+    return ($case -ne 'HealthNotPassed')
 }
 function Set-Content {
     [CmdletBinding()]
@@ -228,7 +228,7 @@ function Invoke-Python {
         $scenario.Calls.Add('migrate')
         $scenario.Row = 'đã sửa'
         $scenario.Attachment = 'đã sửa'
-        if ($case -notin @('WriteBeforeStart', 'HealthError', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError', 'FirewallResumeError')) { $code = 1 }
+        if ($case -notin @('WriteBeforeStart', 'HealthError', 'HealthNotPassed', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError', 'FirewallResumeError')) { $code = 1 }
     } elseif ($Arguments -contains 'grant') {
         $output = @('{"managed_changed":[]}')
     } elseif ($Arguments -contains 'rollback') {
@@ -245,7 +245,7 @@ function Invoke-Python {
 
 $root = Microsoft.PowerShell.Management\Join-Path ([IO.Path]::GetTempPath()) ('minhduc-update-' + [guid]::NewGuid().ToString('N'))
 try {
-    foreach ($case in @('StopError', 'BackupError', 'MissingVerification', 'FingerprintError', 'BeforeMigration', 'DataOnlyMigration', 'BadRestoredFingerprint', 'WriteBeforeStart', 'HealthError', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError', 'FirewallResumeError')) {
+    foreach ($case in @('StopError', 'BackupError', 'MissingVerification', 'FingerprintError', 'BeforeMigration', 'DataOnlyMigration', 'BadRestoredFingerprint', 'WriteBeforeStart', 'HealthError', 'HealthNotPassed', 'WriteAfterHttps', 'WriteAfterHttpsTwice', 'HttpsError', 'FirewallResumeError')) {
         $homeForCase = Join-Path $root $case
         $scenario = @{ Service = 'Running'; Startup = 'Auto'; Tasks = @('Enabled', 'Enabled'); Row = 'ban đầu'; Attachment = 'ban đầu'; Fingerprint = 'baseline'; Calls = [Collections.Generic.List[string]]::new() }
         $enabledBefore = $scenario.Tasks -join ','
@@ -309,13 +309,17 @@ try {
             Write-Output "PASS: $case"
             continue
         }
-        if ($case -in @('HealthError', 'WriteAfterHttps')) {
-            if ($exitCode -ne 0 -or $result.status -ne 'thanh_cong' -or -not $scenario.HealthChecked -or
+        if ($case -in @('HealthError', 'HealthNotPassed', 'WriteAfterHttps')) {
+            $expectedExit = if ($case -eq 'WriteAfterHttps') { 0 } else { 8 }
+            $expectedStatus = if ($case -eq 'WriteAfterHttps') { 'thanh_cong' } else { 'thanh_cong_can_kiem_tra' }
+            if ($exitCode -ne $expectedExit -or $result.status -ne $expectedStatus -or -not $scenario.HealthChecked -or
                 $scenario.Calls.Contains('restore') -or $scenario.Row -ne 'máy trạm vừa ghi' -or
                 $scenario.Service -ne 'Running' -or (Get-Content -LiteralPath (Join-Path $P.Code 'app/main.py')) -ne 'mã mới') {
                 throw "Không giữ được bản mới/dữ liệu máy trạm sau lỗi hậu kiểm $case."
             }
-            if ($case -eq 'HealthError' -and ($result.warnings -notmatch 'Lỗi báo cáo sức khỏe giả lập')) { throw 'Thiếu cảnh báo trong kết quả thành công.' }
+            if ($case -eq 'HealthError' -and ($result.warnings -notmatch 'Lỗi báo cáo sức khỏe giả lập')) { throw 'Thiếu cảnh báo lỗi lập báo cáo.' }
+            if ($case -eq 'HealthNotPassed' -and ($result.detail -notmatch 'sức khỏe chưa đạt' -or
+                -not (Test-Path -LiteralPath $OldVenv))) { throw 'Thiếu kết quả chưa đạt hoặc đã dọn venv cũ.' }
             if ($case -eq 'WriteAfterHttps' -and (-not $scenario.WriteFault -or -not (Test-Path -LiteralPath $OldVenv))) {
                 throw 'Đã dọn venv cũ dù lần ghi thành công đầu tiên gặp lỗi.'
             }

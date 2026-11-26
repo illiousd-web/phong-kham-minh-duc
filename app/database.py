@@ -186,3 +186,5 @@ def migrate():
         migrate_s2d(PGConnection(con), postgres=True)
         from .s2e_settlement_migration import migrate_settlements
         migrate_settlements(PGConnection(con), postgres=True)
+        from .stock_request_key_migration import migrate_stock_request_keys
+        migrate_stock_request_keys(PGConnection(con), postgres=True)
