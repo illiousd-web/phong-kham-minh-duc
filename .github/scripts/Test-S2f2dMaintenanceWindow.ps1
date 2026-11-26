@@ -97,18 +97,18 @@ try {
             param($Paths, $Output, $Title)
             if (Get-MinhDucMaintenanceFirewall $Names.FirewallMaintenance ActiveStore) { throw 'Firewall still blocked after commit.' }
             $result = Get-Content -LiteralPath $ResultFile -Raw | ConvertFrom-Json
-            if ($result.status -ne 'thanh_cong' -or -not (Test-Path -LiteralPath $OldVenv)) {
-                throw 'Không ghi thành công trước báo cáo hoặc đã xóa venv cũ.'
+            if ($result.status -ne 'dang_cap_nhat' -or -not (Test-Path -LiteralPath $OldVenv)) {
+                throw 'Đã ghi kết quả cuối trước báo cáo hoặc đã xóa venv cũ.'
             }
             throw 'S2f-2D CI: loi bao cao sau HTTPS'
         }
 '@
     & $updateScript -KhongHoi -TepZip $zip
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $fixture 'backup-checked'))) {
+    if ($LASTEXITCODE -ne 8 -or -not (Test-Path -LiteralPath (Join-Path $fixture 'backup-checked'))) {
         throw 'Cập nhật thật gặp lỗi hoặc chưa kiểm được cửa sổ sao lưu.'
     }
     $result = Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json
-    if ($result.status -ne 'thanh_cong' -or @($result.rollback_errors).Count -ne 0 -or
+    if ($result.status -ne 'thanh_cong_can_kiem_tra' -or @($result.rollback_errors).Count -ne 0 -or
         ($result.warnings -join ' ') -notmatch 'S2f-2D CI: loi bao cao sau HTTPS' -or
         -not (Test-Path -LiteralPath ($result.backup + '.verified'))) {
         throw 'Lỗi lập báo cáo sau HTTPS làm mất kết quả cập nhật hoặc bản sao lưu.'
@@ -116,7 +116,7 @@ try {
     Assert-ServiceAndTasksRestored
     & $paths.VenvPython (Join-Path $PSScriptRoot 'windows_e2e.py') login
     if ($LASTEXITCODE) { throw 'Không đăng nhập được sau lỗi báo cáo.' }
-    Write-Output 'PASS: sao lưu khi dịch vụ và lịch đều Disabled, lỗi báo cáo sau HTTPS giữ kết quả thành công.'
+    Write-Output 'PASS: sao lưu khi dịch vụ và lịch đều Disabled, lỗi báo cáo sau HTTPS trả mã 8 và vẫn đăng nhập được.'
 } finally {
     if ($worker -and -not $worker.HasExited) {
         [IO.File]::WriteAllText((Join-Path $fixture 'release'), 'release')

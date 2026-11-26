@@ -83,12 +83,18 @@ def fold_name(text):
     return ' '.join(text.replace('đ', 'd').split())
 
 
-def matching_patient_ids(c, q):
-    """patient_id có tên chứa từ khóa, không phân biệt hoa/thường và có dấu/không dấu."""
+def matching_patient_ids(c, q, since, until):
+    """patient_id có tên chứa từ khóa, không phân biệt hoa/thường và có dấu/không dấu.
+
+    Chỉ so tên của người bệnh có lượt khám trong kỳ tra cứu (H3): kết quả tìm vẫn lọc theo kỳ,
+    nên bỏ người bệnh không có lượt trong kỳ không đổi kết quả mà khỏi tải tên toàn bộ hồ sơ.
+    """
     needle = fold_name(q)
     if not needle:
         return []
-    return [r['id'] for r in c.execute('SELECT id,full_name FROM patients') if needle in fold_name(r['full_name'])]
+    rows = c.execute('''SELECT DISTINCT p.id,p.full_name FROM patients p JOIN visits v ON v.patient_id=p.id
+        WHERE v.created_at>=? AND v.created_at<?''', (since, until))
+    return [r['id'] for r in rows if needle in fold_name(r['full_name'])]
 
 
 def search_filters(c, date_from, date_to, q, status, money, today=None):
@@ -113,7 +119,7 @@ def search_filters(c, date_from, date_to, q, status, money, today=None):
         if digits and len(digits) == len(q.replace(' ', '').replace('.', '').replace('-', '')):
             parts.append("p.phone LIKE ? ESCAPE '\\'")
             args.append(_like(digits))
-        ids = matching_patient_ids(c, q)
+        ids = matching_patient_ids(c, q, args[0], args[1])
         if ids:
             # Số nguyên lấy từ chính CSDL, ghi thẳng vào câu lệnh để không vướng giới hạn số tham số.
             parts.append('p.id IN (' + ','.join(str(int(i)) for i in ids) + ')')

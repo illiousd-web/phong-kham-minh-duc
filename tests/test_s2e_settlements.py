@@ -543,3 +543,26 @@ def visit(clients):
                       'sex': 'Nữ', 'date_of_birth': '1990-01-01', 'phone': '0900000011'}), 201)
     return checked(reception.post('/api/visits', json={'patient_id': patient['id'],
                    'service_id': 1, 'doctor_id': doctor_id}), 201)['id']
+
+
+def test_overview_does_not_offset_one_visit_debt_with_another_visit_overpayment(clients, visit):
+    """Rà soát 25/11/2026, T3: tiền thừa của lượt B không được làm giảm nợ của lượt A."""
+    cashier, manager, reception = clients['cashier'], clients['manager'], clients['reception']
+    staff = checked(reception.get('/api/staff'))
+    doctor_id = next(user['id'] for user in staff if user['username'] == 'bs_noi')
+    patient = checked(reception.post('/api/patients', json={'full_name': 'Bệnh nhân giả lập ứng trước '+key(),
+                      'sex': 'Nam', 'date_of_birth': '1991-01-01', 'phone': '0900000012'}), 201)
+    other = checked(reception.post('/api/visits', json={'patient_id': patient['id'],
+                    'service_id': 1, 'doctor_id': doctor_id}), 201)['id']
+    with database.db() as c:
+        assert invoice(c, visit)['known_due'] > 0
+        fee = invoice(c, other)['charged']
+    before = checked(manager.get('/api/overview'))
+    checked(cashier.post('/api/payments', json=payment(other, fee * 2, prepayment=True)), 201)
+    after = checked(manager.get('/api/overview'))
+    with database.db() as c:
+        assert invoice(c, other)['refund_due'] == fee
+    # Lượt B hết nợ (giảm fee) nhưng phần thừa fee không được trừ thêm vào nợ lượt A.
+    assert after['known_outstanding'] == before['known_outstanding'] - fee
+    expected_refund = None if after['unpriced_count'] else (before['refund_due'] or 0) + fee
+    assert after['refund_due'] == expected_refund

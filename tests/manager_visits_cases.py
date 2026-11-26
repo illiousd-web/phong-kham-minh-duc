@@ -241,3 +241,51 @@ def only_manager_may_read(get, visit_id):
             assert r.status_code == 403, (role, path, r.status_code)
     assert get(None, '/api/manager/visits').status_code == 401
     assert get(None, f'/api/manager/visits/{visit_id}').status_code == 401
+
+
+class _Rows(list):
+    def fetchall(self):
+        return list(self)
+
+    def fetchone(self):
+        return self[0] if self else None
+
+
+class RowCounter:
+    """Đếm số dòng mọi câu SQL trả về cho một lần tra cứu."""
+    def __init__(self, c):
+        self.c, self.rows = c, 0
+
+    def execute(self, sql, params=()):
+        rows = _Rows(self.c.execute(sql, params).fetchall())
+        self.rows += len(rows)
+        return rows
+
+
+def name_search_reads_period_patients_only(post, db):
+    """H3: tìm theo tên chỉ so tên người bệnh có lượt trong kỳ, kết quả không đổi."""
+    from app.manager_visits import search_visits
+    tag = secrets.token_hex(4)
+    pid, _, _ = new_patient(post, f'Đặng Thị H3 {tag}')
+    now = datetime.now(timezone.utc) - timedelta(minutes=2)
+    with db(True) as c:
+        target = insert_visit(c, pid, iso(now), charges=[1000])
+        # Người bệnh trùng tên nhưng chỉ có lượt trước kỳ: không được lọt vào kết quả.
+        old_pid = c.execute('INSERT INTO patients(code,full_name,sex,created_at) VALUES(?,?,?,?)',
+                            ('H3C' + tag, f'Đặng Văn H3 {tag}', 'Nam', iso(now))) and c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        insert_visit(c, old_pid, iso(now - timedelta(days=40)), charges=[1000])
+
+    def run(q):
+        with db() as c:
+            counter = RowCounter(c)
+            found = search_visits(counter, q=q)
+            return counter.rows, [x['visit_id'] for x in found['items']]
+    for q in (f'dang thi h3 {tag}', f'ĐẶNG THỊ H3 {tag}', f'h3 {tag}'):
+        assert run(q)[1] == [target], q
+    before = run(f'h3 {tag}')
+    # 300 hồ sơ trùng từ khóa nhưng không có lượt trong kỳ: số dòng đọc và kết quả không đổi.
+    with db(True) as c:
+        for i in range(300):
+            c.execute('INSERT INTO patients(code,full_name,sex,created_at) VALUES(?,?,?,?)',
+                      (f'H3X{tag}{i}', f'Người bệnh H3 {tag} số {i}', 'Nữ', iso(now)))
+    assert run(f'h3 {tag}') == before
