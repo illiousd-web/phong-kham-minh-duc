@@ -4,7 +4,7 @@ from tests.test_m0 import RoleClient
 from tests.test_workflows import prepare_visit
 import pytest
 
-from tests.s2b_cases import (check_issue_profit, check_return_profit, check_cost_and_report, check_concurrent_receipts, check_permissions,
+from tests.s2b_cases import (check_lot_quantity_ceiling, check_issue_profit, check_return_profit, check_cost_and_report, check_concurrent_receipts, check_permissions,
                              check_legacy_cost, check_report_period_boundaries,
                              check_reprice_after_approved_return, owner_sessions)
 
@@ -53,3 +53,9 @@ def test_reprice_denied_after_approved_return_with_zero_credit(quantities):
     _, visit = prepare_visit()
     with owner_sessions(clients)() as owner:
         check_reprice_after_approved_return(clients, visit, db, owner, quantities)
+
+
+def test_s2b_lot_quantity_ceiling():
+    clients = actors()
+    with owner_sessions(clients)() as owner:
+        check_lot_quantity_ceiling(clients, db, owner)
