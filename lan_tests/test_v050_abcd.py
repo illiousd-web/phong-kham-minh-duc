@@ -28,7 +28,7 @@ def medical(clients,visit):
 def medicine(clients,quantity=40):
     m=clients['manager'].post('/api/catalog/medicines',json={'name':'Thuốc thường giả lập '+secrets.token_hex(4),'base_unit':'viên'}).json()['id']
     assert clients['manager'].put(f'/api/medicines/{m}/price',json={'unit_price':1000}).status_code==200
-    assert clients['pharmacy'].post('/api/stock/receipts',json={'medicine_id':m,'lot_number':'LOT-'+secrets.token_hex(4),'expiry_date':'2029-01-01','quantity':quantity}).status_code==201
+    assert clients['pharmacy'].post('/api/stock/receipts',json={'medicine_id':m,'lot_number':'LOT-'+secrets.token_hex(4),'expiry_date':'2029-01-01','quantity':quantity,'request_key':secrets.token_hex(8)}).status_code==201
     return m
 
 

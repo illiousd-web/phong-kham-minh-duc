@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from .clinic_profile import read_profile
 from .labels import VN_TZ, local_day
@@ -46,6 +46,9 @@ def number(c, kind, stamp):
     return f'{kind}-{year}-{value:04d}'
 
 
+MAX_LOT_QUANTITY = 2_147_483_647  # trần INTEGER PostgreSQL
+
+
 def amount(quantity, unit_cost, vat_rate=0):
     if unit_cost is None:
         return None
@@ -62,14 +65,8 @@ class StockReceipt(BaseModel):
     invoice_date: date | None = None
     unit_cost: int | None = Field(default=None, ge=0, le=2_000_000_000)
     vat_rate: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=2)
-
-    @field_validator('expiry_date')
-    @classmethod
-    def check_expiry(cls, value):
-        if value < date.today():
-            raise ValueError('Không nhận thuốc đã hết hạn')
-        return value
-
+    # Mã thao tác: một lần lập phiếu trên giao diện; gửi lại sau mất phản hồi dùng lại mã này.
+    request_key: str = Field(min_length=8, max_length=120)
 
 class StockIssue(BaseModel):
     medicine_id: int = Field(gt=0)
@@ -78,6 +75,57 @@ class StockIssue(BaseModel):
     reason: Literal['internal', 'supplier_return', 'expired_disposal'] = 'internal'
     recipient: str = Field(default='', max_length=250)
     lot_id: int | None = Field(default=None, gt=0)
+    request_key: str = Field(min_length=8, max_length=120)
+
+
+REUSED_KEY = 'Mã thao tác đã dùng cho phiếu kho khác nội dung; tải lại trang và lập phiếu mới'
+
+
+def same_vat(stored, sent):
+    if (stored is None) != (sent is None):
+        return False
+    return stored is None or Decimal(str(stored)) == sent
+
+
+def replayed_receipt(c, data, user):
+    """Phiếu nhập đã lưu với cùng mã thao tác: cùng nội dung trả lại phiếu cũ, khác nội dung trả 409."""
+    old = c.execute('SELECT * FROM stock_receipts WHERE request_key=?', (data.request_key,)).fetchone()
+    if not old:
+        return None
+    moves = c.execute('''SELECT m.stock_lot_id,m.quantity,m.unit_cost,m.vat_rate,l.medicine_id,l.lot_number,l.expiry_date
+        FROM stock_movements m JOIN stock_lots l ON l.id=m.stock_lot_id WHERE m.receipt_id=? ORDER BY m.id''', (old['id'],)).fetchall()
+    invoice_date = data.invoice_date.isoformat() if data.invoice_date else None
+    same = (old['created_by'] == user['id'] and len(moves) == 1 and old['supplier'] == data.supplier
+            and old['invoice_no'] == data.invoice_no and old['invoice_date'] == invoice_date)
+    if same:
+        move = moves[0]
+        same = (move['medicine_id'] == data.medicine_id and move['lot_number'] == data.lot_number
+                and move['expiry_date'] == data.expiry_date.isoformat() and move['quantity'] == data.quantity
+                and move['unit_cost'] == data.unit_cost and same_vat(move['vat_rate'], data.vat_rate))
+    if not same:
+        raise HTTPException(409, REUSED_KEY)
+    return {'id': old['id'], 'document_no': old['document_no'], 'stock_lot_id': moves[0]['stock_lot_id'],
+            'quantity_added': moves[0]['quantity'], 'status': 'already_recorded'}
+
+
+def replayed_issue(c, data, user):
+    """Phiếu xuất đã lưu với cùng mã thao tác: không trừ tồn lần hai."""
+    old = c.execute('SELECT * FROM stock_issues WHERE request_key=?', (data.request_key,)).fetchone()
+    if not old:
+        return None
+    moves = c.execute('''SELECT m.stock_lot_id,m.quantity,l.medicine_id FROM stock_movements m
+        JOIN stock_lots l ON l.id=m.stock_lot_id WHERE m.issue_id=? ORDER BY m.id''', (old['id'],)).fetchall()
+    same = (old['created_by'] == user['id'] and old['reason'] == data.reason and old['purpose'] == data.purpose
+            and old['recipient'] == data.recipient and bool(moves)
+            and all(m['medicine_id'] == data.medicine_id for m in moves)
+            and sum(m['quantity'] for m in moves) == data.quantity)
+    # Chỉ hủy hết hạn xuất đúng lô được chọn; các lý do khác chọn lô theo hạn dùng (FEFO).
+    if same and data.reason == 'expired_disposal':
+        same = all(m['stock_lot_id'] == data.lot_id for m in moves)
+    if not same:
+        raise HTTPException(409, REUSED_KEY)
+    return {'id': old['id'], 'document_no': old['document_no'], 'medicine_id': data.medicine_id, 'quantity': data.quantity,
+            'lots': [{'lot_id': m['stock_lot_id'], 'quantity': m['quantity']} for m in moves], 'status': 'already_recorded'}
 
 
 class LotCost(BaseModel):
@@ -286,6 +334,11 @@ def install_stock(app, db, principal, require, audit, now):
         if not can_view_money(u) and (data.unit_cost is not None or data.vat_rate is not None):
             raise HTTPException(403, 'Cần quyền Chủ kho thuốc để nhập giá')
         with db(True) as c:
+            replay = replayed_receipt(c, data, u)
+            if replay:
+                return replay
+            if data.expiry_date < date.today():
+                raise HTTPException(422, 'Không nhận thuốc đã hết hạn')
             med = c.execute('SELECT * FROM medicines WHERE id=?', (data.medicine_id,)).fetchone()
             if not med:
                 raise HTTPException(404, 'Không tìm thấy mặt hàng')
@@ -295,10 +348,14 @@ def install_stock(app, db, principal, require, audit, now):
             if old and (old['expiry_date'] != data.expiry_date.isoformat() or old['quarantined'] or
                         old['unit_cost'] != data.unit_cost or Decimal(str(old['vat_rate'] or 0)) != (data.vat_rate or 0)):
                 raise HTTPException(409, 'Lô đã có hạn dùng, giá khác hoặc đang cách ly; nhập số lô riêng')
+            # Tồn lô cộng dồn không được vượt trần INTEGER của PostgreSQL (rà soát 25/11/2026, T5).
+            if old and old['quantity'] + data.quantity > MAX_LOT_QUANTITY:
+                raise HTTPException(409, f'Tồn lô sau khi nhập vượt giới hạn {MAX_LOT_QUANTITY:,} đơn vị; nhập số lô riêng'.replace(',', '.'))
             stamp = now()
             docno = number(c, 'PN', stamp)
-            c.execute('INSERT INTO stock_receipts(document_no,supplier,invoice_no,invoice_date,created_by,created_at) VALUES(?,?,?,?,?,?)',
-                      (docno, data.supplier, data.invoice_no, data.invoice_date.isoformat() if data.invoice_date else None, u['id'], stamp))
+            c.execute('''INSERT INTO stock_receipts(document_no,supplier,invoice_no,invoice_date,created_by,created_at,request_key)
+                VALUES(?,?,?,?,?,?,?)''', (docno, data.supplier, data.invoice_no, data.invoice_date.isoformat() if data.invoice_date else None,
+                                           u['id'], stamp, data.request_key))
             rid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
             if old:
                 lid = old['id']
@@ -318,6 +375,9 @@ def install_stock(app, db, principal, require, audit, now):
     def issue(data: StockIssue, u=Depends(principal)):
         require(u, 'pharmacy')
         with db(True) as c:
+            replay = replayed_issue(c, data, u)
+            if replay:
+                return replay
             med = c.execute('SELECT * FROM medicines WHERE id=?', (data.medicine_id,)).fetchone()
             if not med:
                 raise HTTPException(404, 'Không có thuốc/vật tư')
@@ -336,8 +396,8 @@ def install_stock(app, db, principal, require, audit, now):
                 raise HTTPException(409, 'Không đủ tồn khả dụng hoặc lô không phù hợp')
             stamp = now()
             docno = number(c, 'PX', stamp)
-            c.execute('INSERT INTO stock_issues(document_no,reason,purpose,recipient,created_by,created_at) VALUES(?,?,?,?,?,?)',
-                      (docno, data.reason, data.purpose, data.recipient, u['id'], stamp))
+            c.execute('INSERT INTO stock_issues(document_no,reason,purpose,recipient,created_by,created_at,request_key) VALUES(?,?,?,?,?,?,?)',
+                      (docno, data.reason, data.purpose, data.recipient, u['id'], stamp, data.request_key))
             iid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
             remaining, used = data.quantity, []
             for lot in lots:

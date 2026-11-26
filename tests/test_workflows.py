@@ -1,4 +1,5 @@
 """API tests with exclusively invented data, no real patient records."""
+import secrets
 import os
 import tempfile
 from pathlib import Path
@@ -125,11 +126,12 @@ def test_stock_receipt_tracks_lots_but_blocks_controlled_medicine():
     ordinary=next(m for m in meds if not m['controlled'])
     restricted=next(m for m in meds if m['controlled'])
     payload={'medicine_id':ordinary['id'],'lot_number':'LOT-TEST-909','expiry_date':'2028-12-31','quantity':37}
-    first=client.post('/api/stock/receipts',headers=pharma,json=payload)
-    second=client.post('/api/stock/receipts',headers=pharma,json=payload)
+    key=lambda:{'request_key':secrets.token_hex(8)}  # mỗi lần gửi là một phiếu riêng
+    first=client.post('/api/stock/receipts',headers=pharma,json={**payload,**key()})
+    second=client.post('/api/stock/receipts',headers=pharma,json={**payload,**key()})
     assert first.status_code==201 and second.status_code==201
     lot=next(x for x in client.get('/api/stock',headers=pharma).json() if x['lot_number']=='LOT-TEST-909')
     assert lot['quantity']==74
-    assert client.post('/api/stock/receipts',headers=pharma,json={**payload,'medicine_id':restricted['id']}).status_code==403
-    assert client.post('/api/stock/receipts',headers=pharma,json={**payload,'quantity':-3}).status_code==422
-    assert client.post('/api/stock/receipts',headers=token('thungan'),json=payload).status_code==403
+    assert client.post('/api/stock/receipts',headers=pharma,json={**payload,**key(),'medicine_id':restricted['id']}).status_code==403
+    assert client.post('/api/stock/receipts',headers=pharma,json={**payload,**key(),'quantity':-3}).status_code==422
+    assert client.post('/api/stock/receipts',headers=token('thungan'),json={**payload,**key()}).status_code==403
