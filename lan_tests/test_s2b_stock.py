@@ -30,3 +30,11 @@ def test_s2b_issue_cost_does_not_reduce_sales_profit(clients, reason):
 def test_s2b_approved_return_reverses_original_cost_and_credit(clients, visit, half, approval_next_day):
     with owner_sessions(clients)() as owner:
         check_return_profit(clients, visit, db, owner, half, approval_next_day)
+
+
+def test_t4_resent_stock_documents_are_not_duplicated(clients):
+    from tests.s2b_cases import check_resent_documents_are_not_duplicated, check_missing_request_key_rejected
+    factory = owner_sessions(clients)
+    check_resent_documents_are_not_duplicated(clients, db, factory)
+    with factory() as owner:
+        check_missing_request_key_rejected(clients, owner)

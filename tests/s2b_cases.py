@@ -29,7 +29,7 @@ def receive(owner, mid, qty=10, cost=1300, lot=None, expiry='2029-01-01'):
     return checked(owner.post('/api/stock/receipts', json={
         'medicine_id': mid, 'quantity': qty, 'lot_number': lot or 'S2B-' + secrets.token_hex(6),
         'expiry_date': expiry, 'supplier': 'Nhà cung cấp giả lập', 'invoice_no': 'HĐ-GIẢ-LẬP',
-        'invoice_date': '2026-11-15', 'unit_cost': cost, 'vat_rate': 5}), 201)
+        'invoice_date': '2026-11-15', 'unit_cost': cost, 'vat_rate': 5, 'request_key': secrets.token_hex(8)}), 201)
 
 
 def assert_private(data):
@@ -69,7 +69,7 @@ def check_cost_and_report(clients, ids, visit, db, owner):
     for item in report['rows']:
         assert item['opening'] + item['received'] - item['issued'] == item['closing'], item
     assert (row['opening'], row['received'], row['issued'], row['closing']) == (14, 12, 7, 19)
-    issued = checked(owner.post('/api/stock/issues', json={'medicine_id': mid, 'quantity': 2, 'purpose': 'Xuất nội bộ giả lập', 'recipient': 'Bộ phận giả lập'}), 201)
+    issued = checked(owner.post('/api/stock/issues', json={'medicine_id': mid, 'quantity': 2, 'purpose': 'Xuất nội bộ giả lập', 'recipient': 'Bộ phận giả lập', 'request_key': secrets.token_hex(8)}), 201)
     doc = checked(owner.get('/api/stock/documents/issues/' + str(issued['id'])))
     assert [(i['unit_cost'], i['quantity']) for i in doc['items']] == [(2700, 2)]
     assert doc['total_amount'] == 5400
@@ -77,7 +77,7 @@ def check_cost_and_report(clients, ids, visit, db, owner):
     lots = checked(owner.get('/api/stock'))
     expired = next(l for l in lots if l['medicine_id'] == mid and l['expiry_date'] == '2020-01-01')
     disposed = checked(owner.post('/api/stock/issues', json={'medicine_id': mid, 'quantity': 1,
-        'purpose': 'Hủy hết hạn giả lập', 'reason': 'expired_disposal', 'lot_id': expired['id']}), 201)
+        'purpose': 'Hủy hết hạn giả lập', 'reason': 'expired_disposal', 'lot_id': expired['id'], 'request_key': secrets.token_hex(8)}), 201)
     assert disposed['lots'] == [{'lot_id': expired['id'], 'quantity': 1}]
     return mid, first, issued, disp
 
@@ -126,12 +126,12 @@ def check_permissions(clients, owner, first, issued, disp):
                 assert forbidden not in text
         assert actor.put(f'/api/stock/lots/{first["stock_lot_id"]}/cost', json={'unit_cost': 1, 'reason': 'Sai quyền'}).status_code == 403
         assert actor.put('/api/medicines/1/min-stock', json={'min_stock': 1}).status_code == 403
-        response = actor.post('/api/stock/receipts', json={'medicine_id': 1, 'quantity': 1, 'lot_number': 'SAI-QUYEN', 'expiry_date': '2029-01-01', 'unit_cost': 1})
+        response = actor.post('/api/stock/receipts', json={'medicine_id': 1, 'quantity': 1, 'lot_number': 'SAI-QUYEN', 'expiry_date': '2029-01-01', 'unit_cost': 1, 'request_key': secrets.token_hex(8)})
         assert response.status_code == 403
     # Admin sees money but keeps the original pharmacy-only stock mutation boundary.
     admin_doc = checked(clients['admin'].get('/api/stock/documents/receipts/' + str(first['id'])))
     assert admin_doc['items'][0]['unit_cost'] == 1300
-    assert clients['admin'].post('/api/stock/issues', json={'medicine_id': 1, 'quantity': 1}).status_code == 403
+    assert clients['admin'].post('/api/stock/issues', json={'medicine_id': 1, 'quantity': 1, 'request_key': secrets.token_hex(8)}).status_code == 403
     privileged = checked(owner.get('/api/stock/documents/receipts/' + str(first['id'])))
     assert privileged['items'][0]['unit_cost'] == 1300
     assert privileged['total_amount'] == 4095  # 3 x 1300 + VAT 5%.
@@ -159,7 +159,7 @@ def check_legacy_cost(clients, db, owner):
         lid = c.execute('SELECT last_insert_rowid()').fetchone()[0]
     row = next(x for x in checked(owner.get('/api/stock')) if x['id'] == lid)
     assert row['unit_cost'] is None and row['inventory_value'] is None and row['cost_status'] == 'chưa có giá'
-    issue = checked(owner.post('/api/stock/issues', json={'medicine_id': mid, 'quantity': 2, 'purpose': 'Xuất lô cũ giả lập'}), 201)
+    issue = checked(owner.post('/api/stock/issues', json={'medicine_id': mid, 'quantity': 2, 'purpose': 'Xuất lô cũ giả lập', 'request_key': secrets.token_hex(8)}), 201)
     assert checked(owner.get(f'/api/stock/documents/issues/{issue["id"]}'))['total_amount'] is None
     checked(owner.put(f'/api/stock/lots/{lid}/cost', json={'unit_cost': 1600, 'reason': 'Theo chứng từ giả lập'}))
     assert owner.put(f'/api/stock/lots/{lid}/cost', json={'unit_cost': 1700, 'reason': 'Không được sửa'}).status_code == 409
@@ -178,7 +178,7 @@ def check_legacy_cost(clients, db, owner):
     assert not any(x['medicine_id'] == mid for x in checked(owner.get('/api/stock?stock_filter=below_minimum')))
     unpriced_mid = med(clients)
     unpriced = checked(clients['pharmacy'].post('/api/stock/receipts', json={'medicine_id': unpriced_mid,
-        'lot_number': 'CHUA-GIA-' + secrets.token_hex(4), 'quantity': 2, 'expiry_date': '2029-01-01'}), 201)
+        'lot_number': 'CHUA-GIA-' + secrets.token_hex(4), 'quantity': 2, 'expiry_date': '2029-01-01', 'request_key': secrets.token_hex(8)}), 201)
     checked(owner.put(f'/api/stock/lots/{unpriced["stock_lot_id"]}/cost', json={'unit_cost': 1800, 'reason': 'Bổ sung từ chứng từ giả lập'}))
     saved = checked(owner.get(f'/api/stock/documents/receipts/{unpriced["id"]}'))
     assert saved['total_amount'] is None and saved['items'][0]['unit_cost'] is None
@@ -249,7 +249,7 @@ def check_issue_profit(clients, db, owner, reason):
     else:
         lid = receipt['stock_lot_id']
     checked(owner.post('/api/stock/issues', json={'medicine_id': mid, 'quantity': 10,
-        'reason': reason, 'lot_id': lid, 'purpose': 'Kiểm chi phí xuất giả lập'}), 201)
+        'reason': reason, 'lot_id': lid, 'purpose': 'Kiểm chi phí xuất giả lập', 'request_key': secrets.token_hex(8)}), 201)
     row = report_row(owner, mid)
     key = {'internal': 'cost_internal', 'supplier_return': 'cost_supplier_return',
            'expired_disposal': 'cost_expired'}[reason]
@@ -328,3 +328,79 @@ def check_return_profit(clients, visit, db, owner, half, approval_next_day=False
         assert (next_day['returns_revenue'], next_day['revenue'], next_day['cogs_sold'], next_day['gross_profit']) == (credit, -credit, -cost, cost-credit)
     else:
         check_report_exports(owner, row)
+
+
+def stock_totals(db, mid):
+    """Tồn, số phiếu nhập/xuất và số dòng biến động của một mặt hàng giả lập."""
+    with db() as c:
+        quantity = c.execute('SELECT COALESCE(SUM(quantity),0) FROM stock_lots WHERE medicine_id=?', (mid,)).fetchone()[0]
+        moves = c.execute('''SELECT COUNT(*) AS n,COUNT(DISTINCT m.receipt_id) AS receipts,COUNT(DISTINCT m.issue_id) AS issues FROM stock_movements m
+            JOIN stock_lots l ON l.id=m.stock_lot_id WHERE l.medicine_id=?''', (mid,)).fetchone()
+        return quantity, (moves[0], moves[1], moves[2])
+
+
+def check_resent_documents_are_not_duplicated(clients, db, owner_factory):
+    """T4: gửi lại cùng mã thao tác sau mất phản hồi không nhập/xuất lần hai."""
+    owner = owner_factory()
+    mid = med(clients)
+    receipt = {'medicine_id': mid, 'quantity': 10, 'lot_number': 'T4-' + secrets.token_hex(6), 'expiry_date': '2029-01-01',
+               'supplier': 'Nhà cung cấp giả lập', 'invoice_no': 'HĐ-T4', 'invoice_date': '2026-11-15',
+               'unit_cost': 1300, 'vat_rate': 5, 'request_key': secrets.token_hex(12)}
+    first = checked(owner.post('/api/stock/receipts', json=receipt), 201)
+    again = checked(owner.post('/api/stock/receipts', json=receipt), 201)
+    assert (again['id'], again['document_no'], again['stock_lot_id']) == (first['id'], first['document_no'], first['stock_lot_id'])
+    assert again['status'] == 'already_recorded' and again['quantity_added'] == 10
+    assert stock_totals(db, mid) == (10, (1, 1, 0))
+    lot = next(r for r in checked(owner.get('/api/stock')) if r['id'] == first['stock_lot_id'])
+    assert lot['quantity'] == 10 and lot['inventory_value'] == 13000
+
+    # Cùng mã nhưng khác nội dung, khác người gửi: từ chối, không ghi thêm gì.
+    for actor, changed in ((owner, {'quantity': 11}), (owner, {'unit_cost': 1400}), (owner, {'vat_rate': None}),
+                           (owner, {'invoice_no': 'HĐ-KHÁC'}), (owner, {'lot_number': 'T4-KHAC-' + secrets.token_hex(4)}),
+                           (clients['pharmacy'], {'unit_cost': None, 'vat_rate': None})):
+        response = actor.post('/api/stock/receipts', json={**receipt, **changed})
+        assert response.status_code == 409, (changed, response.text)
+        assert response.json()['detail'] == 'Mã thao tác đã dùng cho phiếu kho khác nội dung; tải lại trang và lập phiếu mới'
+    assert stock_totals(db, mid) == (10, (1, 1, 0))
+
+    issue = {'medicine_id': mid, 'quantity': 3, 'purpose': 'Xuất nội bộ giả lập T4', 'recipient': 'Bộ phận giả lập',
+             'request_key': secrets.token_hex(12)}
+    issued = checked(owner.post('/api/stock/issues', json=issue), 201)
+    again = checked(owner.post('/api/stock/issues', json=issue), 201)
+    assert (again['id'], again['document_no'], again['lots']) == (issued['id'], issued['document_no'], issued['lots'])
+    assert again['status'] == 'already_recorded'
+    assert stock_totals(db, mid) == (7, (2, 1, 1))
+    for changed in ({'quantity': 4}, {'purpose': 'Mục đích khác giả lập'}, {'reason': 'supplier_return'}, {'recipient': ''}):
+        response = owner.post('/api/stock/issues', json={**issue, **changed})
+        assert response.status_code == 409, (changed, response.text)
+    assert stock_totals(db, mid) == (7, (2, 1, 1))
+    # Mã của phiếu nhập không làm phiếu xuất bị coi là gửi lại, và ngược lại.
+    fresh = checked(owner.post('/api/stock/issues', json={**issue, 'request_key': receipt['request_key']}), 201)
+    assert fresh['id'] != issued['id'] and fresh.get('status') != 'already_recorded'
+    assert stock_totals(db, mid) == (4, (3, 1, 2))
+
+    # Hai máy gửi cùng một phiếu cùng lúc (bấm lại khi lần đầu chưa trả lời): chỉ một phiếu.
+    barrier = threading.Barrier(2)
+    resend = {**receipt, 'lot_number': 'T4-DONG-THOI-' + secrets.token_hex(4), 'request_key': secrets.token_hex(12)}
+    def save(_):
+        actor = owner_factory()
+        barrier.wait(timeout=10)
+        return checked(actor.post('/api/stock/receipts', json=resend), 201)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(save, (1, 2)))
+    assert results[0]['id'] == results[1]['id']
+    assert sorted(r.get('status', 'recorded') for r in results) == ['already_recorded', 'recorded']
+    assert stock_totals(db, mid) == (14, (4, 2, 2))
+    with db() as c:
+        assert c.execute('SELECT COUNT(*) FROM stock_receipts WHERE request_key=?', (resend['request_key'],)).fetchone()[0] == 1
+    owner.close()
+
+
+def check_missing_request_key_rejected(clients, owner):
+    mid = med(clients)
+    receipt = {'medicine_id': mid, 'quantity': 1, 'lot_number': 'T4-THIEU-' + secrets.token_hex(4), 'expiry_date': '2029-01-01'}
+    issue = {'medicine_id': mid, 'quantity': 1, 'purpose': 'Thiếu mã thao tác'}
+    for path, body in (('/api/stock/receipts', receipt), ('/api/stock/issues', issue)):
+        for key in (None, 'ngan'):
+            payload = body if key is None else {**body, 'request_key': key}
+            assert owner.post(path, json=payload).status_code == 422, (path, key)

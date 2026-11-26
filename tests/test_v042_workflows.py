@@ -52,7 +52,7 @@ def test_b_stock_dispense_charge_once_and_no_double_issue():
     created=client.post('/api/catalog/medicines',headers=mgr,json={'name':'Thuốc giả lập '+tag,'base_unit':'viên'})
     assert created.status_code==201,created.text
     med={'id':created.json()['id'],'name':'Thuốc giả lập '+tag}
-    receipt=client.post('/api/stock/receipts',headers=pharm,json={'medicine_id':med['id'],'lot_number':'TEST-'+tag,'expiry_date':'2099-12-31','quantity':10})
+    receipt=client.post('/api/stock/receipts',headers=pharm,json={'medicine_id':med['id'],'lot_number':'TEST-'+tag,'expiry_date':'2099-12-31','quantity':10,'request_key':secrets.token_hex(8)})
     assert receipt.status_code==201,receipt.text
     pre=client.get('/api/stock',headers=pharm).json()
     before=sum(r['quantity'] for r in pre if r['name']==med['name'])

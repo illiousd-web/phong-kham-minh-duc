@@ -70,3 +70,12 @@ def test_reprice_denied_after_approved_return_with_zero_credit(quantities):
             ret = checked(pharmacy.post(f'/api/dispensations/{disp["dispensation_id"]}/returns', json={'reason':'Trả thuốc giả lập','request_key':secrets.token_hex(16),'items':[{'dispensation_item_id':item,'quantity':quantity}]}), 201)
             checked(manager.post(f'/api/medication-returns/{ret["id"]}/review', json={'approve':True}))
         assert reprice(4000).status_code == 409
+
+
+def test_t4_resent_stock_documents_are_not_duplicated():
+    from tests.s2b_cases import check_resent_documents_are_not_duplicated, check_missing_request_key_rejected
+    clients = actors()
+    factory = owner_sessions(clients)
+    check_resent_documents_are_not_duplicated(clients, db, factory)
+    with factory() as owner:
+        check_missing_request_key_rejected(clients, owner)

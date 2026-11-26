@@ -1012,10 +1012,10 @@ async function handleForm(form){const kind=form.dataset.form;const f=new FormDat
  else if(kind==='stock-receipt'){
   const body={medicine_id:num('medicine_id'),lot_number:value('lot_number'),expiry_date:parseDay(value('expiry_date'),'Hạn sử dụng'),quantity:num('quantity'),supplier:value('supplier'),invoice_no:value('invoice_no'),invoice_date:parseDay(value('invoice_date'))};
   if(stockMoneyAllowed()){body.unit_cost=value('unit_cost')===''?null:num('unit_cost');body.vat_rate=value('vat_rate')===''?null:num('vat_rate');}
-  const result=await api('/stock/receipts',{method:'POST',body});stockState.receipt=result.id;sel.rxSection='r5-receipt';msg='Đã lưu phiếu nhập '+result.document_no;
+  const result=await keyed(kind,'/stock/receipts',body);stockState.receipt=result.id;sel.rxSection='r5-receipt';msg='Đã lưu phiếu nhập '+result.document_no;
  }
  else if(kind==='stock-issue'){
-  const result=await api('/stock/issues',{method:'POST',body:{medicine_id:num('medicine_id'),quantity:num('quantity'),purpose:value('purpose'),reason:value('reason'),recipient:value('recipient'),lot_id:value('lot_id')?num('lot_id'):null}});
+  const result=await keyed(kind,'/stock/issues',{medicine_id:num('medicine_id'),quantity:num('quantity'),purpose:value('purpose'),reason:value('reason'),recipient:value('recipient'),lot_id:value('lot_id')?num('lot_id'):null});
   stockState.issue=result.id;sel.rxSection='r5-issue';msg='Đã lưu phiếu xuất '+result.document_no;
  }
  else if(kind==='s2b-legacy-cost'){
