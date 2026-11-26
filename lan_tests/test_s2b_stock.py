@@ -3,7 +3,8 @@ from .conftest import db, IDS
 import pytest
 
 from tests.s2b_cases import (check_issue_profit, check_return_profit, check_cost_and_report, check_concurrent_receipts, check_permissions,
-                             check_legacy_cost, check_report_period_boundaries, owner_sessions)
+                             check_legacy_cost, check_report_period_boundaries,
+                             check_reprice_after_approved_return, owner_sessions)
 
 
 def test_s2b_fefo_cost_balance_privacy_exports_and_legacy_cost(clients, visit):
@@ -30,3 +31,9 @@ def test_s2b_issue_cost_does_not_reduce_sales_profit(clients, reason):
 def test_s2b_approved_return_reverses_original_cost_and_credit(clients, visit, half, approval_next_day):
     with owner_sessions(clients)() as owner:
         check_return_profit(clients, visit, db, owner, half, approval_next_day)
+
+
+@pytest.mark.parametrize('quantities', [[1], [1, 1], [4]])
+def test_reprice_denied_after_approved_return_with_zero_credit(clients, visit, quantities):
+    with owner_sessions(clients)() as owner:
+        check_reprice_after_approved_return(clients, visit, db, owner, quantities)

@@ -660,3 +660,46 @@ def test_u1r2_reception_prices_login_password(https_server,clients,width,height)
             expect(page.locator('[data-r2-stat=completed]')).to_have_count(0)
             check(page,'password');assert not errors,errors
         finally:browser.close()
+
+
+@pytest.mark.parametrize('width,height', [(390, 844), (1366, 768)])
+def test_u1r2_manager_reception_sees_waiting_visit(https_server, clients, visit, width, height):
+    import secrets
+
+    name = 'kham_kiem_nhiem_' + secrets.token_hex(4)
+    password = secrets.token_urlsafe(24)
+    account = clients['admin'].post('/api/accounts', json={
+        'username': name, 'password': password, 'full_name': 'Quản lý kiêm lễ tân giả lập',
+        'roles': ['manager', 'reception'],
+    })
+    assert account.status_code == 201, account.text
+    patient = clients['reception'].get(f'/api/visits/{visit}').json()
+    origin, certdir = https_server
+    cert = x509.load_pem_x509_certificate((certdir / 'server.crt').read_bytes())
+    public_key = cert.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    pin = base64.b64encode(hashlib.sha256(public_key).digest()).decode()
+    with sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH', '/usr/bin/chromium'),
+            args=['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors-spki-list=' + pin])
+        try:
+            page = browser.new_page(viewport={'width': width, 'height': height})
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.goto(origin)
+            page.locator('[name=username]').fill(name)
+            page.locator('[name=password]').fill(password)
+            page.locator('[data-form=login] button').click()
+            expect(page.locator('.account-trigger')).to_be_visible()
+            page.locator('[name=role_switch]').select_option('reception')
+            with page.expect_response(lambda response: response.url == origin + '/api/visits') as response:
+                go(page, 'reception')
+            row = next(row for row in response.value.json() if row['id'] == visit)
+            for field in ('patient_id', 'patient_code', 'patient_name'):
+                assert row[field] == patient[field]
+            waiting = page.locator('.r2-reception article').filter(has_text=f'#{visit} ·')
+            expect(waiting).to_contain_text(patient['patient_name'])
+            expect(waiting).to_contain_text('Chờ khám')
+            no_horizontal_scroll(page)
+            assert not errors, errors
+        finally:
+            browser.close()

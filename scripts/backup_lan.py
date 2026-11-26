@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import stat
 import shutil
 import subprocess
 import sys
@@ -268,6 +269,68 @@ def restore(source, key_path, url, uploads, settings=None):
     return uploads
 
 
+def generate_key(path):
+    with os.fdopen(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), 'wb') as f:
+        f.write(secrets.token_bytes(32))
+    path.chmod(0o600)
+
+
+class MissingBackupKey(ValueError):
+    pass
+
+
+class UnverifiedBackupKey(ValueError):
+    pass
+
+
+def _exists_strict(path):
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def prepare_install_key(key, directory, state_file, clinic_env, installed_schema):
+    """Check all evidence before key creation. Filesystem errors propagate."""
+    from cryptography.exceptions import InvalidTag
+
+    data = directory.parent
+    backup_dirs = [path for path in data.iterdir()
+                   if path.name.casefold().startswith('backups') and stat.S_ISDIR(path.stat().st_mode)]
+    if directory not in backup_dirs and _exists_strict(directory):
+        # A misconfigured primary path must fail the scan too.
+        backup_dirs.append(directory)
+    files = sorted((path for folder in backup_dirs for path in folder.iterdir()
+                    if path.match('minhduc-*.mdbackup') and stat.S_ISREG(path.stat().st_mode)),
+                   key=lambda path: path.name, reverse=True)
+    history = (bool(files) or any(folder != directory for folder in backup_dirs)
+               or _exists_strict(state_file) or _exists_strict(clinic_env) or installed_schema())
+    if history:
+        if not _exists_strict(key):
+            raise MissingBackupKey('Thiếu khóa sao lưu cũ')
+        if not files:
+            try:
+                key_bytes(key)
+            except (FileNotFoundError, ValueError) as exc:
+                raise MissingBackupKey('Thiếu khóa sao lưu cũ hoặc khóa sai định dạng') from exc
+            return 'kept_no_backup'
+        for index, backup_file in enumerate(files, 1):
+            print(f'Đang kiểm bản {index}/{len(files)}...', flush=True)
+            try:
+                with tempfile.TemporaryDirectory(prefix='.verify-', dir=data) as tmp:
+                    unpack_verified(backup_file, key, Path(tmp))
+            except (OSError, ValueError, InvalidTag, tarfile.TarError, KeyError, TypeError):
+                continue
+            return 'verified'
+        raise UnverifiedBackupKey('Không giải mã và đối chiếu được bản sao lưu cũ')
+    if _exists_strict(key):
+        key_bytes(key)
+        return 'kept'
+    generate_key(key)
+    return 'created'
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command',choices=['keygen','backup','verify','restore'])
@@ -281,9 +344,7 @@ def main():
     if not LAN:
         parser.error('Requires CLINIC_MODE=lan')
     if args.command=='keygen':
-        with os.fdopen(os.open(args.key,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600),'wb') as f:
-            f.write(secrets.token_bytes(32))
-        args.key.chmod(0o600)
+        generate_key(args.key)
         print('Backup key created. Store a separate offline copy.')
     elif args.command=='backup':
         if not args.directory:parser.error('--directory is required')
