@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from .clinic_profile import read_profile
 from .labels import VN_TZ, local_day
@@ -64,14 +64,6 @@ class StockReceipt(BaseModel):
     vat_rate: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=2)
     # Mã thao tác: một lần lập phiếu trên giao diện; gửi lại sau mất phản hồi dùng lại mã này.
     request_key: str = Field(min_length=8, max_length=120)
-
-    @field_validator('expiry_date')
-    @classmethod
-    def check_expiry(cls, value):
-        if value < date.today():
-            raise ValueError('Không nhận thuốc đã hết hạn')
-        return value
-
 
 class StockIssue(BaseModel):
     medicine_id: int = Field(gt=0)
@@ -315,6 +307,8 @@ def install_stock(app, db, principal, require, audit, now):
             replay = replayed_receipt(c, data, u)
             if replay:
                 return replay
+            if data.expiry_date < date.today():
+                raise HTTPException(422, 'Không nhận thuốc đã hết hạn')
             med = c.execute('SELECT * FROM medicines WHERE id=?', (data.medicine_id,)).fetchone()
             if not med:
                 raise HTTPException(404, 'Không tìm thấy mặt hàng')

@@ -938,8 +938,19 @@ function setVitals(text){const vt=parseVitals(text);for(const [k] of VITALS){con
 function setClinicalForm(data){for(const name of ['chief_complaint','history','diagnosis','treatment']){const el=document.querySelector(`[data-form="clinical"] [name="${name}"]`);if(el)el.value=data[name]||'';}
  const fu=document.querySelector('[data-form="clinical"] [name="follow_up"]');if(fu)fu.value=data.follow_up?showDay(data.follow_up):'';setVitals(data.vitals)}
 const actionKeys=new Map();
-async function keyed(kind,path,body,keyName='request_key'){const fingerprint=kind+JSON.stringify(body);if(!actionKeys.has(fingerprint))actionKeys.set(fingerprint,requestId());
- const result=await api(path,{method:'POST',body:{...body,[keyName]:actionKeys.get(fingerprint)}});actionKeys.delete(fingerprint);return result}
+async function keyed(kind,path,body,keyName='request_key'){
+ const fingerprint=kind+JSON.stringify(body), storageKey='md_stock_key_'+kind;
+ const persist=kind==='stock-receipt'||kind==='stock-issue';
+ if(persist){
+  try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||'null');if(saved&&saved.fingerprint===fingerprint)actionKeys.set(fingerprint,saved.key)}catch(e){/* Bộ nhớ phiên có thể bị chặn. */}
+ }
+ if(!actionKeys.has(fingerprint))actionKeys.set(fingerprint,requestId());
+ if(persist){try{sessionStorage.setItem(storageKey,JSON.stringify({fingerprint,key:actionKeys.get(fingerprint)}))}catch(e){/* Giữ mã trong bộ nhớ trang. */}}
+ const result=await api(path,{method:'POST',body:{...body,[keyName]:actionKeys.get(fingerprint)}});
+ actionKeys.delete(fingerprint);
+ if(persist){try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||'null');if(saved&&saved.fingerprint===fingerprint)sessionStorage.removeItem(storageKey)}catch(e){/* Không ảnh hưởng kết quả lưu. */}}
+ return result;
+}
 // Mỗi thao tác trả về câu thông báo; màn hình được tải lại xong mới hiện thông báo.
 async function handleForm(form){const kind=form.dataset.form;const f=new FormData(form);const value=k=>String(f.get(k)||'').trim();const num=k=>Number(value(k));let msg='';
  if(kind==='login'){

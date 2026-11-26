@@ -357,6 +357,8 @@ def check_resent_documents_are_not_duplicated(clients, db, owner_factory):
     # Cùng mã nhưng khác nội dung, khác người gửi: từ chối, không ghi thêm gì.
     for actor, changed in ((owner, {'quantity': 11}), (owner, {'unit_cost': 1400}), (owner, {'vat_rate': None}),
                            (owner, {'invoice_no': 'HĐ-KHÁC'}), (owner, {'lot_number': 'T4-KHAC-' + secrets.token_hex(4)}),
+                           (owner, {'supplier': 'Nhà cung cấp khác'}), (owner, {'invoice_date': '2026-11-16'}),
+                           (owner, {'expiry_date': '2030-01-01'}), (owner, {'medicine_id': med(clients)}),
                            (clients['pharmacy'], {'unit_cost': None, 'vat_rate': None})):
         response = actor.post('/api/stock/receipts', json={**receipt, **changed})
         assert response.status_code == 409, (changed, response.text)
@@ -393,6 +395,42 @@ def check_resent_documents_are_not_duplicated(clients, db, owner_factory):
     assert stock_totals(db, mid) == (14, (4, 2, 2))
     with db() as c:
         assert c.execute('SELECT COUNT(*) FROM stock_receipts WHERE request_key=?', (resend['request_key'],)).fetchone()[0] == 1
+
+    # Phiếu xuất gửi đồng thời; người khác gửi nguyên nội dung vẫn bị từ chối.
+    concurrent_issue = {**issue, 'quantity': 2, 'request_key': secrets.token_hex(12)}
+    barrier = threading.Barrier(2)
+    def save_issue(_):
+        actor = owner_factory()
+        barrier.wait(timeout=10)
+        return checked(actor.post('/api/stock/issues', json=concurrent_issue), 201)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(save_issue, (1, 2)))
+    assert results[0]['id'] == results[1]['id']
+    assert sorted(r['status'] for r in results) == ['already_recorded', 'demo_issued']
+    assert clients['pharmacy'].post('/api/stock/issues', json=concurrent_issue).status_code == 409
+    assert stock_totals(db, mid) == (12, (5, 2, 3))
+    with db(True) as c:
+        c.execute('INSERT INTO stock_lots(medicine_id,lot_number,expiry_date,quantity) VALUES(?,?,?,?)',
+                  (mid, 'T4-HET-HAN-' + secrets.token_hex(4), '2000-01-01', 2))
+        expired_lot = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+    disposal = {**issue, 'reason': 'expired_disposal', 'lot_id': expired_lot, 'quantity': 2,
+                'request_key': secrets.token_hex(12)}
+    disposed = checked(owner.post('/api/stock/issues', json=disposal), 201)
+    replay = checked(owner.post('/api/stock/issues', json=disposal), 201)
+    assert replay['id'] == disposed['id'] and replay['lots'] == disposed['lots']
+    assert replay['status'] == 'already_recorded'
+
+    # Giả lập đồng hồ tiến đến sau hạn; giữ nguyên lô và phiếu đã ghi.
+    from unittest.mock import patch
+    from datetime import date
+    class LaterDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2030, 1, 2)
+    with patch('app.stock.date', LaterDate):
+        replay = checked(owner.post('/api/stock/receipts', json=receipt), 201)
+        assert replay['id'] == first['id'] and replay['status'] == 'already_recorded'
+        assert owner.post('/api/stock/receipts', json={**receipt, 'request_key': secrets.token_hex(12)}).status_code == 422
     owner.close()
 
 
