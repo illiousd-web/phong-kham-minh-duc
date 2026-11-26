@@ -30,3 +30,9 @@ def test_s2b_issue_cost_does_not_reduce_sales_profit(clients, reason):
 def test_s2b_approved_return_reverses_original_cost_and_credit(clients, visit, half, approval_next_day):
     with owner_sessions(clients)() as owner:
         check_return_profit(clients, visit, db, owner, half, approval_next_day)
+
+
+def test_h2_stock_report_reads_period_only_with_same_results(clients, visit):
+    from tests.h2_cases import check_stock_report_reads_period_only
+    with owner_sessions(clients)() as owner:
+        check_stock_report_reads_period_only(clients, visit, db, owner)
