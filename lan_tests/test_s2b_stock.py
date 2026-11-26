@@ -36,3 +36,8 @@ def test_h2_stock_report_reads_period_only_with_same_results(clients, visit):
     from tests.h2_cases import check_stock_report_reads_period_only
     with owner_sessions(clients)() as owner:
         check_stock_report_reads_period_only(clients, visit, db, owner)
+
+
+def test_h2_utc_evening_and_missing_cost(clients):
+    from tests.h2_cases import check_utc_evening_and_missing_cost
+    check_utc_evening_and_missing_cost(clients, db)

@@ -148,6 +148,8 @@ def check_stock_report_reads_period_only(clients, visit, db, owner):
     with db() as c:
         for start, end in periods:
             assert stock_report(c, start, end) == reference_stock_report(c, start, end), (start, end)
+
+
         mine = next(r for r in stock_report(c, later.isoformat(), later.isoformat())['rows'] if r['id'] == mid)
         assert (mine['returns_revenue'], mine['cogs_sold']) == (10000, -2600)  # trả 2/4 viên, giá vốn lô 1.300.
         before = RowCounter(c)
@@ -160,3 +162,25 @@ def check_stock_report_reads_period_only(clients, visit, db, owner):
         assert after.rows == before.rows, (before.rows, after.rows)
         for start, end in periods:
             assert stock_report(c, start, end) == reference_stock_report(c, start, end), (start, end)
+
+
+def check_utc_evening_and_missing_cost(clients, db):
+    """17:00–23:59 UTC thuộc ngày hôm sau tại Việt Nam; lô chưa có giá vốn."""
+    mid = med(clients)
+    with db(True) as c:
+        c.execute('INSERT INTO stock_lots(medicine_id,lot_number,expiry_date,quantity,unit_cost) VALUES(?,?,?,?,NULL)',
+                  (mid, 'H2-KHONG-GIA-' + secrets.token_hex(4), '2030-01-01', 7))
+        lot = c.execute('SELECT last_insert_rowid()').fetchone()[0]
+        user = c.execute('SELECT MIN(id) FROM users').fetchone()[0]
+        for kind, quantity, stamp in (('receipt', 10, '2031-03-09T17:00:00+00:00'),
+                                      ('issue', 3, '2031-03-09T23:59:59+00:00')):
+            c.execute('''INSERT INTO stock_movements(stock_lot_id,movement_type,quantity,created_by,created_at,unit_cost)
+                         VALUES(?,?,?,?,?,NULL)''', (lot, kind, quantity, user, stamp))
+    from app.stock import stock_report
+    with db() as c:
+        for start, end in (('2031-03-09', '2031-03-09'), ('2031-03-10', '2031-03-10'),
+                           ('2031-03-09', '2031-03-10')):
+            assert stock_report(c, start, end) == reference_stock_report(c, start, end)
+        row = next(r for r in stock_report(c, '2031-03-10', '2031-03-10')['rows'] if r['id'] == mid)
+        assert (row['opening'], row['received'], row['issued'], row['closing']) == (0, 10, 3, 7)
+        assert row['cost_internal'] is None and row['cost_status'] == 'chưa có giá'
