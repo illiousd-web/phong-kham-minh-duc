@@ -10,7 +10,7 @@ from .domain import authorize_order, revision, status_refresh, invoice
 from .charge_queries import FINANCIAL_DUES_SQL,orders_sql
 from .financial_state import ensure_financial_open
 from .self_review import (FinancialReview, audit_self_review, mark_self_review,
-                          require_current_manager, self_review_reason)
+                          require_current_roles, self_review_reason)
 from .work_queues import visit_predicate, ACTIVE_ORDERS, approval_predicate, history_limit
 from contextlib import asynccontextmanager
 from starlette.concurrency import run_in_threadpool
@@ -769,6 +769,7 @@ def provisional_limit(c,vid,amount):
 def create_payment(data:PaymentInput,u=Depends(principal)):
     require(u,'cashier')
     with db(True) as c:
+        require_current_roles(c,u,'cashier')
         old=c.execute('SELECT * FROM payments WHERE idempotency_key=?',(data.idempotency_key,)).fetchone()
         if old:
             if old['created_by']!=u['id'] or old['amount']!=data.amount or old['visit_id']!=data.visit_id or old['method']!=data.method or (old['external_ref'] or None)!=(data.external_ref or None) or old['is_advance']!=int(data.prepayment):raise HTTPException(409,'Khóa giao dịch đã được sử dụng với dữ liệu khác')
@@ -935,7 +936,7 @@ def adjustments_list(u=Depends(principal),history:bool=False):
 @app.post('/api/adjustments/{adj_id}/review')
 def review_adjustment(adj_id:int,data:FinancialReview,u=Depends(principal)):
     with db(True) as c:
-        require_current_manager(c, u['id'])
+        require_current_roles(c, u, 'manager')
         a=c.execute('SELECT * FROM effective_adjustments WHERE id=?',(adj_id,)).fetchone()
         if not a:raise HTTPException(404,'Không có đề nghị')
         if a['status']!='pending':raise HTTPException(409,'Đã giải quyết đề nghị này')

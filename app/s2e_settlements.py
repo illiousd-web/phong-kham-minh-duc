@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from .domain import invoice
 from .financial_state import ensure_financial_open
 from .labels import VN_TZ
+from .self_review import require_current_roles
 
 
 class SettlementReason(BaseModel):
@@ -107,6 +108,7 @@ def install_settlements(app, db, principal, require, audit, now):
     def settle(visit_id: int, user=Depends(principal)):
         require(user, 'cashier', 'admin')
         with db(True) as c:
+            require_current_roles(c, user, 'cashier', 'admin')
             return close_visit(c, visit_id, user, audit, now)
 
     @app.post('/api/visits/{visit_id}/settlement-waiver')
@@ -116,6 +118,7 @@ def install_settlements(app, db, principal, require, audit, now):
         if len(reason) < 10:
             raise HTTPException(422, 'Lý do miễn thu cần ít nhất 10 ký tự')
         with db(True) as c:
+            require_current_roles(c, user, 'admin')
             return close_visit(c, visit_id, user, audit, now, reason)
 
     @app.post('/api/visits/{visit_id}/settlement-reopen')
@@ -125,6 +128,7 @@ def install_settlements(app, db, principal, require, audit, now):
         if not reason:
             raise HTTPException(422, 'Cần nhập lý do mở lại')
         with db(True) as c:
+            require_current_roles(c, user, 'admin')
             if not c.execute('SELECT 1 FROM visits WHERE id=?', (visit_id,)).fetchone():
                 raise HTTPException(404, 'Không tìm thấy lượt khám')
             active = financial_status(c, visit_id)
