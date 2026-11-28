@@ -239,9 +239,11 @@ def stock_report(c, start, end):
     # Sửa giá dòng tiền thuốc (T2): ghi phần chênh vào kỳ sửa giá, như tiền trả được ghi vào kỳ duyệt trả.
     # Kỳ cấp giữ doanh thu lúc cấp; cộng các kỳ bằng giá hiệu lực của dòng trừ tiền trả, đúng một lần.
     # Giá vốn giữ theo lô lúc xuất. Giảm phí chung của lượt không phân bổ vào đây.
+    # Chỉ đọc lịch sử sửa giá quanh kỳ (rà #69); local_day vẫn quyết định chính xác.
+    window, window_args = text_bounds('h.created_at', start, end)
     for change in c.execute("""SELECT di.medicine_id,h.previous_amount,h.new_amount,h.created_at
         FROM charge_price_history h JOIN charge_sources cs ON cs.charge_id=h.charge_id AND cs.source_type='dispense_item'
-        JOIN dispensation_items di ON di.id=cs.source_id"""):
+        JOIN dispensation_items di ON di.id=cs.source_id WHERE """ + window, window_args):
         if not start <= local_day(change['created_at']) <= end:
             continue
         row = rows[change['medicine_id']]

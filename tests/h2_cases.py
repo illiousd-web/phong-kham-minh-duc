@@ -2,7 +2,7 @@
 
 Dùng chung cho SQLite (tests/) và PostgreSQL (lan_tests/). Chỉ dữ liệu giả lập.
 reference_stock_report là bản sao nguyên văn của app/stock.py::stock_report trước H2
-(main c1712ab), dùng làm đối chứng.
+(main c1712ab), cộng thêm khối sửa giá T2 (#67) — tức báo cáo "sau T2, trước H2" — dùng làm đối chứng.
 """
 from datetime import datetime, timedelta
 import secrets
