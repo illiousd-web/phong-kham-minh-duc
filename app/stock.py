@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from .clinic_profile import read_profile
 from .labels import VN_TZ, local_day
 from .resources import export_slot
+from .self_review import require_current_roles
 
 MONEY_FIELDS = frozenset(('unit_cost', 'vat_rate', 'inventory_value', 'cost_of_goods', 'gross_profit',
                           'total_amount', 'vat_amount', 'cost_status', 'unknown_cost_lots',
@@ -235,6 +236,17 @@ def stock_report(c, start, end):
                         row['revenue'] = None
                     elif row['revenue'] is not None:
                         row['revenue'] += movement['revenue_amount']
+    # Sửa giá dòng tiền thuốc (T2): ghi phần chênh vào kỳ sửa giá, như tiền trả được ghi vào kỳ duyệt trả.
+    # Kỳ cấp giữ doanh thu lúc cấp; cộng các kỳ bằng giá hiệu lực của dòng trừ tiền trả, đúng một lần.
+    # Giá vốn giữ theo lô lúc xuất. Giảm phí chung của lượt không phân bổ vào đây.
+    for change in c.execute("""SELECT di.medicine_id,h.previous_amount,h.new_amount,h.created_at
+        FROM charge_price_history h JOIN charge_sources cs ON cs.charge_id=h.charge_id AND cs.source_type='dispense_item'
+        JOIN dispensation_items di ON di.id=cs.source_id"""):
+        if not start <= local_day(change['created_at']) <= end:
+            continue
+        row = rows[change['medicine_id']]
+        if row['revenue'] is not None:
+            row['revenue'] += change['new_amount'] - change['previous_amount']
     # dispense_rx inserts one movement and one item per consumed lot, in the same
     # transaction after locking/updating that lot. Their per-lot order is identical,
     # including pre-016 rows. Match the original snapshot, never today's lot cost.
@@ -318,6 +330,7 @@ def install_stock(app, db, principal, require, audit, now):
     def supplement(lid: int, data: LotCost, u=Depends(principal)):
         require(u, 'admin', 'stock_owner')
         with db(True) as c:
+            require_current_roles(c, u, 'admin', 'stock_owner')
             old = c.execute('SELECT unit_cost FROM stock_lots WHERE id=?', (lid,)).fetchone()
             if not old:
                 raise HTTPException(404, 'Không có lô')
@@ -331,9 +344,13 @@ def install_stock(app, db, principal, require, audit, now):
     @app.post('/api/stock/receipts', status_code=201)
     def receipt(data: StockReceipt, u=Depends(principal)):
         require(u, 'pharmacy')
-        if not can_view_money(u) and (data.unit_cost is not None or data.vat_rate is not None):
+        has_cost = data.unit_cost is not None or data.vat_rate is not None
+        if has_cost and not can_view_money(u):
             raise HTTPException(403, 'Cần quyền Chủ kho thuốc để nhập giá')
         with db(True) as c:
+            current = require_current_roles(c, u, 'pharmacy')
+            if has_cost and not can_view_money(dict(u, roles=current)):
+                raise HTTPException(403, 'Cần quyền Chủ kho thuốc để nhập giá')
             replay = replayed_receipt(c, data, u)
             if replay:
                 return replay
@@ -375,6 +392,7 @@ def install_stock(app, db, principal, require, audit, now):
     def issue(data: StockIssue, u=Depends(principal)):
         require(u, 'pharmacy')
         with db(True) as c:
+            require_current_roles(c, u, 'pharmacy')
             replay = replayed_issue(c, data, u)
             if replay:
                 return replay

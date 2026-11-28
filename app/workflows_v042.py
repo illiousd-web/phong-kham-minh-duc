@@ -12,6 +12,7 @@ CLS = ('lab', 'ultrasound', 'xray', 'ecg')
 
 from .domain import ensure_open, dispense_rx, revision, status_refresh
 from .financial_state import ensure_financial_open
+from .self_review import require_current_roles
 
 class CancelRequest(BaseModel):
     reason: str = Field(min_length=8, max_length=500)
@@ -156,9 +157,11 @@ def install_workflows(app, db, principal, require, audit, visit_access, now):
     def set_medicine_price(medicine_id:int, data:PriceInput, u=Depends(principal)):
         require(u,'manager','admin')
         with db(True) as c:
+            current = require_current_roles(c, u, 'manager', 'admin')
             m=c.execute('SELECT id,controlled FROM medicines WHERE id=?',(medicine_id,)).fetchone()
             if not m:raise HTTPException(404,'Không có thuốc')
-            if m['controlled'] and ('controlled_reviewer' not in u['roles'] or len(data.reason.strip())<8):raise HTTPException(403,'Giá thuốc kiểm soát cần quyền riêng và lý do')
+            if m['controlled'] and ('controlled_reviewer' not in current.intersection(u['roles']) or len(data.reason.strip()) < 8):
+                raise HTTPException(403,'Giá thuốc kiểm soát cần quyền riêng và lý do')
             exists=c.execute('SELECT 1 FROM medicine_prices WHERE medicine_id=?',(medicine_id,)).fetchone()
             if exists:
                 c.execute('UPDATE medicine_prices SET unit_price=?,updated_by=?,updated_at=? WHERE medicine_id=?',

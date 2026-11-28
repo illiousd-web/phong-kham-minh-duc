@@ -505,3 +505,92 @@ def check_reprice_after_approved_return(clients, visit, db, owner, quantities):
             'SELECT * FROM charge_price_history WHERE charge_id=? ORDER BY id', (charge,))] == prices_before
         assert [dict(row) for row in c.execute(
             'SELECT * FROM charge_credits WHERE charge_id=? ORDER BY id', (charge,))] == credits_before
+
+
+
+def call_with_clock(path, moment, request):
+    """Chạy một API ghi với đồng hồ nghiệp vụ của đúng API đó (xác thực vẫn dùng giờ thật)."""
+    from app.main import app
+    endpoint = next(route.endpoint for route in app.routes if getattr(route, 'path', '') == path)
+    cell = dict(zip(endpoint.__code__.co_freevars, endpoint.__closure__))['now']
+    original = cell.cell_contents
+    try:
+        cell.cell_contents = lambda: moment.isoformat()
+        return request()
+    finally:
+        cell.cell_contents = original
+
+
+def check_reprice_revenue_periods(clients, visit, db, owner):
+    """T2: doanh thu kho theo giá hiệu lực sau sửa giá; kỳ cấp, kỳ sửa giá, kỳ trả khác nhau."""
+    mid = med(clients)  # giá bán 5.000/viên
+    receive(owner, mid, 4, 1000)
+    doctor, pharmacy, manager, cashier = clients['doctor'], clients['pharmacy'], clients['manager'], clients['cashier']
+    row = checked(doctor.get(f'/api/visits/{visit}'))
+    checked(doctor.put(f'/api/visits/{visit}/clinical', json={'version': row['version'], 'diagnosis': 'Kiểm sửa giá thuốc giả lập'}))
+    rid = checked(doctor.post('/api/prescriptions', json={'visit_id': visit,
+        'items': [{'medicine_id': mid, 'quantity': 4, 'directions': 'Không điều trị thật'}]}), 201)['id']
+    disp = checked(pharmacy.post(f'/api/prescriptions/{rid}/dispense'), 201)
+    item = disp['lots'][0]
+    with db() as c:
+        charge = c.execute("SELECT charge_id FROM charge_sources WHERE source_type='dispense_item' AND source_id=?", (item['id'],)).fetchone()[0]
+    sale = datetime.now(VN_TZ)
+    repriced_at, returned_at = sale + timedelta(days=1), sale + timedelta(days=2)
+    checked(call_with_clock('/api/charges/{cid}/reprice', repriced_at, lambda: manager.post(f'/api/charges/{charge}/reprice', json={
+        'amount': 12000, 'reason': 'Sửa tổng tiền thuốc giả lập', 'request_key': secrets.token_hex(12)})))
+    # Giảm phí chung của lượt không được phân bổ vào doanh thu thuốc.
+    discount = checked(cashier.post('/api/adjustments', json={'visit_id': visit, 'kind': 'discount', 'amount': 1000,
+                                                              'reason': 'Giảm phí chung giả lập'}), 201)['id']
+    checked(manager.post(f'/api/adjustments/{discount}/review', json={'approve': True}))
+    ret = checked(pharmacy.post(f'/api/dispensations/{disp["dispensation_id"]}/returns', json={
+        'reason': 'Trả thuốc giả lập', 'request_key': secrets.token_hex(16),
+        'items': [{'dispensation_item_id': item['id'], 'quantity': 2}]}), 201)
+    checked(call_with_clock('/api/medication-returns/{rid}/review', returned_at,
+                            lambda: manager.post(f'/api/medication-returns/{ret["id"]}/review', json={'approve': True})))
+    line = next(x for x in checked(manager.get(f'/api/charges/{visit}')) if x['id'] == charge)
+    assert line['amount'] == 6000  # 12.000 sau sửa giá trừ 6.000 tiền trả 2/4 viên.
+
+    def day(moment, until=None):
+        r = report_row(owner, mid, '?date_from=' + moment.date().isoformat() + '&date_to=' + (until or moment).date().isoformat())
+        return r['revenue'], r['returns_revenue'], r['cogs_sold'], r['gross_profit']
+    assert day(sale) == (20000, 0, 4000, 16000)
+    assert day(repriced_at) == (-8000, 0, 0, -8000)
+    assert day(returned_at) == (-6000, 6000, -2000, -4000)
+    whole = day(sale, returned_at)
+    assert whole == (line['amount'], 6000, 2000, 4000)
+    assert sum(x[0] for x in (day(sale), day(repriced_at), day(returned_at))) == whole[0]
+
+
+def check_reprice_twice_and_return_all(clients, visit, db, owner):
+    """Hai lần sửa giá, ba lần trả hết: cộng kỳ bằng dòng thuốc trên hóa đơn."""
+    mid = med(clients)
+    receive(owner, mid, 4, 1000)
+    doctor, pharmacy, manager = clients['doctor'], clients['pharmacy'], clients['manager']
+    row = checked(doctor.get(f'/api/visits/{visit}'))
+    checked(doctor.put(f'/api/visits/{visit}/clinical', json={'version': row['version'], 'diagnosis': 'Giả lập'}))
+    rx = checked(doctor.post('/api/prescriptions', json={'visit_id': visit,
+        'items': [{'medicine_id': mid, 'quantity': 4, 'directions': 'Giả lập'}]}), 201)
+    disp = checked(pharmacy.post(f'/api/prescriptions/{rx["id"]}/dispense'), 201)
+    item = disp['lots'][0]['id']
+    with db() as c:
+        charge = c.execute("SELECT charge_id FROM charge_sources WHERE source_type='dispense_item' AND source_id=?", (item,)).fetchone()[0]
+    sale = datetime.now(VN_TZ)
+    for offset, price in ((1, 16000), (2, 12000)):
+        checked(call_with_clock('/api/charges/{cid}/reprice', sale + timedelta(days=offset),
+            lambda: manager.post(f'/api/charges/{charge}/reprice', json={
+                'amount': price, 'reason': 'Sửa giá giả lập', 'request_key': secrets.token_hex(12)})))
+    for offset, quantity in ((3, 1), (4, 1), (5, 2)):
+        ret = checked(pharmacy.post(f'/api/dispensations/{disp["dispensation_id"]}/returns', json={
+            'reason': 'Trả thuốc giả lập', 'request_key': secrets.token_hex(16),
+            'items': [{'dispensation_item_id': item, 'quantity': quantity}]}), 201)
+        checked(call_with_clock('/api/medication-returns/{rid}/review', sale + timedelta(days=offset),
+            lambda: manager.post(f'/api/medication-returns/{ret["id"]}/review', json={'approve': True})))
+    line = next(x for x in checked(manager.get(f'/api/charges/{visit}')) if x['id'] == charge)
+    amounts = []
+    for offset in range(6):
+        day = (sale + timedelta(days=offset)).date().isoformat()
+        amounts.append(report_row(owner, mid, f'?date_from={day}&date_to={day}')['revenue'])
+    assert amounts == [20000, -4000, -4000, -3000, -3000, -6000]
+    assert sum(amounts) == line['amount'] == 0
+    end = (sale + timedelta(days=5)).date().isoformat()
+    assert report_row(owner, mid, f'?date_from={sale.date().isoformat()}&date_to={end}')['revenue'] == line['amount']

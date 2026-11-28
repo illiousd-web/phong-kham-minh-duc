@@ -52,6 +52,15 @@ def reference_stock_report(c, start, end):
                         row['revenue'] = None
                     elif row['revenue'] is not None:
                         row['revenue'] += movement['revenue_amount']
+    # T2 (#67): phần chênh do sửa giá dòng thuốc ghi vào kỳ sửa giá. Đối chứng là báo cáo sau T2.
+    for change in c.execute("""SELECT di.medicine_id,h.previous_amount,h.new_amount,h.created_at
+        FROM charge_price_history h JOIN charge_sources cs ON cs.charge_id=h.charge_id AND cs.source_type='dispense_item'
+        JOIN dispensation_items di ON di.id=cs.source_id"""):
+        if not start <= local_day(change['created_at']) <= end:
+            continue
+        row = rows[change['medicine_id']]
+        if row['revenue'] is not None:
+            row['revenue'] += change['new_amount'] - change['previous_amount']
     # dispense_rx inserts one movement and one item per consumed lot, in the same
     # transaction after locking/updating that lot. Their per-lot order is identical,
     # including pre-016 rows. Match the original snapshot, never today's lot cost.

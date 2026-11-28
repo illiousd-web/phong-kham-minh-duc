@@ -4,6 +4,8 @@ from pydantic import BaseModel,Field,model_validator
 from typing import Literal
 import json
 
+from .self_review import require_current_roles
+
 class ServiceInput(BaseModel):
     name:str=Field(min_length=2,max_length=180)
     price:int|None=Field(ge=0,le=2_000_000_000)
@@ -37,6 +39,7 @@ def install_catalog(app,db,principal,require,audit):
     def service(data:ServiceInput,u=Depends(principal)):
         require(u,'admin','manager')
         with db(True) as c:
+            require_current_roles(c, u, 'admin', 'manager')
             if data.code and c.execute('SELECT 1 FROM service_catalog WHERE code=?',(data.code,)).fetchone():raise HTTPException(409,'Trùng mã dịch vụ')
             if c.execute('SELECT 1 FROM service_catalog WHERE name=?',(data.name,)).fetchone():raise HTTPException(409,'Trùng tên dịch vụ')
             c.execute('INSERT INTO service_catalog(name,price,code,active,price_at_collection) VALUES(?,?,?,?,?)',(data.name,0 if data.price_at_collection else data.price,data.code,int(data.active),int(data.price_at_collection)))
@@ -50,6 +53,7 @@ def install_catalog(app,db,principal,require,audit):
     def update_service(sid:int,data:ServiceInput,u=Depends(principal)):
         require(u,'admin','manager')
         with db(True) as c:
+            require_current_roles(c, u, 'admin', 'manager')
             old=c.execute('SELECT * FROM service_catalog WHERE id=?',(sid,)).fetchone()
             if not old:raise HTTPException(404,'Không có dịch vụ')
             if data.code and c.execute('SELECT 1 FROM service_catalog WHERE code=? AND id<>?',(data.code,sid)).fetchone():raise HTTPException(409,'Trùng mã')
