@@ -48,3 +48,27 @@ def test_s2b_lot_quantity_ceiling(clients):
 def test_reprice_denied_after_approved_return_with_zero_credit(clients, visit, quantities):
     with owner_sessions(clients)() as owner:
         check_reprice_after_approved_return(clients, visit, db, owner, quantities)
+
+
+
+def test_h2_stock_report_reads_period_only_with_same_results(clients, visit):
+    from tests.h2_cases import check_stock_report_reads_period_only
+    with owner_sessions(clients)() as owner:
+        check_stock_report_reads_period_only(clients, visit, db, owner)
+
+
+def test_h2_utc_evening_and_missing_cost(clients):
+    from tests.h2_cases import check_utc_evening_and_missing_cost
+    check_utc_evening_and_missing_cost(clients, db)
+
+
+def test_t2_stock_revenue_uses_effective_price_across_periods(clients, visit):
+    from tests.s2b_cases import check_reprice_revenue_periods
+    with owner_sessions(clients)() as owner:
+        check_reprice_revenue_periods(clients, visit, db, owner)
+
+
+def test_t2_two_reprices_multiple_returns_and_full_return(clients, visit):
+    from tests.s2b_cases import check_reprice_twice_and_return_all
+    with owner_sessions(clients)() as owner:
+        check_reprice_twice_and_return_all(clients, visit, db, owner)

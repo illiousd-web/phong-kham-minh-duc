@@ -1,7 +1,7 @@
 """Lot cost snapshots and warehouse documents, within the existing write boundary."""
 import calendar
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
 
@@ -178,16 +178,37 @@ def period(month=None, quarter=None, year=None, date_from=None, date_to=None):
         raise HTTPException(422, 'Kỳ báo cáo không hợp lệ; chọn tháng, quý hoặc đủ từ ngày–đến ngày') from None
 
 
+def text_bounds(column, start=None, end=None):
+    """Điều kiện SQL lọc sơ bộ theo chuỗi thời gian, rộng hơn kỳ một ngày mỗi bên (H2).
+
+    Mọi thời điểm có ngày Việt Nam trong kỳ (UTC, có múi giờ khác, không múi giờ, chỉ ngày) đều
+    qua điều kiện; local_day vẫn quyết định chính xác ở Python.
+    """
+    clauses, args = [], []
+    if start is not None and date.fromisoformat(start) > date.min:
+        clauses.append(column + '>=?')
+        args.append((date.fromisoformat(start) - timedelta(days=1)).isoformat())
+    if end is not None and date.fromisoformat(end) < date.max - timedelta(days=1):
+        clauses.append(column + '<?')
+        args.append((date.fromisoformat(end) + timedelta(days=2)).isoformat())
+    return ' AND '.join(clauses) or '1=1', args
+
+
 def stock_report(c, start, end):
-    # Reconstruct the opening from current stock and the complete movement ledger.
+    # Reconstruct the opening from current stock and the movements since the period start.
     # This preserves unrecorded legacy opening balances without inventing receipts.
     rows = {r['id']: dict(r, opening=r['current_stock'], received=0, issued=0, closing=r['current_stock'],
                           cogs_sold=0, cost_internal=0, cost_supplier_return=0, cost_expired=0,
                           returns_revenue=0, revenue=0, gross_profit=0, cost_status='đã có giá')
             for r in c.execute('''SELECT m.id,m.name,m.code,m.base_unit,COALESCE(SUM(l.quantity),0) AS current_stock
                 FROM medicines m LEFT JOIN stock_lots l ON l.medicine_id=m.id GROUP BY m.id,m.name,m.code,m.base_unit ORDER BY m.id''')}
+    # Biến động trước đầu kỳ không đóng góp vào công thức tồn đầu/cuối dưới đây (H2): chỉ đọc từ
+    # ngày trước đầu kỳ (bao trọn mọi múi giờ của ngày đầu kỳ) và dùng chỉ mục created_at sẵn có.
+    # local_day vẫn quyết định chính xác ngày của từng biến động.
+    since, since_args = text_bounds('s.created_at', start)
     for movement in c.execute('''SELECT s.*,l.medicine_id,i.reason FROM stock_movements s
-        JOIN stock_lots l ON l.id=s.stock_lot_id LEFT JOIN stock_issues i ON i.id=s.issue_id ORDER BY s.id'''):
+        JOIN stock_lots l ON l.id=s.stock_lot_id LEFT JOIN stock_issues i ON i.id=s.issue_id
+        WHERE ''' + since + ' ORDER BY s.id', since_args):
         row = rows[movement['medicine_id']]
         if movement['movement_type'] not in INCOMING | OUTGOING:
             raise HTTPException(409, 'Có loại biến động kho chưa được đối chiếu')
@@ -215,21 +236,40 @@ def stock_report(c, start, end):
                         row['revenue'] = None
                     elif row['revenue'] is not None:
                         row['revenue'] += movement['revenue_amount']
+    # Sửa giá dòng tiền thuốc (T2): ghi phần chênh vào kỳ sửa giá, như tiền trả được ghi vào kỳ duyệt trả.
+    # Kỳ cấp giữ doanh thu lúc cấp; cộng các kỳ bằng giá hiệu lực của dòng trừ tiền trả, đúng một lần.
+    # Giá vốn giữ theo lô lúc xuất. Giảm phí chung của lượt không phân bổ vào đây.
+    # Chỉ đọc lịch sử sửa giá quanh kỳ (rà #69); local_day vẫn quyết định chính xác.
+    window, window_args = text_bounds('h.created_at', start, end)
+    for change in c.execute("""SELECT di.medicine_id,h.previous_amount,h.new_amount,h.created_at
+        FROM charge_price_history h JOIN charge_sources cs ON cs.charge_id=h.charge_id AND cs.source_type='dispense_item'
+        JOIN dispensation_items di ON di.id=cs.source_id WHERE """ + window, window_args):
+        if not start <= local_day(change['created_at']) <= end:
+            continue
+        row = rows[change['medicine_id']]
+        if row['revenue'] is not None:
+            row['revenue'] += change['new_amount'] - change['previous_amount']
     # dispense_rx inserts one movement and one item per consumed lot, in the same
     # transaction after locking/updating that lot. Their per-lot order is identical,
     # including pre-016 rows. Match the original snapshot, never today's lot cost.
-    returns = c.execute("""WITH items AS (
-        SELECT di.*,ROW_NUMBER() OVER (PARTITION BY stock_lot_id ORDER BY id) AS ordinal
-        FROM dispensation_items di), movements AS (
-        SELECT s.*,ROW_NUMBER() OVER (PARTITION BY stock_lot_id ORDER BY id) AS ordinal
-        FROM stock_movements s WHERE movement_type='rx_dispense')
-        SELECT di.medicine_id,ri.quantity,r.reviewed_at,COALESCE(cr.amount,0) AS credit,
-            CASE WHEN s.quantity=di.quantity THEN s.unit_cost ELSE NULL END AS unit_cost
+    # Chỉ ghép các lô có trả được duyệt quanh kỳ; thứ tự cấp trong lô vẫn đánh số trên toàn bộ
+    # dòng của chính lô đó nên vẫn khớp lần cấp gốc, kể cả khi cấp ở kỳ trước.
+    reviewed, reviewed_args = text_bounds('r.reviewed_at', start, end)
+    returns = c.execute("""WITH picked AS (
+        SELECT ri.id AS return_item_id,ri.quantity,ri.dispensation_item_id,r.reviewed_at
         FROM medication_return_items ri JOIN medication_returns r ON r.id=ri.return_id
-        JOIN items di ON di.id=ri.dispensation_item_id
+        WHERE r.status='approved' AND """ + reviewed + """),
+        lots AS (SELECT DISTINCT d.stock_lot_id FROM picked p JOIN dispensation_items d ON d.id=p.dispensation_item_id),
+        items AS (
+        SELECT di.*,ROW_NUMBER() OVER (PARTITION BY stock_lot_id ORDER BY id) AS ordinal
+        FROM dispensation_items di WHERE di.stock_lot_id IN (SELECT stock_lot_id FROM lots)), movements AS (
+        SELECT s.*,ROW_NUMBER() OVER (PARTITION BY stock_lot_id ORDER BY id) AS ordinal
+        FROM stock_movements s WHERE movement_type='rx_dispense' AND s.stock_lot_id IN (SELECT stock_lot_id FROM lots))
+        SELECT di.medicine_id,p.quantity,p.reviewed_at,COALESCE(cr.amount,0) AS credit,
+            CASE WHEN s.quantity=di.quantity THEN s.unit_cost ELSE NULL END AS unit_cost
+        FROM picked p JOIN items di ON di.id=p.dispensation_item_id
         LEFT JOIN movements s ON s.stock_lot_id=di.stock_lot_id AND s.ordinal=di.ordinal
-        LEFT JOIN charge_credits cr ON cr.source_id=ri.id
-        WHERE r.status='approved'""")
+        LEFT JOIN charge_credits cr ON cr.source_id=p.return_item_id""", reviewed_args)
     for returned in returns:
         if not start <= local_day(returned['reviewed_at']) <= end:
             continue

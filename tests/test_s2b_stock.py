@@ -68,3 +68,34 @@ def test_t4_resent_stock_documents_are_not_duplicated():
     check_resent_documents_are_not_duplicated(clients, db, factory)
     with factory() as owner:
         check_missing_request_key_rejected(clients, owner)
+
+
+
+def test_h2_stock_report_reads_period_only_with_same_results():
+    from tests.h2_cases import check_stock_report_reads_period_only
+    clients = actors()
+    _, visit = prepare_visit()
+    with owner_sessions(clients)() as owner:
+        check_stock_report_reads_period_only(clients, visit, db, owner)
+
+
+def test_h2_utc_evening_and_missing_cost():
+    from tests.h2_cases import check_utc_evening_and_missing_cost
+    check_utc_evening_and_missing_cost(actors(), db)
+
+
+def test_t2_stock_revenue_uses_effective_price_across_periods():
+    from tests.s2b_cases import check_reprice_revenue_periods
+    clients = actors()
+    clients['cashier'] = RoleClient('thungan')
+    _, visit = prepare_visit()
+    with owner_sessions(clients)() as owner:
+        check_reprice_revenue_periods(clients, visit, db, owner)
+
+
+def test_t2_two_reprices_multiple_returns_and_full_return():
+    from tests.s2b_cases import check_reprice_twice_and_return_all
+    clients = actors()
+    _, visit = prepare_visit()
+    with owner_sessions(clients)() as owner:
+        check_reprice_twice_and_return_all(clients, visit, db, owner)
